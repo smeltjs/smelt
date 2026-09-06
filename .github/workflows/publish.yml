@@ -11,8 +11,10 @@ name: publish
 # workspace:^ substitution that shipped broken in 0.1.0) runs explicitly before the
 # pack, because publishing a tarball does not run lifecycle scripts.
 #
-# Owner one-time setup: an NPM_TOKEN secret (automation token, npmjs.org), and a
-# smeltjs/tap repository seeded from packaging/homebrew/smelt.rb — see CONTRIBUTING.
+# Owner one-time setup: register each package's trusted publisher on npmjs.com
+# (repository smeltjs/smelt, workflow publish.yml, environment release — see
+# CONTRIBUTING), and seed a smeltjs/tap repository from the formula artifact.
+# No npm token exists anywhere: publishing authenticates by OIDC.
 
 on:
   push:
@@ -107,10 +109,12 @@ jobs:
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
+      # npm (not pnpm) publishes: the tarball was pnpm-packed, so workspace ranges
+      # are already substituted, and tokenless OIDC is npm's own machinery. Provenance
+      # comes with the identity — the attestation says who published what from where.
       - name: publish the packed bytes
-        run: pnpm publish "${{ steps.release.outputs.tarball }}" --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: >
+          npm publish "${{ steps.release.outputs.tarball }}" --access public --provenance
 
   publish-mcp:
     name: publish @smeltjs/mcp
@@ -146,9 +150,7 @@ jobs:
           mkdir -p "$TARBALLS"
           pnpm --filter "@smeltjs/mcp..." run build
           pnpm --filter @smeltjs/mcp pack --pack-destination "$TARBALLS"
-          pnpm publish "$TARBALLS/smeltjs-mcp-$VERSION.tgz" --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish "$TARBALLS/smeltjs-mcp-$VERSION.tgz" --access public --provenance
 
   formula:
     name: render the tap formula

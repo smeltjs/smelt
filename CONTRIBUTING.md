@@ -274,7 +274,11 @@ lifecycle scripts, and 0.1.0 is the reason the guard exists.
 
 One-time owner setup, and the tap:
 
-1. Put an npm **automation token** in the repository secret `NPM_TOKEN`.
+1. Register each package's **trusted publisher** on npmjs.com (npmjs.com → the
+   package → Settings → Trusted publishers → Add): repository owner `smeltjs`,
+   repository name `smelt`, workflow filename `publish.yml`, environment `release` —
+   once for `@smeltjs/core` and once for `@smeltjs/mcp`. No npm token is stored
+   anywhere; the registry authenticates the publish job by its OIDC identity.
 2. Create the tap repository `smeltjs/tap`, and seed it from the workflow's
    `homebrew-formula` artifact (or render locally:
    `node scripts/render-formula.mjs <version> <sha256>` — the same pair the workflow
