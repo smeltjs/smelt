@@ -434,6 +434,12 @@ Three things that look like bugs and are not:
   tags, deterministic PageRank over the reference graph, a caller-owned disk cache.
   Modelled on [Aider's repo-map](https://aider.chat/2023/10/22/repomap.html) and credited
   as such. Every included symbol can say why it ranked.
+- **The setup surface** — `smelt setup` applies the whole recipe in one command (config,
+  hooks preset, MCP registration, a proven round trip), `smelt doctor` reads installed
+  state back and names exactly what is behind, and the version-stamped instruction
+  blocks make "is this machine current?" answerable from pure shell. The recipe's facts
+  live as data; the skill pack (`npx skills add smeltjs/smelt`) and this README render
+  from it or are guard-pinned to it.
 - **The hooks preset** — `smelt hooks install`: a zero-dependency guard core plus thin
   shims that wire the size-guard, stats-on-stop and map-on-start into agent harnesses,
   tiered honestly (verified / experimental / advisory — see the harness guide above).

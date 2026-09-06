@@ -140,15 +140,22 @@ export function Harness() {
 
         <Reveal className="mt-14">
           <h3 className="text-[17px] font-medium text-ash sm:text-[18px]">
-            Or let the hooks preset do it:{' '}
+            Or let one command do all of it:{' '}
             <code className="rounded-[2px] bg-lift px-1.5 font-mono text-[15px]">
-              smelt hooks install
+              smelt setup
             </code>
           </h3>
           <p className="mt-2 max-w-[70ch] text-[14px] leading-[1.6] text-slag">
-            A size-guard that refuses raw oversized reads with the exact replacement command, stats
-            on Stop, an opt-in repo map on SessionStart. Deny-with-reason by default; rewrite is
-            opt-in and always announced. Tiered honestly:
+            Config, this whole preset, and the MCP registration — applied together, with a real
+            retrieve round trip as the check.{' '}
+            <code className="rounded-[2px] bg-lift px-1 font-mono text-[13px] text-ash">
+              smelt hooks install
+            </code>{' '}
+            remains the fine-grained editor (per-file consent, toggle edits), and{' '}
+            <code className="rounded-[2px] bg-lift px-1 font-mono text-[13px] text-ash">
+              smelt doctor
+            </code>{' '}
+            reads it all back and names what is behind. Tiered honestly:
           </p>
           <div className="mt-5 overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse text-left text-[14px]">
