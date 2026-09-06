@@ -6,8 +6,8 @@
 class Smelt < Formula
   desc "Structure-aware, reversible context optimization for AI coding agents"
   homepage "https://github.com/smeltjs/smelt"
-  url "https://registry.npmjs.org/@smeltjs/core/-/core-0.4.0.tgz"
-  sha256 "977df8d3283de81182d4c12363ff31200627405fbfc5ca7a86a2a3fa2cac3a55"
+  url "https://registry.npmjs.org/@smeltjs/core/-/core-0.5.0.tgz"
+  sha256 "7f837356077bc08373e89a121d6ad6a74f63433a4d9fd645dd8f13cb5f851549"
   license "Apache-2.0"
 
   # smelt is a Node CLI — one runtime dependency, web-tree-sitter, whose grammars
@@ -15,7 +15,11 @@ class Smelt < Formula
   depends_on "node"
 
   def install
-    system "npm", "install", *std_npm_install_args(libexec)
+    # The classic npm-tarball install, spelled out: no Homebrew helper methods, so
+    # the formula works on any brew that can pour it. The tarball is the registry's
+    # own, so deps resolve to exactly what npm install would fetch anywhere.
+    system "npm", "install", "--prefix", libexec.to_s, "--omit=dev", "--no-audit",
+           "--no-fund", "."
     bin.install_symlink libexec/"bin/smelt"
   end
 

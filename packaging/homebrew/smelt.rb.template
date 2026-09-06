@@ -15,7 +15,11 @@ class Smelt < Formula
   depends_on "node"
 
   def install
-    system "npm", "install", *std_npm_install_args(libexec)
+    # The classic npm-tarball install, spelled out: no Homebrew helper methods, so
+    # the formula works on any brew that can pour it. The tarball is the registry's
+    # own, so deps resolve to exactly what npm install would fetch anywhere.
+    system "npm", "install", "--prefix", libexec.to_s, "--omit=dev", "--no-audit",
+           "--no-fund", "."
     bin.install_symlink libexec/"bin/smelt"
   end
 
