@@ -72,6 +72,13 @@ jobs:
     name: publish @smeltjs/core
     needs: [verify, fresh-clone]
     runs-on: ubuntu-latest
+    # Trusted publishing (npmjs.com/trusted-publishers): the registry authenticates
+    # this job by its OIDC identity — repository + workflow + environment — instead
+    # of a token any secret leak could copy.
+    permissions:
+      contents: read
+      id-token: write
+    environment: release
     outputs:
       version: ${{ steps.release.outputs.version }}
       sha256: ${{ steps.release.outputs.sha256 }}
@@ -82,11 +89,11 @@ jobs:
         with:
           version: 10.15.0
 
+      # Node 24 ships npm >= 11.5.1, the first that authenticates by OIDC.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12'
+          node-version: '24'
           cache: pnpm
-          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install --frozen-lockfile
 
@@ -120,6 +127,10 @@ jobs:
     name: publish @smeltjs/mcp
     needs: publish-core
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
@@ -127,11 +138,11 @@ jobs:
         with:
           version: 10.15.0
 
+      # Node 24 ships npm >= 11.5.1, the first that authenticates by OIDC.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12'
+          node-version: '24'
           cache: pnpm
-          registry-url: 'https://registry.npmjs.org'
 
       - run: pnpm install --frozen-lockfile
 
