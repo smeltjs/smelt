@@ -103,7 +103,10 @@ jobs:
       - name: pack the release tarball
         id: release
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # The manifest is the release's record, not the tag: core and mcp version
+          # independently (a lockstep mcp bump carries "no package changes"), so the
+          # tarball's name and the registry's query both read it.
+          VERSION="$(node -p "require('./packages/core/package.json').version")"
           TARBALLS="$RUNNER_TEMP/tarballs"
           mkdir -p "$TARBALLS"
           pnpm --filter @smeltjs/core run prepack
@@ -116,10 +119,24 @@ jobs:
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
 
+      # A version already on npm is finished business, not an error: re-firing a tag
+      # (or finishing a half-completed release, like this one) skips what landed and
+      # publishes what remains.
+      - name: is this version already on npm?
+        id: published
+        run: |
+          if npm view "@smeltjs/core@${{ steps.release.outputs.version }}" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "@smeltjs/core@${{ steps.release.outputs.version }} is already on npm — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # npm (not pnpm) publishes: the tarball was pnpm-packed, so workspace ranges
       # are already substituted, and tokenless OIDC is npm's own machinery. Provenance
       # comes with the identity — the attestation says who published what from where.
       - name: publish the packed bytes
+        if: steps.published.outputs.skip != 'true'
         run: >
           npm publish "${{ steps.release.outputs.tarball }}" --access public --provenance
 
@@ -156,12 +173,20 @@ jobs:
 
       - name: build, pack, publish
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # The manifest's version — mcp versions independently of the tag (and of
+          # core). The first v0.5.0 run died here looking for the tag's number.
+          VERSION="$(node -p "require('./packages/mcp/package.json').version")"
           TARBALLS="$RUNNER_TEMP/tarballs"
           mkdir -p "$TARBALLS"
           pnpm --filter "@smeltjs/mcp..." run build
           pnpm --filter @smeltjs/mcp pack --pack-destination "$TARBALLS"
-          npm publish "$TARBALLS/smeltjs-mcp-$VERSION.tgz" --access public --provenance
+          TARBALL="$TARBALLS/smeltjs-mcp-$VERSION.tgz"
+          test -f "$TARBALL" || { echo "packed no $TARBALL"; exit 1; }
+          if npm view "@smeltjs/mcp@$VERSION" version >/dev/null 2>&1; then
+            echo "@smeltjs/mcp@$VERSION is already on npm — skipping"
+            exit 0
+          fi
+          npm publish "$TARBALL" --access public --provenance
 
   formula:
     name: render the tap formula
