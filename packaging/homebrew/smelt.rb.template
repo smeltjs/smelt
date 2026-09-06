@@ -18,8 +18,11 @@ class Smelt < Formula
     # The classic npm-tarball install, spelled out: no Homebrew helper methods, so
     # the formula works on any brew that can pour it. The tarball is the registry's
     # own, so deps resolve to exactly what npm install would fetch anywhere.
-    system "npm", "install", "--prefix", libexec.to_s, "--omit=dev", "--no-audit",
-           "--no-fund", "."
+    # --global --prefix is the classic npm-tarball layout: the package and its one
+    # runtime dependency land in libexec/lib/node_modules, and the bin link the
+    # package declares lands in libexec/bin — which is what the symlink below pours.
+    system "npm", "install", "--global", "--prefix", libexec.to_s, "--omit=dev",
+           "--no-audit", "--no-fund", buildpath.to_s
     bin.install_symlink libexec/"bin/smelt"
   end
 
