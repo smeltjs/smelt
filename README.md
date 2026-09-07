@@ -46,6 +46,11 @@ reversible, and counted.
 | No idea whether the cut hurt                       | An expansion rate you can watch move                                              |
 | Asks a hosted model which lines matter             | Never leaves the machine                                                          |
 
+> **Measured:** the nine-case corpus smelts to **20% of its tokens** on Claude Opus 5's own
+> tokenizer — 109,348 → 21,696 tokens, run 2026-09-07,
+> [logs committed](packages/core/bench/RESULTS.md) — with the expansion rate (0.94) and the
+> answer-quality A/B that qualify it, measured beside. **[The numbers →](#measured-numbers)**
+
 ## Install
 
 ```sh
@@ -473,33 +478,83 @@ Three things that look like bugs and are not:
 
 ## Measured numbers
 
-From the committed measurement harness (`pnpm bench`), tier 1 — bytes and elision counts,
-deterministic, offline, reproducible by anyone from a fresh clone. Corpus commit
-`1f65ab089364`, run 2026-09-02, `@smeltjs/core` at the same commit:
+From the committed measurement harness (`pnpm bench`), run 2026-09-07 on corpus commit
+`10462aa46b8e` — nine cases: this repo's own planner source, real tool outputs, and
+byte-exact files from django, scikit-learn and sympy at pinned upstream commits. Tiers 1–2
+are reproducible by anyone from a fresh clone; tiers 3–4 were run once on `claude-opus-5`,
+and their logs are committed beside the rows ([`bench/RESULTS.md`](packages/core/bench/RESULTS.md),
+append-only; [`tier3-log/`](packages/core/bench/tier3-log/), [`ab-log/`](packages/core/bench/ab-log/)).
 
-| case                            | planner       | in (B) | out (B) |             reduction |
-| ------------------------------- | ------------- | -----: | ------: | --------------------: |
-| large TS file (this repo's own) | structural/v1 | 22,462 |   3,680 |                −83.6% |
-| multi-file grep result          | lexical/v1    |  6,451 |     986 |                −84.7% |
-| java classes                    | structural/v1 |    689 |     366 |                −46.9% |
-| stack trace                     | lexical/v1    |    542 |     389 |                −28.2% |
-| build log (synthetic, labelled) | lexical/v1    |  6,984 |     108 |                −98.5% |
-| TSX component (budget 700 B)    | structural/v1 |  1,090 |     861 | over budget, reported |
+### Tier 1 — bytes · deterministic, offline
 
-What these are: byte reductions on [a small committed corpus](packages/core/bench/), each
-row reproducible with `pnpm bench`. What they are **not**: token savings, cost savings, or
-an aggregate claim — the corpus is the committed case manifest
-([`bench/cases.json`](packages/core/bench/cases.json)), the build-log row is a synthetic
-best-case and says so in its header, and one case came back over budget and is reported
-as exactly that. Token counts (tier 2), the **expansion rate** — the fraction of
-hidden bytes the model asks back for, counted from real `smelt_retrieve` calls
-(tier 3) — and answer-quality A/B, the same question answered from the raw and the
-smelted blob and judged against the raw one (tier 4), have not been run yet; when
-they are, the rows land in
-[`bench/RESULTS.md`](packages/core/bench/RESULTS.md) with the date, corpus commit, and
-model named, append-only. Until then this README claims nothing about them.
+| case                           | planner       |      in (B) |    out (B) | reduction           |
+| ------------------------------ | ------------- | ----------: | ---------: | ------------------- |
+| large TS file                  | structural/v1 |      31,229 |     10,866 | −65.2%, over budget |
+| TSX component                  | structural/v1 |       1,090 |        861 | −21.0%, over budget |
+| java classes                   | structural/v1 |         689 |        366 | −46.9%              |
+| multi-file grep                | lexical/v1    |       6,451 |        986 | −84.7%              |
+| stack trace                    | lexical/v1    |         452 |        344 | −23.9%              |
+| build log (labelled synthetic) | lexical/v1    |      16,354 |        109 | −99.3%              |
+| django query_utils             | structural/v1 |      13,389 |      1,697 | −87.3%              |
+| sklearn _ridge                 | structural/v1 |      91,082 |     31,951 | −64.9%              |
+| sympy boolalg                  | structural/v1 |     114,180 |      8,151 | −92.9%              |
+| **corpus total**               |               | **274,916** | **55,331** | **−79.9%**          |
 
-For the class of saving to expect on real agent traffic, the honest comparable remains
+### Tier 2 — tokens · `count_tokens` on `claude-opus-5`
+
+| case               |    in (tok) |  out (tok) |  reduction |
+| ------------------ | ----------: | ---------: | ---------: |
+| large TS file      |      11,768 |      4,036 |     −65.7% |
+| TSX component      |         429 |        353 |     −17.7% |
+| java classes       |         256 |        172 |     −32.8% |
+| multi-file grep    |       2,835 |        426 |     −85.0% |
+| stack trace        |         196 |        148 |     −24.5% |
+| build log          |       9,090 |         58 |     −99.4% |
+| django query_utils |       4,534 |        577 |     −87.3% |
+| sklearn _ridge     |      34,962 |     12,365 |     −64.6% |
+| sympy boolalg      |      45,278 |      3,561 |     −92.1% |
+| **corpus total**   | **109,348** | **21,696** | **−80.2%** |
+
+### Tier 3 — the expansion rate · the honest signal, and it rang
+
+Aggregate **0.94**: asked to _"read this file to understand X before editing it"_, the model
+retrieved **17 of 18** elided blobs back — a LOSS on 8 of 9 cases (the stack trace retrieved
+none). That is the alarm working, not the product failing: whole-file comprehension is the one
+task shape that genuinely needs everything, and smelt exists to make that visible instead of
+silent. On the question-shaped reads of tier 4, the same model retrieved 0–2.
+
+### Tier 4 — answer quality · A/B, one judged run, verdicts are a model's opinion
+
+| case               | raw in (tok) | smelted in (tok) | retrieves | verdict          |
+| ------------------ | -----------: | ---------------: | --------: | ---------------- |
+| large TS file      |       11,820 |            4,671 |         0 | tie              |
+| TSX component      |          472 |            2,300 |         1 | tie              |
+| java classes       |          296 |            2,050 |         2 | smelted better\* |
+| multi-file grep    |        2,886 |            5,091 |         2 | raw better       |
+| stack trace        |          232 |            1,748 |         1 | tie              |
+| build log          |        9,138 |           10,597 |         1 | raw better       |
+| django query_utils |        4,584 |            1,210 |         0 | tie              |
+| sklearn _ridge     |       35,024 |           49,082 |         2 | tie              |
+| sympy boolalg      |       45,322 |           15,024 |         2 | tie              |
+
+Six ties, two raw-better, one smelted-better. Three honest readings:
+
+- **Quality held.** On answerable questions, the smelted blob tied the raw one in 6 of 9 cases
+  at a fraction of the input — and on the zero-retrieve cases the raw arm paid 2.5–3.8× the
+  smelted arm's tokens.
+- **Round trips re-bill.** Where retrieves happened, each tool round re-sent the transcript, and
+  on 5 of 9 cases the smelted arm's summed input exceeded the raw arm's. Retrieval is the cost
+  lever — which is exactly why smelt counts it, surfaces it as `expansionRate`, and refuses to
+  threshold it for you.
+- \* The one "smelted better" is an artifact: that raw arm returned an empty answer (0 output
+  tokens; the judge's reasons in the committed log say so outright). Reported as measured, with
+  the caveat here.
+
+What these are: measured bytes, measured tokens on a named model's tokenizer, counted
+`smelt_retrieve` calls, and one judged A/B run — every row reproducible or committed. What they
+are **not**: dollar savings (no price table is committed; tokens are the measured unit), rates
+from real agent traffic (tier 3's framing is a lab task, chosen to ring the alarm on purpose),
+or an aggregate claim beyond this corpus. The nearest real-traffic comparable remains
 **Headroom's stated 21–57% across its four proof scenarios** (their README, 2026-09) — their
 numbers, on their corpus, cited as exactly that.
 

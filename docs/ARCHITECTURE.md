@@ -341,11 +341,14 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 
 ### What no number claims yet
 
-- No expansion-rate number, and no token-saving claim. The measurement harness is
-  built and its tier-1 byte rows are committed in `packages/core/bench/RESULTS.md`,
-  but tiers 2–4 — the key-holding tiers: token counts, expansion rate, answer-quality
-  A/B — have deliberately not been run; each is run once and its log committed. Until
-  then the only numbers smelt owns are tier-1 bytes and elision counts.
+- No dollar figure, and no rate from real agent traffic. The four tiers ran once
+  (2026-09-07, corpus `10462aa46b8e`, `claude-opus-5`, logs committed): tokens measured
+  on the model's own tokenizer, an expansion rate of 0.94 under deliberate
+  read-the-whole-file framing — the alarm ringing as designed — and one judged A/B run
+  (six ties, two raw-better, one artifact-tinged smelted-better). What is still
+  deliberately unclaimed: cost in currency (no price table is committed; tokens are
+  the measured unit), expansion on real agent sessions, and any aggregate beyond the
+  committed corpus.
 - Cross-file reasoning inside `smelt()` itself. The repo map covers the whole-tree
   shape as its own surface, but `smelt()` still sees one blob at a time.
 
