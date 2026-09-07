@@ -12,6 +12,12 @@
  *            model-specific — a count without its model named is not a measurement.
  *   tier 3 — expansion rate from real model calls, counting `smelt_retrieve`
  *            invocations. Paid; run once, retrieval log committed.
+ *   tier 4 — answer-quality A/B: the same answerable question asked against the raw
+ *            blob and the smelted one (retrieve tool wired), both answers judged by a
+ *            model holding the raw blob as reference, both arms' token usage
+ *            recorded. Paid; run once, A/B log committed. The verdict is a model's
+ *            opinion — an instrument reading, not a measurement of bytes; the log is
+ *            committed so the reading can be inspected, and the row says whose it is.
  *
  * Law 4 discipline is enforced structurally: a row cannot be rendered without a
  * date, a corpus commit, and a tier, and a token row cannot be rendered without a
@@ -85,6 +91,12 @@ export function validateCases(manifest, fileExists) {
     if (typeof benchCase.provenance !== 'string' || benchCase.provenance.length === 0) {
       problems.push(`${id}: no provenance — a corpus entry must say where it came from`);
     }
+    if (
+      benchCase.abQuestion !== undefined &&
+      (typeof benchCase.abQuestion !== 'string' || benchCase.abQuestion.length === 0)
+    ) {
+      problems.push(`${id}: abQuestion, when present, must be a non-empty string`);
+    }
   }
   return problems;
 }
@@ -111,8 +123,8 @@ export function resultRow({
   if (!/^[0-9a-f]{7,40}$/.test(String(corpusCommit))) {
     throw new Error(`resultRow: corpusCommit must be a git hash, got ${String(corpusCommit)}`);
   }
-  if (tier !== 1 && tier !== 2 && tier !== 3) {
-    throw new Error(`resultRow: tier must be 1, 2 or 3, got ${String(tier)}`);
+  if (tier !== 1 && tier !== 2 && tier !== 3 && tier !== 4) {
+    throw new Error(`resultRow: tier must be 1, 2, 3 or 4, got ${String(tier)}`);
   }
   if (unit !== 'bytes' && (typeof model !== 'string' || model.length === 0)) {
     throw new Error(
@@ -224,6 +236,102 @@ export function tier3RowNote({ verdict, retrieveCalls, truncated, maxRounds }) {
     );
   }
   return verdict.loss ? `${base} — LOSS: the model retrieved everything back` : base;
+}
+
+// -- tier 4: answer-quality A/B -------------------------------------------------
+
+/**
+ * The judge's only tool. The verdict is forced through a tool call so it arrives
+ * parseable or not at all — a prose verdict would need scraping, and a mis-scraped
+ * verdict is an invented number (Law 4). `additionalProperties: false` for the same
+ * reason the shipped tool schemas carry it: a strict-mode client must be able to
+ * validate the reading it is given.
+ */
+export const AB_VERDICT_TOOL = {
+  name: 'report_ab_verdict',
+  description:
+    'Report which answer better answers the question, judged only against the ' +
+    'reference document. "tie" is a valid verdict.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      better: { type: 'string', enum: ['answer_1', 'answer_2', 'tie'] },
+      reasons: { type: 'string' },
+    },
+    required: ['better', 'reasons'],
+    additionalProperties: false,
+  },
+};
+
+/**
+ * The user message one A/B arm sees: the case's question, plus the text — raw, or
+ * smelted with the retrieve contract explained. The smelted arm is the only place the
+ * tool is named, and both arms get the same instruction to answer from the content
+ * given, so the only difference between arms is the blob itself.
+ */
+export function abArmPrompt({ question, text, toolName }) {
+  const preamble =
+    toolName === undefined
+      ? ''
+      : `The content below was shrunk by smelt; elided regions are markers you can ` +
+        `expand with the ${toolName} tool if — and only if — the question needs them.\n\n`;
+  return `Answer the question below from the content that follows it. ${preamble}Question: ${question}\n\n${text}`;
+}
+
+/**
+ * The judge's user message. The two answers appear as `answer_1` and `answer_2` in
+ * the caller's order — the caller decides which arm is which and reverses on odd
+ * case indices, so position bias has no fixed direction across a run. The message
+ * never names which arm produced which answer; unblind the verdict in the caller.
+ */
+export function abJudgeMessages({ question, reference, first, second }) {
+  const content =
+    'You are judging two answers to one question against a reference document. ' +
+    'Judge only accuracy and completeness relative to the reference — not style or ' +
+    'length. Then call the report_ab_verdict tool exactly once.\n\n' +
+    `Question: ${question}\n\n` +
+    `Reference document:\n\n${reference}\n\n` +
+    `answer_1:\n\n${first}\n\n` +
+    `answer_2:\n\n${second}`;
+  return [{ role: 'user', content }];
+}
+
+/**
+ * Parses the judge's tool input into `{ better, reasons }`. Throws on any shape but
+ * the declared one — a half-parsed verdict must surface as UNJUDGED via the caller's
+ * catch, never as a guessed reading.
+ */
+export function parseAbVerdict(input) {
+  const better = input?.better;
+  if (better !== 'answer_1' && better !== 'answer_2' && better !== 'tie') {
+    throw new Error(
+      `parseAbVerdict: better must be answer_1, answer_2 or tie, got ${String(better)}`,
+    );
+  }
+  if (typeof input.reasons !== 'string' || input.reasons.length === 0) {
+    throw new Error('parseAbVerdict: reasons must be a non-empty string');
+  }
+  return { better, reasons: input.reasons };
+}
+
+/**
+ * The note cell for one tier-4 row: both arms' token usage (input column = raw arm
+ * input tokens, output column = smelted arm input tokens — the like-for-like
+ * comparison), the retrieve count, and the resolved verdict. `verdict` arrives
+ * already unblinded ('raw' | 'smelted' | 'tie') or as 'unjudged'; a truncated smelted
+ * arm outranks any verdict, exactly as in tier 3 — a floor is not a reading.
+ */
+export function abRowNote({ verdict, rawUsage, smeltedUsage, retrieves, truncated }) {
+  const arms =
+    `raw ${String(rawUsage.input_tokens)} in/${String(rawUsage.output_tokens)} out · ` +
+    `smelted ${String(smeltedUsage.input_tokens)} in/${String(smeltedUsage.output_tokens)} out · ` +
+    `${String(retrieves)} retrieve(s)`;
+  if (truncated) {
+    return `${arms} · TRUNCATED: the smelted arm hit the round cap mid-task; no verdict claimed`;
+  }
+  const label =
+    verdict === 'unjudged' ? 'UNJUDGED' : verdict === 'tie' ? 'tie' : `${verdict} better`;
+  return `${arms} · verdict: ${label}`;
 }
 
 /**

@@ -30,6 +30,7 @@ interface BenchCase {
   readonly budgetBytes: number;
   readonly task: string;
   readonly provenance: string;
+  readonly abQuestion?: string;
 }
 
 interface BenchLib {
@@ -51,6 +52,22 @@ interface BenchLib {
   }): string;
   CORPUS_REF_FORMAT: string;
   BENCH_STRATEGIES: readonly string[];
+  AB_VERDICT_TOOL: { name: string; input_schema: Record<string, unknown> };
+  abArmPrompt(input: { question: string; text: string; toolName?: string }): string;
+  abJudgeMessages(input: {
+    question: string;
+    reference: string;
+    first: string;
+    second: string;
+  }): readonly { role: string; content: string }[];
+  parseAbVerdict(input: unknown): { better: string; reasons: string };
+  abRowNote(input: {
+    verdict: string;
+    rawUsage: { input_tokens: number; output_tokens: number };
+    smeltedUsage: { input_tokens: number; output_tokens: number };
+    retrieves: number;
+    truncated: boolean;
+  }): string;
   corpusRefMismatch(input: {
     refFile: string;
     from: string;
@@ -170,6 +187,23 @@ describe('the corpus and its manifest', () => {
     // face silently outside the registry's set.
     expect([...lib.BENCH_STRATEGIES].toSorted()).toEqual([...STRATEGIES].toSorted());
   });
+
+  it('abQuestion is optional but never empty — an unanswerable question is no question', () => {
+    const withQuestion = JSON.parse(JSON.stringify(manifest())) as {
+      format: string;
+      cases: Record<string, unknown>[];
+    };
+    for (const benchCase of withQuestion.cases) delete benchCase['abQuestion'];
+    expect(lib.validateCases(withQuestion, () => true)).toEqual([]);
+    withQuestion.cases[0]!['abQuestion'] = '';
+    expect(lib.validateCases(withQuestion, () => true).join('\n')).toContain('abQuestion');
+  });
+
+  it('every case in the committed manifest carries an abQuestion — tier 4 measures all of them', () => {
+    for (const benchCase of manifest().cases) {
+      expect(benchCase.abQuestion, `${benchCase.id} has no abQuestion`).toBeTruthy();
+    }
+  });
 });
 
 describe('result rows (Law 4, structurally)', () => {
@@ -194,7 +228,25 @@ describe('result rows (Law 4, structurally)', () => {
   it('a row without a real date, commit or tier refuses to render', () => {
     expect(() => lib.resultRow({ ...base, date: 'today' })).toThrow(/date/);
     expect(() => lib.resultRow({ ...base, corpusCommit: 'not-a-hash' })).toThrow(/git hash/);
-    expect(() => lib.resultRow({ ...base, tier: 4 })).toThrow(/tier/);
+    expect(() => lib.resultRow({ ...base, tier: 5 })).toThrow(/tier/);
+  });
+
+  it('a tier-4 row renders like any judged row: named model, verdict in the note', () => {
+    const row = lib.resultRow({
+      ...base,
+      tier: 4,
+      unit: 'A/B judged',
+      model: 'claude-opus-5',
+      note: lib.abRowNote({
+        verdict: 'tie',
+        rawUsage: { input_tokens: 100, output_tokens: 10 },
+        smeltedUsage: { input_tokens: 40, output_tokens: 12 },
+        retrieves: 1,
+        truncated: false,
+      }),
+    });
+    expect(row[4]).toBe('claude-opus-5');
+    expect(() => lib.resultRow({ ...base, tier: 4, unit: 'A/B judged' })).toThrow(/name its model/);
   });
 
   it('appendResults appends and never edits, and refuses extrapolation vocabulary', () => {
@@ -385,6 +437,263 @@ describe('the tier-3 retrieval log is the whole conversation', () => {
     expect(log.stopReasons.at(-1)).toBe('tool_use');
     // Even the cut-off conversation is fully logged, tool results included.
     expect(log.transcript).toHaveLength(1 + 2 * log.maxRounds);
+  });
+});
+
+describe('tier 4 helpers (the A/B instrument, pure halves)', () => {
+  it('the raw arm prompt names no tool; the smelted arm prompt names exactly the retrieve tool', () => {
+    const raw = lib.abArmPrompt({ question: 'What is X?', text: 'THE TEXT' });
+    expect(raw).toContain('What is X?');
+    expect(raw).toContain('THE TEXT');
+    expect(raw).not.toContain('smelt_retrieve');
+    const smelted = lib.abArmPrompt({
+      question: 'What is X?',
+      text: 'THE TEXT',
+      toolName: 'smelt_retrieve',
+    });
+    expect(smelted).toContain('smelt_retrieve');
+    expect(smelted).toContain('What is X?');
+  });
+
+  it('the judge sees the question, the reference, and both answers under blind labels', () => {
+    const messages = lib.abJudgeMessages({
+      question: 'What is X?',
+      reference: 'THE REFERENCE',
+      first: 'FIRST ANSWER',
+      second: 'SECOND ANSWER',
+    });
+    expect(messages).toHaveLength(1);
+    const content = String(messages[0]?.content);
+    expect(content).toContain('What is X?');
+    expect(content).toContain('THE REFERENCE');
+    expect(content).toContain('answer_1:\n\nFIRST ANSWER');
+    expect(content).toContain('answer_2:\n\nSECOND ANSWER');
+  });
+
+  it('a verdict parses only in its declared shape — anything else is no verdict', () => {
+    expect(lib.parseAbVerdict({ better: 'answer_1', reasons: 'r' })).toEqual({
+      better: 'answer_1',
+      reasons: 'r',
+    });
+    expect(lib.parseAbVerdict({ better: 'tie', reasons: 'r' }).better).toBe('tie');
+    expect(() => lib.parseAbVerdict({ better: 'answer_3', reasons: 'r' })).toThrow(/better/);
+    expect(() => lib.parseAbVerdict({ better: 'tie' })).toThrow(/reasons/);
+    expect(() => lib.parseAbVerdict(undefined)).toThrow();
+  });
+
+  it('the row note states both arms, the retrieves, and the verdict — or its absence', () => {
+    const input = {
+      rawUsage: { input_tokens: 100, output_tokens: 10 },
+      smeltedUsage: { input_tokens: 40, output_tokens: 12 },
+      retrieves: 2,
+    };
+    expect(lib.abRowNote({ ...input, verdict: 'smelted', truncated: false })).toBe(
+      'raw 100 in/10 out · smelted 40 in/12 out · 2 retrieve(s) · verdict: smelted better',
+    );
+    expect(lib.abRowNote({ ...input, verdict: 'tie', truncated: false })).toContain('verdict: tie');
+    expect(lib.abRowNote({ ...input, verdict: 'unjudged', truncated: false })).toContain(
+      'verdict: UNJUDGED',
+    );
+    const truncated = lib.abRowNote({ ...input, verdict: 'smelted', truncated: true });
+    expect(truncated).toContain('TRUNCATED');
+    expect(truncated).not.toContain('verdict: smelted better');
+  });
+
+  it('the verdict tool schema is strict — a judge reading must be validatable', () => {
+    expect(lib.AB_VERDICT_TOOL.name).toBe('report_ab_verdict');
+    expect(lib.AB_VERDICT_TOOL.input_schema['additionalProperties']).toBe(false);
+  });
+});
+
+/** A judge response reporting `better` through the verdict tool, as the instrument demands. */
+function judgeResponse(better: string) {
+  return {
+    stop_reason: 'tool_use',
+    content: [
+      {
+        type: 'tool_use',
+        id: 'judge-1',
+        name: 'report_ab_verdict',
+        input: { better, reasons: 'the second is complete' },
+      },
+    ],
+    usage: { input_tokens: 200, output_tokens: 20 },
+  };
+}
+
+describe('the tier-4 A/B measurement (transport-injected)', () => {
+  interface Tier4Log {
+    format: string;
+    maxRounds: number;
+    smeltedFirst: boolean;
+    raw: { transcript: readonly unknown[]; usage: { input_tokens: number; output_tokens: number } };
+    smelted: {
+      transcript: readonly unknown[];
+      usage: { input_tokens: number; output_tokens: number };
+      stopReasons: readonly string[];
+      truncated: boolean;
+    };
+    judge: { transcript: readonly unknown[]; reasons: string };
+    verdict: string;
+  }
+  interface Tier4Module {
+    measureAb(input: {
+      model: string;
+      benchCase: { id: string; abQuestion: string };
+      rawText: string;
+      smeltedText: string;
+      smelter: unknown;
+      index: number;
+      transport: (payload: unknown) => Promise<unknown>;
+    }): Promise<{
+      log: Tier4Log;
+      verdict: string;
+      rawUsage: { input_tokens: number; output_tokens: number };
+      smeltedUsage: { input_tokens: number; output_tokens: number };
+      retrieves: number;
+      truncated: boolean;
+    }>;
+  }
+
+  let measureAb: Tier4Module['measureAb'];
+  beforeAll(async () => {
+    const tier4 = (await import(
+      pathToFileURL(join(benchDir, 'tier4.mjs')).href
+    )) as unknown as Tier4Module;
+    measureAb = tier4.measureAb;
+  });
+
+  const rawResponse = {
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: 'RAW ANSWER' }],
+    usage: { input_tokens: 100, output_tokens: 10 },
+  };
+  const toolUseResponse = {
+    stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'call-1', name: 'smelt_retrieve', input: { hash: 'abc' } }],
+    usage: { input_tokens: 50, output_tokens: 5 },
+  };
+  const smeltedEndResponse = {
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: 'SMELTED ANSWER' }],
+    usage: { input_tokens: 60, output_tokens: 7 },
+  };
+
+  /** Scripts the full call sequence and records every payload it was sent. */
+  function scripted(judge: unknown, payloads: unknown[]) {
+    const queue = [rawResponse, toolUseResponse, smeltedEndResponse, judge];
+    return {
+      payloads,
+      transport: (payload: unknown) => {
+        payloads.push(payload);
+        return Promise.resolve(queue.shift());
+      },
+    };
+  }
+
+  it('asks both arms, judges blind, unblinds by case index, and records the call shapes', async () => {
+    const payloads: unknown[] = [];
+    const { transport } = scripted(judgeResponse('answer_2'), payloads);
+    const result = await measureAb({
+      model: 'test-model',
+      benchCase: { id: 'case-x', abQuestion: 'what is it?' },
+      rawText: 'RAW TEXT',
+      smeltedText: 'SMELTED TEXT',
+      smelter: fakeSmelter(),
+      index: 0,
+      transport,
+    });
+
+    // Four calls: raw arm, two smelted-arm rounds, judge.
+    expect(payloads).toHaveLength(4);
+    const [rawCall, firstSmeltedCall, , judgeCall] = payloads as [
+      { tools?: unknown[]; temperature?: number; messages: { role: string; content: string }[] },
+      { tools: { name: string }[] },
+      unknown,
+      { tools: { name: string }[]; temperature?: number; messages: { content: string }[] },
+    ];
+    expect(rawCall.tools).toBeUndefined(); // the raw arm has no way back — that is the arm
+    expect(String(rawCall.messages[0]?.content)).toContain('RAW TEXT');
+    expect(firstSmeltedCall.tools[0]?.name).toBe('smelt_retrieve');
+    expect(judgeCall.tools[0]?.name).toBe('report_ab_verdict');
+    expect(judgeCall.temperature).toBe(0); // the judge is the instrument, not the subject
+    expect(String(judgeCall.messages[0]?.content)).toContain('answer_1:\n\nRAW ANSWER');
+    expect(String(judgeCall.messages[0]?.content)).toContain('answer_2:\n\nSMELTED ANSWER');
+
+    // index 0 → raw first → 'answer_2' is the smelted arm.
+    expect(result.verdict).toBe('smelted');
+    expect(result.truncated).toBe(false);
+    // Usage per arm, summed from the API's own fields.
+    expect(result.rawUsage).toEqual({ input_tokens: 100, output_tokens: 10 });
+    expect(result.smeltedUsage).toEqual({ input_tokens: 110, output_tokens: 12 });
+    expect(result.retrieves).toBe(1);
+    // The log carries both transcripts, the judge's reasons, and the retrieve payload.
+    expect(result.log.raw.transcript).toHaveLength(2);
+    expect(JSON.stringify(result.log.smelted.transcript)).toContain('RESTORED:abc');
+    expect(result.log.judge.reasons).toBe('the second is complete');
+    expect(result.log.format).toBe('smelt-bench-tier4-log/v1');
+  });
+
+  it('an odd case index flips the blind order — the same judge call names the other arm', async () => {
+    const payloads: unknown[] = [];
+    const { transport } = scripted(judgeResponse('answer_2'), payloads);
+    const result = await measureAb({
+      model: 'test-model',
+      benchCase: { id: 'case-y', abQuestion: 'q' },
+      rawText: 'RAW TEXT',
+      smeltedText: 'SMELTED TEXT',
+      smelter: fakeSmelter(),
+      index: 1,
+      transport,
+    });
+    const judgeCall = payloads[3] as { messages: { content: string }[] };
+    expect(String(judgeCall.messages[0]?.content)).toContain('answer_1:\n\nSMELTED ANSWER');
+    // index 1 → smelted first → 'answer_2' is the raw arm.
+    expect(result.verdict).toBe('raw');
+    expect(result.log.smeltedFirst).toBe(true);
+  });
+
+  it('a judge that did not produce a parseable verdict is UNJUDGED, never guessed', async () => {
+    const payloads: unknown[] = [];
+    const proseJudge = {
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'I prefer the second one, informally.' }],
+      usage: { input_tokens: 200, output_tokens: 20 },
+    };
+    const { transport } = scripted(proseJudge, payloads);
+    const result = await measureAb({
+      model: 'test-model',
+      benchCase: { id: 'case-z', abQuestion: 'q' },
+      rawText: 'RAW',
+      smeltedText: 'SMELTED',
+      smelter: fakeSmelter(),
+      index: 0,
+      transport,
+    });
+    expect(result.verdict).toBe('unjudged');
+    expect(result.log.judge.reasons).toBe('');
+  });
+
+  it('a smelted arm cut off at the round cap claims no verdict — a floor is not a reading', async () => {
+    let calls = 0;
+    const result = await measureAb({
+      model: 'test-model',
+      benchCase: { id: 'case-t', abQuestion: 'q' },
+      rawText: 'RAW',
+      smeltedText: 'SMELTED',
+      smelter: fakeSmelter(),
+      index: 0,
+      transport: (payload) => {
+        calls += 1;
+        void payload;
+        return Promise.resolve(calls === 1 ? rawResponse : toolUseResponse);
+      },
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.verdict).toBe('unjudged');
+    // 1 raw call + the cap's worth of smelted rounds — and no judge call after them.
+    expect(calls).toBe(1 + result.log.maxRounds);
+    expect(result.log.judge.transcript).toHaveLength(0);
   });
 });
 

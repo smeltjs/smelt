@@ -1,6 +1,6 @@
 {
   "guards": 33,
-  "mutations": 150,
+  "mutations": 152,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -12,7 +12,7 @@
     },
     {
       "guard": "packages/core/test/guards/bench-results.test.ts",
-      "count": 5
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/cache-hygiene.test.ts",

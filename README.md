@@ -30,6 +30,14 @@ The removed bytes are kept locally, content-addressed. The model gets a `smelt_r
 tool. **Every retrieval is counted**, so cutting too much shows up as a rising number
 rather than as a model that is quietly wrong about your code.
 
+This is also the shape the vendors have arrived at from their side: Anthropic's
+context-engineering guidance is to "maintain lightweight identifiers (file paths, stored
+queries, web links, etc.) and use these references to dynamically load data into context
+at runtime using tools"
+([essay](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)).
+The marker plus `smelt_retrieve` is that pattern — with every reference explained,
+reversible, and counted.
+
 | What your agent does today                         | What smelt does instead                                                           |
 | -------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sends the whole 40 kB file, or its first 200 lines | Keeps the declarations your focus matched, with their signatures and doc comments |
@@ -299,6 +307,14 @@ where the harness's rewrite schema carries one (Claude Code, Codex), on stderr w
 it does not (Gemini, Cursor, Hermes, opencode), and falls back to deny where rewrite
 is impossible.
 
+The preset is **cache-safe by construction**. smelt transforms a tool result before that
+result first reaches the model and never rewrites a prefix a provider has already cached —
+the geometry both Anthropic and OpenAI document as the trap (retroactive clearing
+invalidates a warm prefix, and must save enough to pay for the re-write). And caching
+discounts a re-read; it never frees what those bytes still occupy — the context window,
+the rate limit, the plan quota. The economics worked on list prices:
+[`docs/research/2026-09-06-platform-context-landscape.md`](docs/research/2026-09-06-platform-context-landscape.md).
+
 One guard core, thin per-harness shims, three honesty tiers
 (survey: [`docs/research/2026-09-02-harness-capability-matrix.md`](docs/research/2026-09-02-harness-capability-matrix.md)):
 
@@ -472,11 +488,14 @@ deterministic, offline, reproducible by anyone from a fresh clone. Corpus commit
 
 What these are: byte reductions on [a small committed corpus](packages/core/bench/), each
 row reproducible with `pnpm bench`. What they are **not**: token savings, cost savings, or
-an aggregate claim — the corpus is six cases, the build-log row is a synthetic
+an aggregate claim — the corpus is the committed case manifest
+([`bench/cases.json`](packages/core/bench/cases.json)), the build-log row is a synthetic
 best-case and says so in its header, and one case came back over budget and is reported
-as exactly that. Token counts (tier 2) and the **expansion rate** — the fraction of
-hidden bytes the model asks back for, counted from real `smelt_retrieve` calls (tier 3) —
-have not been run yet; when they are, the rows land in
+as exactly that. Token counts (tier 2), the **expansion rate** — the fraction of
+hidden bytes the model asks back for, counted from real `smelt_retrieve` calls
+(tier 3) — and answer-quality A/B, the same question answered from the raw and the
+smelted blob and judged against the raw one (tier 4), have not been run yet; when
+they are, the rows land in
 [`bench/RESULTS.md`](packages/core/bench/RESULTS.md) with the date, corpus commit, and
 model named, append-only. Until then this README claims nothing about them.
 
@@ -569,9 +588,14 @@ engines floor sits where it does.
 smelt's architecture is **close to Headroom's**, and it would be dishonest to imply
 otherwise.
 
-- **[Headroom](https://github.com/headroomlabs-ai/headroom)** — Python, same core shape:
-  local store, a retrieve tool, BM25. Its CacheAligner's detect-don't-rewrite decision is
-  copied here outright. If you need this today, in Python, use Headroom.
+- **[Headroom](https://github.com/headroomlabs-ai/headroom)** — the closest peer, and it
+  has grown: a Rust core behind Python and TS SDKs, a proxy wrapping sixteen-odd agents,
+  JSON statistical crushing, image shaping — and a trained model in the prose cut path,
+  retrieval that expires with a TTL, and telemetry beacons on by default. smelt's shape
+  (a local store plus a retrieve tool) started from its early Python form, and its
+  CacheAligner's detect-don't-rewrite decision is copied here outright. If you want a
+  proxy today, use Headroom. Surveyed against its live docs, 2026-09:
+  [`docs/research/2026-09-06-peer-tools-survey.md`](docs/research/2026-09-06-peer-tools-survey.md).
 - **[Aider's repo-map](https://aider.chat/2023/10/22/repomap.html)** — the proven prior
   art the repo-map planner is modelled on: tree-sitter tags + PageRank + a budget + a
   cache.
@@ -583,10 +607,15 @@ otherwise.
   localization; a v2 conversation, because each puts a model in the retrieval path.
 - **[Tree-sitter](https://tree-sitter.github.io/)** — the parsers under all of it.
 
-**What smelt actually adds** — the whole list: the **zero-network guarantee**, the
-requirement that **every elision explains itself in named-rule terms**, and the
-**mutation-tested honesty machinery** that makes both claims checkable instead of
-aspirational.
+**What smelt actually adds**, re-checked against the live field 2026-09
+([survey](docs/research/2026-09-06-peer-tools-survey.md)): the **zero-network guarantee**,
+guard-enforced and claimed by no peer; the requirement that **every elision explains
+itself in named-rule terms**; retrieval that is **reversible without eviction and
+counted** — the expansion rate, which no peer and no platform reports at all; and the
+**mutation-tested honesty machinery** that makes these claims checkable instead of
+aspirational. The nearest peers match the honesty _culture_ (llmtrim's disclosed
+regressions, Headroom's no-artifact-no-number rule) — not the machinery, and not the
+counting.
 
 ## Documentation
 
@@ -595,6 +624,7 @@ aspirational.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)                 | The deep dive: the four laws and their reasoning, the architecture file by file, the consumer contract, decisions |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md)                           | Dev setup, the guard/mutation convention, the recorded transcript of the zero-network guard going red             |
 | [`packages/core/bench/`](packages/core/bench/)                 | The measurement harness: corpus, tiers, and the append-only results table                                         |
+| [`docs/research/`](docs/research/)                             | Dated primary-source surveys: harness capability, peer tools, platform context economics, positioning             |
 | [`packages/core/THIRD-PARTY.md`](packages/core/THIRD-PARTY.md) | Generated attribution for the bundled grammars. Never hand-edited; a stale copy fails `pnpm test`.                |
 | [`assets/PALETTE.md`](assets/PALETTE.md)                       | The palette, the marks, and how to regenerate the rasters                                                         |
 

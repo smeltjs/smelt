@@ -20,15 +20,15 @@ import { guardRoot, importSpecifiers, packageRoot, stripStringsAndComments } fro
  *     entry — the harness is measurement equipment, not product, and its tier-2/3
  *     modules can reach the network, which must never ride along in the tarball.
  *  2. Every row in `bench/RESULTS.md` is a measurement: it names its date, corpus
- *     commit and tier, token/retrieval rows name their model (token counts are
+ *     commit and tier, token/retrieval/judged rows name their model (token counts are
  *     model-specific — Decision 8 in docs/ARCHITECTURE.md), byte rows name none (bytes belong to no
  *     model, and a model on a byte row would imply a conversion nobody performed).
  *     And the file contains no extrapolation vocabulary: no "up to", and never a
  *     cache-hit-rate figure — the exact unsupported claims Law 4 was written
  *     against.
- *  3. The harness touches the network only in `tier2.mjs` and `tier3.mjs`. Every
- *     other bench module — the runner, the pure lib, the corpus generator — must be
- *     incapable of it, so a tier-1 run is offline by construction, not by flag.
+ *  3. The harness touches the network only in `tier2.mjs`, `tier3.mjs` and `tier4.mjs`.
+ *     Every other bench module — the runner, the pure lib, the corpus generator — must
+ *     be incapable of it, so a tier-1 run is offline by construction, not by flag.
  *
  * Committed artefacts are read through `guardRoot()` (with a fallback to the real
  * package for files a mutation did not copy), so `pnpm mutate` can stale one file
@@ -84,7 +84,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     for (const { cells, line } of resultsRows(artifact('bench/RESULTS.md'))) {
       const [caseId, tier, date, commit, model, unit, input, output] = cells;
       expect(caseId, line).toBeTruthy();
-      expect(tier, line).toMatch(/^tier [123]$/);
+      expect(tier, line).toMatch(/^tier [1-4]$/);
       expect(date, line).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(commit, line).toMatch(/^[0-9a-f]{7,40}$/);
       expect(unit, line).toBeTruthy();
@@ -111,9 +111,9 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     ).not.toContain('cache hit rate');
   });
 
-  it('only tier2.mjs and tier3.mjs can reach the network', () => {
+  it('only tier2.mjs, tier3.mjs and tier4.mjs can reach the network', () => {
     const NETWORK_SHAPES = [/\bfetch\s*\(/, /node:https?\b/, /\bWebSocket\b/, /\bXMLHttpRequest\b/];
-    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs']);
+    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs']);
     const benchFiles = readdirSync(join(packageRoot(), 'bench'))
       .filter((entry) => entry.endsWith('.mjs'))
       .toSorted();
@@ -123,6 +123,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     ).toBeGreaterThan(0);
     expect(benchFiles).toContain('tier2.mjs');
     expect(benchFiles).toContain('tier3.mjs');
+    expect(benchFiles).toContain('tier4.mjs');
 
     for (const file of benchFiles) {
       if (ALLOWED.has(file)) continue;
@@ -131,8 +132,8 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
       for (const shape of NETWORK_SHAPES) {
         expect(
           shape.test(source),
-          `bench/${file} matches ${String(shape)} — network access belongs only in tier2.mjs/tier3.mjs, ` +
-            'so that a tier-1 run is offline by construction',
+          `bench/${file} matches ${String(shape)} — network access belongs only in ` +
+            'tier2.mjs/tier3.mjs/tier4.mjs, so that a tier-1 run is offline by construction',
         ).toBe(false);
       }
       // The shape scan above runs on STRIPPED source, so a transport imported
@@ -147,7 +148,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
       expect(
         banned,
         `bench/${file} imports a network transport — network access belongs only in ` +
-          'tier2.mjs/tier3.mjs, so that a tier-1 run is offline by construction',
+          'tier2.mjs/tier3.mjs/tier4.mjs, so that a tier-1 run is offline by construction',
       ).toEqual([]);
     }
   });
@@ -161,7 +162,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     // `.` (or identifier character) exempts a match.
     const SPAWN_CALL =
       /(?<![.\w$])(?:spawnSync|spawn|execFileSync|execFile|execSync|exec|fork)\s*\(/g;
-    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs']);
+    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs']);
     const benchFiles = readdirSync(join(packageRoot(), 'bench'))
       .filter((entry) => entry.endsWith('.mjs'))
       .toSorted();
@@ -240,5 +241,21 @@ export const MUTATIONS: GuardMutation[] = [
     find: 'export const RESULTS_HEADER = [',
     replace: "import 'node:https';\n\nexport const RESULTS_HEADER = [",
     why: 'a network transport imported statically into a non-tier bench module — the specifier lives inside a string literal, which the stripped-source shape scan blanks out, so only the import-specifier scan can see it',
+  },
+  {
+    kind: 'artifact',
+    id: 'bench-network-in-generator',
+    file: 'bench/gen-build-log.mjs',
+    find: '#!/usr/bin/env node',
+    replace: "#!/usr/bin/env node\nawait fetch('https://example.invalid/telemetry');",
+    why: 'a network call in the corpus generator — a third non-tier bench file beside the runner and the lib, proving the scan covers every bench module and not only the two the earlier mutations named',
+  },
+  {
+    kind: 'artifact',
+    id: 'bench-results-forged-tier',
+    file: 'bench/RESULTS.md',
+    find: '| large-ts-file   | tier 1 | 2026-09-02 | 1f65ab089364',
+    replace: '| large-ts-file   | tier 9 | 2026-09-02 | 1f65ab089364',
+    why: 'a results row citing a tier that does not exist — the row-shape check must refuse a number that names no measurement tier, or any figure could ride in under an invented tier label',
   },
 ];

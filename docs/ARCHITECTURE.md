@@ -343,9 +343,9 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 
 - No expansion-rate number, and no token-saving claim. The measurement harness is
   built and its tier-1 byte rows are committed in `packages/core/bench/RESULTS.md`,
-  but tier 3 — the paid, model-calling tier that measures the expansion rate — has
-  deliberately not been run; it is run once and its log committed. Until then the
-  only numbers smelt owns are tier-1 bytes and elision counts.
+  but tiers 2–4 — the key-holding tiers: token counts, expansion rate, answer-quality
+  A/B — have deliberately not been run; each is run once and its log committed. Until
+  then the only numbers smelt owns are tier-1 bytes and elision counts.
 - Cross-file reasoning inside `smelt()` itself. The repo map covers the whole-tree
   shape as its own surface, but `smelt()` still sees one blob at a time.
 
@@ -645,16 +645,18 @@ It lives at `packages/core/bench/` — outside `src/`, so the zero-network guard
 untouched, and outside `files`, so it ships in no tarball. A committed corpus of real
 tool outputs (`bench/corpus/`, provenance per file in `bench/README.md`), a runner
 (`pnpm bench`, node + built dist, zero dependencies), and an append-only
-`bench/RESULTS.md`. Network access exists only in `tier2.mjs`/`tier3.mjs`, loaded
-dynamically on their tiers; tier 1 is offline by construction, and
-`test/guards/bench-results.test.ts` plus three mutations keep it that way.
+`bench/RESULTS.md`. Network access exists only in `tier2.mjs`/`tier3.mjs`/`tier4.mjs`,
+loaded dynamically on their tiers; tier 1 is offline by construction, and
+`test/guards/bench-results.test.ts` plus its mutations keep it that way.
 
-Three tiers, per Decision 8 — `count_tokens` is free, which is what makes the split
+Four tiers, per Decision 8 — `count_tokens` is free, which is what makes the split
 affordable: tier 1 is bytes and elision counts, deterministic, no key, reproducible by
 any contributor offline. Tier 2 adds token counts through `count_tokens` — free, needs
-any key. Tier 3 is expansion rate, the only paid part: run once, with the retrieval log
-committed as an artifact so the rate is checkable from a committed file. Every row names
-its model, and re-running on a newer model is a **new row, not an edit** — Claude's
+any key. Tiers 3 and 4 are the paid parts: tier 3 is expansion rate, tier 4 is
+answer-quality A/B (the same question against the raw blob and the smelted one, a
+judge holding the raw blob as reference) — each run once, with its log committed as an
+artifact so every reading is checkable from a committed file. Every row names its
+model, and re-running on a newer model is a **new row, not an edit** — Claude's
 tokenizer changed by ~30% between generations, and an edit would silently rewrite
 history.
 
@@ -1303,19 +1305,26 @@ version number.
 
 `count_tokens` is **free** — _"Token counting is free to use but subject to requests per
 minute rate limits"_, 5,000 RPM at the Start tier, with limits independent of message
-creation — which is what makes a three-tier split affordable:
+creation — which is what makes a four-tier split affordable:
 
-| Tier | What it reports                   | Cost | Key needed | Who can reproduce it     |
-| ---- | --------------------------------- | ---- | ---------- | ------------------------ |
-| 1    | Bytes and elision counts          | none | none       | any contributor, offline |
-| 2    | Token counts, via `count_tokens`  | free | any key    | anyone with a key        |
-| 3    | Expansion rate — real model calls | paid | any key    | anyone, from the log     |
+| Tier | What it reports                                                  | Cost | Key needed | Who can reproduce it     |
+| ---- | ---------------------------------------------------------------- | ---- | ---------- | ------------------------ |
+| 1    | Bytes and elision counts                                         | none | none       | any contributor, offline |
+| 2    | Token counts, via `count_tokens`                                 | free | any key    | anyone with a key        |
+| 3    | Expansion rate — real model calls                                | paid | any key    | anyone, from the log     |
+| 4    | Answer-quality A/B — raw vs smelted, judged against the raw blob | paid | any key    | anyone, from the log     |
 
 Tier 1 is deterministic and needs no key, so a stranger can reproduce the table's
-structural half exactly. Tier 3 is the only paid part: run it once and **commit the
-retrieval log as an artifact**, so the rate is verifiable from a committed file rather
-than from trust. The harness implements all three tiers; tier 3 has not yet been run —
-see "The measurement harness".
+structural half exactly. Tiers 3 and 4 are the paid parts: run each once and **commit
+the log as an artifact** (the retrieval log, the A/B log), so every reading is
+verifiable from a committed file rather than from trust. The harness implements all
+four tiers; tiers 2–4 have not yet been run — see "The measurement harness".
+
+Tier 4's verdict deserves its own sentence, because it is the one reading in the file
+that is a model's opinion: the judge is the instrument, its reasons live in the
+committed log, a verdict that does not parse is reported UNJUDGED rather than guessed,
+and a run cut off at the round cap claims no verdict at all. An instrument reading,
+labelled as one, is Law 4; a number dressed as a measurement is not.
 
 **The trap, written down:** tokenizers differ by model, so every table row names its
 model, and re-running on a newer model is a **new row, not an edit**. See Decision 1 —
