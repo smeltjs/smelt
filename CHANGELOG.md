@@ -11,6 +11,68 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
+## 0.6.0 — 2026-09-07
+
+`@smeltjs/core@0.6.0` · `@smeltjs/mcp@0.5.0`
+
+The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
+contract — is unchanged. Everything below is additive beside it, and every one of the
+five changes came out of the 2026-09-07 architecture review of the measured tiers 1–4.
+
+### Added
+
+- **`smelt_retrieve_batch`** (`retrieveMany`, `createRetrieveBatchTool`) — N hashes,
+  one round trip, one block per hash, a refusal riding inside its block rather than
+  failing the batch. Tier 4 measured the cost lever: every one-hash call is a new
+  request that re-bills the transcript, and on five of nine cases the smelted arm's
+  summed input exceeded the raw arm's. Each hit inside a batch journals exactly as a
+  single call would, so the expansion rate keeps its meaning.
+- **The elision outline** — `PlannedElision.names` / `AppliedElision.names`: the names
+  of the declarations a structural cut collapsed, read off the tree, rendered beneath
+  the elision's report row (`↳ names: parseConfig, normalisePath`), in the `--json`
+  envelope and in `smelt_file`'s report block. Out of band: the marker and its priced
+  cost do not move by one byte (guarded, with a mutation).
+- **Producer-aware focus** — `src/hooks/focus-terms.ts`, one zero-import derivation of
+  focus terms from the command that produced a blob. The hooks guard's rewrite wrap now
+  carries the literal `--focus <term>` it already parsed, for searches that print
+  context (`-C`, `-A`, `-B`); a plain grep stays unfocused because every line already
+  matches. `smelt --producer '<cmd>'` and `smelt_file`'s `producer` resolve through the
+  same function; the caller's own focus always wins; the report attributes whose focus
+  cut (`focus  handleRequest   (from --producer)`).
+- **The elision ledger** — the rule an elision was cut by is persisted at put time
+  (`put(content, reason)`; a `put "<hash>" "<rule>"` journal line the counter fold
+  skips, so a directory written by 0.6 reads as the same counters under 0.5).
+  `store.ledger()` and the `readLedger` op fold it into `{ rule, stored, retrieved }`
+  rows; `smelt stats` prints `rule.<id>.stored` / `rule.<id>.retrieved`; `smelt_stats`
+  returns the ledger as a second block; `createSmelter` hands it to planners as opt-in
+  `PlanInput.ruleHistory`. Data a caller's planner may weigh — never a threshold smelt
+  applies (Decision 4).
+- **Content-kind planning** — `probeKind()` states two facts about the bytes (a JSON
+  parse succeeded; a unified-diff header shape is present) and never sniffs a language.
+  `json/v1` cuts by members and elements; `diff/v1` by files, hunks, and line windows
+  inside a matched hunk. Each refuses any other content with `ContentKindError`, and
+  `auto` now routes kind first, then language. `DEFAULT_STRATEGY` stays `lexical`.
+  Built because two new probe corpus cases (a real git diff, a real tier-4 JSON log)
+  measured lexical over budget; the honest result is a trade — at corpus
+  `19b11585126f`, `diff/v1` leaves 2706 B where lexical leaves 1516, `json/v1` 3280 B
+  where lexical leaves 2996 — in exchange for every file and hunk header, and the JSON
+  skeleton with an outline of every hidden key.
+- **The bench ships the report block** — tiers 3 and 4 now show the model the smelted
+  text _and_ its report, the two blocks `smelt_file` returns; log formats
+  `smelt-bench-tier3-log/v3` and `smelt-bench-tier4-log/v2` mark the change. Earlier
+  logs measured an ergonomics the product never had.
+
+### Changed
+
+- `smelt stats --json` is `smelt-stats-cli/v2`: `stats` verbatim as before, plus
+  `ledger`.
+- `ElisionStore.put` accepts an optional `reason`; `ElisionStore.ledger?()` is an
+  optional method — a custom store need not implement either.
+- The `--strategy` set is `lexical, structural, auto, json, diff` on every face (flag,
+  config, wizard, `smelt_file` schema, bench).
+- `docs/ARCHITECTURE.md`'s file-by-file table and guards table were pasted four and
+  two times with drift; one copy each now.
+
 ## 0.5.0 — 2026-09-05
 
 `@smeltjs/core@0.5.0` · `@smeltjs/mcp@0.4.0` (lockstep — the mcp package itself is

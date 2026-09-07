@@ -33,7 +33,7 @@ const core = JSON.parse(
 describe('the publish surface of package.json', () => {
   it('is @smeltjs/mcp 0.3.0 under Apache-2.0', () => {
     expect(manifest.name).toBe('@smeltjs/mcp');
-    expect(manifest.version).toBe('0.4.0');
+    expect(manifest.version).toBe('0.5.0');
     expect(manifest.license).toBe('Apache-2.0');
   });
 

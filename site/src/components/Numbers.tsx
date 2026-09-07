@@ -36,7 +36,7 @@ const data = bench as unknown as BenchData;
 const fmt = new Intl.NumberFormat('en-US');
 
 function plannerOf(note: string): string {
-  const m = note.match(/(structural|lexical)\/v\d+/);
+  const m = note.match(/(structural|lexical|json|diff)\/v\d+/);
   return m ? m[0] : '—';
 }
 

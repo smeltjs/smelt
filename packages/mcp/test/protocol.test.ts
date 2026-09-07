@@ -164,7 +164,7 @@ describe('the built server over real stdio', () => {
     const init = run.byId(1).result!;
     const serverInfo = init['serverInfo'] as { name: string; version: string };
     expect(serverInfo.name).toBe('smelt-mcp');
-    expect(serverInfo.version).toBe('0.4.0');
+    expect(serverInfo.version).toBe('0.5.0');
     // The instructions field carries the one unlearnable fact: markers'
     // retrieve("hash") maps to smelt_retrieve.
     expect(init['instructions']).toContain('retrieve("hash")');
@@ -197,7 +197,7 @@ describe('the built server over real stdio', () => {
     expect(run.messages.length).toBeGreaterThanOrEqual(2);
     for (const message of run.messages) expect(message.jsonrpc).toBe('2.0');
     // The startup receipt exists, and on the right stream.
-    expect(run.stderr).toContain('smelt-mcp 0.4.0:');
+    expect(run.stderr).toContain('smelt-mcp 0.5.0:');
     expect(run.stderr).toContain('in-memory store');
     expect(run.stdout).not.toContain('in-memory store');
   });
