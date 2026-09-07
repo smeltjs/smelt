@@ -14,18 +14,18 @@ import { FUNCTIONS_TS } from './structural-fixtures.ts';
  * report renders them beneath the row — while the marker, its byte cost and the
  * wire surface do not move by one byte. The marker-format guard pins the last half.
  */
-describe('the elision outline travels from plan to report', () => {
-  async function smelted(): Promise<ReturnType<typeof applyPlan>> {
-    const plan = await planStructural({
-      text: FUNCTIONS_TS,
-      language: 'typescript',
-      budgetBytes: 600,
-      focus: ['handleRequest'],
-      pricing: markerPricing('typescript'),
-    });
-    return applyPlan(FUNCTIONS_TS, plan, new MemoryElisionStore());
-  }
+async function smelted(): Promise<ReturnType<typeof applyPlan>> {
+  const plan = await planStructural({
+    text: FUNCTIONS_TS,
+    language: 'typescript',
+    budgetBytes: 600,
+    focus: ['handleRequest'],
+    pricing: markerPricing('typescript'),
+  });
+  return applyPlan(FUNCTIONS_TS, plan, new MemoryElisionStore());
+}
 
+describe('the elision outline travels from plan to report', () => {
   it('applyPlan carries the planner’s names onto the applied elision, verbatim', async () => {
     const result = await smelted();
     expect(result.elisions.map((elision) => elision.names)).toEqual([
