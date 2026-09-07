@@ -12,6 +12,15 @@ A library, not a proxy.
 
 </div>
 
+**Measured, in three numbers** — every row in [`bench/RESULTS.md`](packages/core/bench/RESULTS.md), logs committed:
+
+| tokens sent, nine-case corpus                                                                     | expansion rate, whole-file tasks                                                                                                               | answer quality, A/B against raw                                                                                                                                                                                                    |
+| :------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **−80%** · 109,348 → 21,696                                                                       | **0.94** · 17 of 18 blobs asked back                                                                                                           | **6 ties** · 2 raw better · 1 smelted better\*                                                                                                                                                                                     |
+| Counted on the model's own tokenizer. _tier 2 · claude-opus-5 · 2026-09-07 · corpus 10462aa46b8e_ | The over-pruning alarm ringing where it should: 8 of 9 cases retrieved everything. _tier 3 · claude-opus-5 · 2026-09-07 · corpus 10462aa46b8e_ | Judged blind, one run, a model's opinion. \*The one "smelted better" is an artifact — [why](#tier-4--answer-quality--ab-one-judged-run-verdicts-are-a-models-opinion). _tier 4 · claude-opus-5 · 2026-09-07 · corpus 10462aa46b8e_ |
+
+And the same honesty at your own keyboard — `smelt stats` after a session, per rule ([below](#sixty-seconds-from-a-shell)).
+
 ## What it does
 
 **smelt shrinks what your coding agent sends to a model, without lying about what it
@@ -46,11 +55,6 @@ reversible, and counted.
 | No idea whether the cut hurt                       | An expansion rate you can watch move                                              |
 | Asks a hosted model which lines matter             | Never leaves the machine                                                          |
 
-> **Measured:** the nine-case corpus smelts to **20% of its tokens** on Claude Opus 5's own
-> tokenizer — 109,348 → 21,696 tokens, run 2026-09-07,
-> [logs committed](packages/core/bench/RESULTS.md) — with the expansion rate (0.94) and the
-> answer-quality A/B that qualify it, measured beside. **[The numbers →](#measured-numbers)**
-
 ## Install
 
 ```sh
@@ -82,6 +86,26 @@ in 7,297 B → out 985 B   (-86.5%, 3 elisions)
   rule          lines  bytes  hash              explanation
   focus-window     53  2,224  84998967370f38bc  collapsed 53 lines with no match for the focu…
 ```
+
+At the end of a session the store reports on itself — the counters, then the ledger, one
+rule at a time. Real output of `smelt stats` (0.6.0) after smelting this repo's
+`lexical.ts` under `--strategy auto` and retrieving one of the two markers:
+
+```
+elisionsStored 2
+bytesStored 4865
+retrieveCalls 1
+uniqueRetrieved 1
+expansionRate 0.5
+allElisionsRetrieved false
+rule.sibling-collapse.stored 2
+rule.sibling-collapse.retrieved 1
+```
+
+`expansionRate` is the fraction of what smelt hid that the model asked for back — the
+honest signal of over-pruning, measured and never thresholded. The `rule.*` lines are the
+same signal per elision rule, so a rule whose every cut keeps getting asked back shows up
+as a fact you can act on. Reading stats never moves them.
 
 - `--strategy structural` parses the file and collapses whole sibling declarations,
   keeping every signature and doc comment. `--strategy lexical` (the default) uses focus
@@ -488,18 +512,19 @@ Three things that look like bugs and are not:
 
 ## Measured numbers
 
-From the committed measurement harness (`pnpm bench`), run 2026-09-07 on corpus commit
-`10462aa46b8e` — nine cases: this repo's own planner source, real tool outputs, and
-byte-exact files from django, scikit-learn and sympy at pinned upstream commits. Tiers 1–2
-are reproducible by anyone from a fresh clone; tiers 3–4 were run once on `claude-opus-5`,
-and their logs are committed beside the rows ([`bench/RESULTS.md`](packages/core/bench/RESULTS.md),
+From the committed measurement harness (`pnpm bench`). Each tier's rows come from the last
+run that measured it, and say so: tier 1 from run 2026-09-07 on corpus `19b11585126f`
+(eleven cases — this repo's own planner source, real tool outputs, byte-exact files from
+django, scikit-learn and sympy at pinned upstream commits, and two content-kind probes);
+tiers 2–4 from run 2026-09-07 on corpus `10462aa46b8e` (the nine cases before the probes
+were added), tiers 3–4 run once on `claude-opus-5`, their logs committed beside the rows ([`bench/RESULTS.md`](packages/core/bench/RESULTS.md),
 append-only; [`tier3-log/`](packages/core/bench/tier3-log/), [`ab-log/`](packages/core/bench/ab-log/)).
 
-### Tier 1 — bytes · deterministic, offline
+### Tier 1 — bytes · deterministic, offline · corpus `19b11585126f`
 
 | case                           | planner       |      in (B) |    out (B) | reduction           |
 | ------------------------------ | ------------- | ----------: | ---------: | ------------------- |
-| large TS file                  | structural/v1 |      31,229 |     10,866 | −65.2%, over budget |
+| large TS file                  | structural/v1 |      35,458 |     11,324 | −68.1%, over budget |
 | TSX component                  | structural/v1 |       1,090 |        861 | −21.0%, over budget |
 | java classes                   | structural/v1 |         689 |        366 | −46.9%              |
 | multi-file grep                | lexical/v1    |       6,451 |        986 | −84.7%              |
@@ -508,7 +533,14 @@ append-only; [`tier3-log/`](packages/core/bench/tier3-log/), [`ab-log/`](package
 | django query_utils             | structural/v1 |      13,389 |      1,697 | −87.3%              |
 | sklearn _ridge                 | structural/v1 |      91,082 |     31,951 | −64.9%              |
 | sympy boolalg                  | structural/v1 |     114,180 |      8,151 | −92.9%              |
-| **corpus total**               |               | **274,916** | **55,331** | **−79.9%**          |
+| git diff (content-kind probe)  | diff/v1       |       4,132 |      2,706 | −34.5%, over budget |
+| JSON log (content-kind probe)  | json/v1       |      11,447 |      3,280 | −71.3%, over budget |
+| **corpus total**               |               | **294,724** | **61,775** | **−79.0%**          |
+
+The two probe rows are the honest trade the kind planners make: on the same bytes the
+lexical planner left 1,516 B and 2,996 B (earlier rows, same corpus), and the kind planners
+keep more — every file and hunk header of the diff, the JSON skeleton with an outline of
+every hidden key. Both were over budget under either planner.
 
 ### Tier 2 — tokens · `count_tokens` on `claude-opus-5`
 

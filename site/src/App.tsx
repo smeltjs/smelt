@@ -1,5 +1,6 @@
 import { Nav } from '@/components/Nav';
 import { Hero } from '@/components/Hero';
+import { Measured } from '@/components/Measured';
 import { AgentPrompt } from '@/components/AgentPrompt';
 import { Tour } from '@/components/Tour';
 import { HowItWorks } from '@/components/HowItWorks';
@@ -19,6 +20,7 @@ export default function App() {
       <Nav />
       <main>
         <Hero />
+        <Measured />
         <AgentPrompt />
         <Tour />
         <HowItWorks />

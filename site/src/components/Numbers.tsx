@@ -30,6 +30,11 @@ interface BenchData {
   model: string | null;
   tiers: { bytes: Row[]; tokens: Row[]; expansion: Row[]; ab: Row[] };
   tier3Aggregate: number | null;
+  provenance: Record<'bytes' | 'tokens' | 'expansion' | 'ab', { date: string; corpusCommit: string; model: string | null } | null>;
+}
+
+function ran(p: { date: string; corpusCommit: string } | null): string {
+  return p === null ? 'not yet measured' : `run ${p.date}, corpus ${p.corpusCommit}`;
 }
 
 const data = bench as unknown as BenchData;
@@ -90,11 +95,11 @@ export function Numbers() {
           lead={
             <>
               From the committed measurement harness (
-              <code className="font-mono text-[13px]">pnpm bench</code>), run {data.runDate} on
-              corpus {data.corpusCommit} — {data.tiersRun}. Tiers 1–2 reproduce from a fresh
-              clone; tiers 3–4 were run once on{' '}
-              <span className="font-mono text-[13px]">{data.model ?? '—'}</span> and their logs
-              are committed beside the rows. Parsed out of{' '}
+              <code className="font-mono text-[13px]">pnpm bench</code>). Each tier's rows come
+              from the last run that measured it, and say so: tier 1 {ran(data.provenance.bytes)};
+              tier 2 {ran(data.provenance.tokens)}; tiers 3–4 {ran(data.provenance.expansion)},
+              once, on <span className="font-mono text-[13px]">{data.model ?? '—'}</span>, logs
+              committed beside the rows. Tiers 1–2 reproduce from a fresh clone. Parsed out of{' '}
               <code className="font-mono text-[13px]">bench/RESULTS.md</code> at build time.
             </>
           }
@@ -104,7 +109,8 @@ export function Numbers() {
           <div className="grid gap-10 lg:grid-cols-12 lg:gap-8">
             <div className="lg:col-span-8">
               <h3 className="font-mono text-[13px] text-iron-light">
-                tier 1 — bytes, deterministic, offline · unit: UTF-8 bytes
+                tier 1 — bytes, deterministic, offline · unit: UTF-8 bytes ·{' '}
+                {ran(data.provenance.bytes)}
               </h3>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[560px] border-collapse text-left text-[14px]">
@@ -159,7 +165,8 @@ export function Numbers() {
               </div>
 
               <h3 className="mt-10 font-mono text-[13px] text-iron-light">
-                tier 2 — tokens, {data.model}'s own tokenizer · unit: tokens
+                tier 2 — tokens, {data.provenance.tokens?.model ?? '—'}'s own tokenizer · unit:
+                tokens · {ran(data.provenance.tokens)}
               </h3>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[560px] border-collapse text-left text-[14px]">
