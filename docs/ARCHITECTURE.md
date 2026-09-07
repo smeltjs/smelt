@@ -704,6 +704,21 @@ The properties it holds, each pinned by a guard:
 - Counters survive a restart: every retrieval appends one fsynced line to an append-only
   journal, and `stats()` is a fold over it, so `expansionRate` stays meaningful across a
   session.
+- The **ledger** survives with them: `applyPlan` — the one function that removes bytes —
+  hands each cut's rule to `put(content, reason)`, the store journals `put "<hash>"
+"<rule>"` beside the counter lines, and `ledger()` folds puts against hits into
+  `{ rule, stored, retrieved }` rows through the one shared `ruleLedger()` derivation
+  in `stats.ts` (both stores; neither derives it privately). The counter fold matches
+  only `hit`/`miss`/`corrupt` lines and skips the rest, exactly as a reader that
+  predates the ledger skips a line it does not know — so a directory written by this
+  version reads as the same counters under the previous one, and `test/ledger.test.ts`
+  pins that. The loop this closes was open by data absence, not wiring: retrievals were
+  journalled per hash but the `ElisionReason` was never persisted, so "which rule's
+  cuts get asked for back" was derivable from no artefact. It reaches the planner as
+  opt-in `PlanInput.ruleHistory`, filled by `createSmelter` like `MarkerPricing` — data
+  a caller's planner may weigh, never a threshold smelt applies (Decision 4) — and
+  reaches a person through `smelt stats` (`rule.<id>.stored`, `rule.<id>.retrieved`)
+  and `smelt_stats`'s second block.
 - Concurrent writers do not corrupt the store. Tested with two processes, not two
   promises — `test/store-dir.test.ts` spawns two real `node` subprocesses against one
   directory. Writes are write-temp → fsync → `link(2)` (atomic, no-clobber), and

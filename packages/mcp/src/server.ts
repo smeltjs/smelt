@@ -21,6 +21,7 @@ import {
   mapTree,
   readBlob,
   readCounters,
+  readLedger,
   readTree,
   resolveStrategy,
   retrieveBytes,
@@ -413,8 +414,9 @@ function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool)
         "The store's retrieval counters, verbatim: elisionsStored, bytesStored, " +
         'retrieveCalls, uniqueRetrieved, misses, expansionRate (the fraction of hidden ' +
         'blobs asked for back — the honest signal of over-pruning) and ' +
-        'allElisionsRetrieved. Reading stats is not a retrieval and never moves the ' +
-        'counters.',
+        'allElisionsRetrieved — then, as a second block, the per-rule ledger: for each ' +
+        'elision rule, how many cuts it made and how many were asked for back. Reading ' +
+        'stats is not a retrieval and never moves the counters.',
       inputSchema: {
         type: 'object',
         properties: {},
@@ -621,7 +623,12 @@ function handleStats(args: Record<string, unknown>, resolved: ResolvedMcpStore):
   // The uncounted read — `stats()` journals nothing, because an observer that inflated
   // its own metric would make the honest signal dishonest. The RetrieveStats goes out
   // verbatim, as JSON.
+  // The ledger as its own block beside them — the first block stays the RetrieveStats
+  // verbatim, as it always was, so a reader of one is never handed a reshaped other.
   return {
-    content: [text(JSON.stringify(readCounters({ store: resolved.store }), null, 2))],
+    content: [
+      text(JSON.stringify(readCounters({ store: resolved.store }), null, 2)),
+      text(JSON.stringify(readLedger({ store: resolved.store }) ?? [], null, 2)),
+    ],
   };
 }

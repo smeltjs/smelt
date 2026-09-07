@@ -218,7 +218,9 @@ export function applyPlan(
 
     const removed = input.subarray(range.start, range.end);
     const removedText = removed.toString('utf8');
-    const hash = store.put(removedText);
+    // Attributed to its rule: this is the one place bytes leave the text, so it is the
+    // one place the store learns which rule cut them — the ledger's only source.
+    const hash = store.put(removedText, reason);
     const marker = buildMarker({
       hash,
       bytes: removed.length,

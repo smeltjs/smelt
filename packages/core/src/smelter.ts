@@ -131,6 +131,10 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
         // see that), otherwise the language's leader-wrapped default.
         pricing: markerPricing(language, config.marker),
         ...(options.focus === undefined ? {} : { focus: options.focus }),
+        // The ledger, the same way: read off the store this smelter cuts into, here and
+        // nowhere else, when the store keeps one. Opt-in data for a planner that wants
+        // the feedback loop; the shipped planners leave it unread (Decision 4).
+        ...(store.ledger === undefined ? {} : { ruleHistory: store.ledger() }),
       };
       const plan = await planner.plan(input);
       // The marker follows the *result's* language: it lands behind the language's

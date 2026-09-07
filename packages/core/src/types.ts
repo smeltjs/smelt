@@ -113,6 +113,18 @@ export interface PlanInput {
    * `markerPricing()` in `apply.ts` from the exact builder `applyPlan` will use.
    */
   readonly pricing: MarkerPricing;
+  /**
+   * The store's per-rule ledger — how many cuts each rule has made in this store and
+   * how many of them were asked for back — when the store can supply one. Filled
+   * centrally by `createSmelter`, like {@link MarkerPricing}; never guessed.
+   *
+   * **Opt-in data, not a lever.** The shipped planners do not read it: smelt measures
+   * the expansion rate and never thresholds it (`docs/ARCHITECTURE.md` § Decision 4),
+   * so a rule that "does not pay" is a fact a *caller's* planner may weigh, and never
+   * a warning smelt authors. This is the deterministic form of "revert a cut that got
+   * asked back": the loop is closed as data a planner can read, in one place.
+   */
+  readonly ruleHistory?: readonly RuleLedgerEntry[];
 }
 
 /**
@@ -256,12 +268,37 @@ export interface RetrieveStats {
 }
 
 /**
+ * One row of a store's **ledger**: a rule, the distinct hashes it put, and how many
+ * of those were retrieved at least once. Rows are sorted by rule, so two reads of one
+ * store — or of one directory from two processes — render identically.
+ *
+ * `retrieved === stored` for a rule is the per-rule form of `allElisionsRetrieved`:
+ * every cut that rule made was asked for back, an arithmetic fact and never a
+ * threshold. What to do about it is the caller's call.
+ */
+export interface RuleLedgerEntry {
+  /** The {@link ElisionReason.rule} id, e.g. `'sibling-collapse'`. */
+  readonly rule: string;
+  /** Distinct hashes put under this rule. */
+  readonly stored: number;
+  /** Of those, distinct hashes retrieved at least once. */
+  readonly retrieved: number;
+}
+
+/**
  * Local, content-addressed storage for elided bytes. No network, no eviction in v1 —
  * evicting is how "reversible" quietly becomes "reversible for a while".
  */
 export interface ElisionStore {
-  /** Store content, returning its hash. Idempotent for identical content. */
-  put(content: string): string;
+  /**
+   * Store content, returning its hash. Idempotent for identical content.
+   *
+   * `reason` is the rule the content was cut by, when the caller is the applier — it
+   * feeds the store's {@link ledger}. Optional, so a store written before ledgers and
+   * a caller storing bytes for its own reasons both keep working; a put with no
+   * reason is stored and never attributed.
+   */
+  put(content: string, reason?: ElisionReason): string;
   /** The stored content, or `undefined` if this store never held that hash. */
   peek(hash: string): string | undefined;
   /**
@@ -291,6 +328,13 @@ export interface ElisionStore {
   has(hash: string): boolean;
   /** A snapshot of the counters. See {@link RetrieveStats}. */
   stats(): RetrieveStats;
+  /**
+   * The per-rule ledger, when this store keeps one — both shipped stores do. Optional
+   * so a custom store need not; a consumer that wants the feedback loop implements it
+   * with the shared `ruleLedger()` derivation from `stats.ts`. Uncounted, like
+   * `stats()`: reading the ledger never moves it.
+   */
+  ledger?(): readonly RuleLedgerEntry[];
 }
 
 /**

@@ -284,6 +284,30 @@ function contextGrep(): string {
   return `${lines.join('\n')}\n`;
 }
 
+describe('smelt_stats — the ledger beside the counters', () => {
+  it('returns the RetrieveStats verbatim first, then the per-rule ledger as its own block', async () => {
+    const client = await connect(tempDir());
+    await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 600,
+      focus: ['handleRequest'],
+    });
+    const result = await call(client, SMELT_STATS_TOOL_NAME, {});
+    expect(result.isError).toBe(false);
+    expect(result.texts).toHaveLength(2);
+    const stats = JSON.parse(result.texts[0]!) as Record<string, unknown>;
+    expect(Object.keys(stats)).not.toContain('ledger');
+    const ledger = JSON.parse(result.texts[1]!) as {
+      rule: string;
+      stored: number;
+      retrieved: number;
+    }[];
+    expect(ledger).toEqual([
+      { rule: 'focus-window', stored: stats['elisionsStored'], retrieved: 0 },
+    ]);
+  });
+});
+
 describe('smelt_file — the producer hint', () => {
   it('derives the focus from "producer" the same way the CLI and the guard do', async () => {
     const client = await connect(tempDir());

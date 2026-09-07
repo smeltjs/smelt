@@ -1,4 +1,4 @@
-import type { RetrieveStats } from './types.ts';
+import type { RetrieveStats, RuleLedgerEntry } from './types.ts';
 
 /**
  * The directly-observed half of {@link RetrieveStats}: the five counts a store reads
@@ -45,4 +45,37 @@ export function retrieveStats(raw: RawRetrieveCounters): RetrieveStats {
     expansionRate: raw.elisionsStored === 0 ? 0 : raw.uniqueRetrieved / raw.elisionsStored,
     allElisionsRetrieved: raw.elisionsStored > 0 && raw.uniqueRetrieved === raw.elisionsStored,
   };
+}
+
+/**
+ * The one derivation of the per-rule ledger, shared by every store — the same
+ * discipline as {@link retrieveStats}: a store supplies the facts it witnessed (which
+ * hash was put under which rule, which hashes were ever hit) and never derives the
+ * counts itself, so two stores cannot disagree about what "retrieved" means per rule.
+ *
+ * `puts` may repeat a hash under a rule (a directory store journals every put); the
+ * ledger counts distinct hashes. A hash put under two rules counts under both — each
+ * rule did make that cut. Rows come back sorted by rule id, so the rendering is
+ * stable across processes and platforms.
+ */
+export function ruleLedger(
+  puts: Iterable<{ readonly hash: string; readonly rule: string }>,
+  retrieved: ReadonlySet<string>,
+): readonly RuleLedgerEntry[] {
+  const byRule = new Map<string, Set<string>>();
+  for (const { hash, rule } of puts) {
+    let hashes = byRule.get(rule);
+    if (hashes === undefined) {
+      hashes = new Set();
+      byRule.set(rule, hashes);
+    }
+    hashes.add(hash);
+  }
+  return [...byRule.entries()]
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([rule, hashes]) => ({
+      rule,
+      stored: hashes.size,
+      retrieved: [...hashes].filter((hash) => retrieved.has(hash)).length,
+    }));
 }

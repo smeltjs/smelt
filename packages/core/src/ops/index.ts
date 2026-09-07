@@ -50,11 +50,19 @@ export type {
   StrategySource,
   TreeNaming,
 } from './inputs.ts';
-export { mapTree, readCounters, retrieveBytes, retrieveMany, smeltBlob } from './verbs.ts';
+export {
+  mapTree,
+  readCounters,
+  readLedger,
+  retrieveBytes,
+  retrieveMany,
+  smeltBlob,
+} from './verbs.ts';
 export type {
   FocusSource,
   MapTreeOp,
   ReadCountersOp,
+  ReadLedgerOp,
   ResolvedFocus,
   RetrieveBytesOp,
   RetrieveManyOp,

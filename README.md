@@ -267,8 +267,10 @@ bytes back, run `smelt retrieve <hash>`.
 
 The marker's `retrieve("hash")` **is** that command, and it is counted like any other
 retrieval — so at the end of a session, `smelt stats` prints the same honest numbers
-(`expansionRate`, `allElisionsRetrieved`, one `name value` per line; `--json` for the
-envelope) that `smelter.stats()` gives a harness. The instruction pattern above works
+(`expansionRate`, `allElisionsRetrieved`, one `name value` per line, then the ledger:
+`rule.<id>.stored` and `rule.<id>.retrieved` per elision rule, so you can see which
+rule's cuts keep getting asked for back; `--json` for the envelope) that
+`smelter.stats()` and `smelter.store.ledger()` give a harness. The instruction pattern above works
 with any agent that can run a command; the hooks preset below wires it in with real
 enforcement.
 

@@ -9,6 +9,7 @@ import type {
   ElisionStore,
   RetrievedBlock,
   RetrieveStats,
+  RuleLedgerEntry,
   SmeltResult,
 } from '../types.ts';
 
@@ -247,4 +248,21 @@ export interface ReadCountersOp {
  */
 export function readCounters(op: ReadCountersOp): RetrieveStats {
   return op.store.stats();
+}
+
+/** One store to read the ledger off. */
+export interface ReadLedgerOp {
+  readonly store: ElisionStore;
+}
+
+/**
+ * Verb: **the uncounted read, per rule.**
+ *
+ * The sibling of {@link readCounters}: which rule cut what, and how much of it was
+ * asked back — the feedback loop closed as data. `undefined` when the store keeps no
+ * ledger, never an invented empty list: a front door that printed `[]` for a store
+ * that cannot know would be stating a measurement nobody made.
+ */
+export function readLedger(op: ReadLedgerOp): readonly RuleLedgerEntry[] | undefined {
+  return op.store.ledger?.();
 }

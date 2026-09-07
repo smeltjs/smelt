@@ -145,7 +145,7 @@ export type {
   DoctorOptions,
   DoctorReceipt,
 } from './cli/doctor.ts';
-export { retrieveStats } from './stats.ts';
+export { retrieveStats, ruleLedger } from './stats.ts';
 export type { RawRetrieveCounters } from './stats.ts';
 
 /**
@@ -195,6 +195,7 @@ export {
   openStore,
   readBlob,
   readCounters,
+  readLedger,
   readTree,
   resolveStrategy,
   retrieveBytes,
@@ -207,6 +208,7 @@ export type {
   FocusSource,
   MapTreeOp,
   ReadCountersOp,
+  ReadLedgerOp,
   ResolvedFocus,
   ResolvedStrategy,
   RetrieveBytesOp,
