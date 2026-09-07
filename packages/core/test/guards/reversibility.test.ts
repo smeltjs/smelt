@@ -267,9 +267,9 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'law3-elision-not-stored',
     file: 'apply.ts',
-    find: '    const hash = store.put(removedText);',
+    find: '    const hash = store.put(removedText, reason);',
     replace:
-      '    const hash = removedText.length > 4096 ? store.put(removedText) : "0000000000000000";',
+      '    const hash = removedText.length > 4096 ? store.put(removedText, reason) : "0000000000000000";',
     why: 'a size threshold that quietly makes small elisions unrecoverable',
   },
 ];

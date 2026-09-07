@@ -145,7 +145,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'hooks-focus-terms-dropped',
     file: 'hooks/focus-terms.ts',
-    find: '  if (!printsContext(words)) return [];',
+    find: '  if (!printsContext(search)) return [];',
     replace: '  return [];',
     why: "the one derivation of focus terms wired to nothing — the guard's rewrite wrap, the CLI's --producer and the tool's producer all silently stop focusing, and the model is back to inventing what the guard knew",
   },

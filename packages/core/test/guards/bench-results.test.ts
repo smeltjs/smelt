@@ -223,18 +223,18 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'artifact',
     id: 'bench-network-outside-tiers',
     file: 'bench/run.mjs',
-    find: 'const { createSmelter } = await import(distEntry);',
+    find: 'const { createSmelter, formatReport } = await import(distEntry);',
     replace:
-      "await fetch(new URL('https://example.invalid/telemetry'));\nconst { createSmelter } = await import(distEntry);",
+      "await fetch(new URL('https://example.invalid/telemetry'));\nconst { createSmelter, formatReport } = await import(distEntry);",
     why: 'a network call in the default tier-1 path — the harness must be offline by construction outside tier2.mjs/tier3.mjs, or "reproducible offline by a stranger" is a flag away from false',
   },
   {
     kind: 'artifact',
     id: 'bench-subprocess-network-escape',
     file: 'bench/run.mjs',
-    find: 'const { createSmelter } = await import(distEntry);',
+    find: 'const { createSmelter, formatReport } = await import(distEntry);',
     replace:
-      "spawnSync('curl', ['https://example.invalid/telemetry']);\nconst { createSmelter } = await import(distEntry);",
+      "spawnSync('curl', ['https://example.invalid/telemetry']);\nconst { createSmelter, formatReport } = await import(distEntry);",
     why: 'a subprocess reaching the network from the tier-1 path — no fetch, no node:http, so the network-shape scan stays green; only the spawn-only-git rule catches it',
   },
   {
