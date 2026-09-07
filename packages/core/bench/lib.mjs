@@ -50,7 +50,7 @@ export const FORBIDDEN_RESULT_PHRASES = ['up to', 'cache hit rate'];
  * compares this array against `STRATEGIES` and goes red the moment the registry gains
  * or loses a member, which is how `auto` was found missing here in the first place.
  */
-export const BENCH_STRATEGIES = ['lexical', 'structural', 'auto'];
+export const BENCH_STRATEGIES = ['lexical', 'structural', 'auto', 'json', 'diff'];
 
 /**
  * The runner's argv: which tier flags it carries, and every argument it does not

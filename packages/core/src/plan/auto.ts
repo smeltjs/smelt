@@ -1,5 +1,10 @@
 import type { ElisionPlan, PlanInput, Planner } from '../types.ts';
 
+import { planDiff } from './diff.ts';
+import type { DiffPlannerOptions } from './diff.ts';
+import { planJson } from './json.ts';
+import type { JsonPlannerOptions } from './json.ts';
+import { probeKind } from './kind.ts';
 import { planLexical } from './lexical.ts';
 import type { LexicalPlannerOptions } from './lexical.ts';
 import { isStructuralLanguage, planStructural } from './structural.ts';
@@ -21,11 +26,16 @@ export interface AutoPlannerOptions {
   readonly lexical?: LexicalPlannerOptions;
   /** Passed through when auto picks the structural planner. */
   readonly structural?: StructuralPlannerOptions;
+  /** Passed through when the content kind is JSON. */
+  readonly json?: JsonPlannerOptions;
+  /** Passed through when the content kind is a diff. */
+  readonly diff?: DiffPlannerOptions;
 }
 
 /**
- * The strategy that picks a strategy: **structural where a grammar is bundled,
- * lexical everywhere else, and the result says which one ran.**
+ * The strategy that picks a strategy: **kind first, then language — json for a JSON
+ * document, diff for a unified diff, structural where a grammar is bundled, lexical
+ * everywhere else — and the result says which one ran.**
  *
  * It exists because the choice it makes is one a caller cannot make once. A consumer
  * smelting whatever a tool handed it — a `.ts` file this call, a build log the next —
@@ -79,6 +89,12 @@ export class AutoPlanner implements Planner {
  *   and its grammar cannot be loaded. Never caught here — see {@link AutoPlanner}.
  */
 export function planAuto(input: PlanInput, options: AutoPlannerOptions = {}): Promise<ElisionPlan> {
+  // The content kind is the first fact — a parse, a header shape (`plan/kind.ts`) —
+  // because a diff is path-less and a JSON tool result detects `unknown`, and both
+  // used to fall to line windows. Only what the probe *proved* is routed by kind.
+  const kind = probeKind(input.text);
+  if (kind === 'json') return Promise.resolve(planJson(input, options.json ?? {}));
+  if (kind === 'diff') return Promise.resolve(planDiff(input, options.diff ?? {}));
   return isStructuralLanguage(input.language)
     ? planStructural(input, options.structural ?? {})
     : Promise.resolve(planLexical(input, options.lexical ?? {}));

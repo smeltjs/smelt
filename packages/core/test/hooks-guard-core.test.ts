@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -430,22 +430,36 @@ describe('the built module (dist/hooks/guard-core.js) — the artifact the openc
 
   it('the allow fast path stays library-free: no planner, no grammar, no index import', () => {
     // The property behind the latency budget (research § 5): the always-on guard
-    // imports node builtins only. Walk the *built* script's static imports.
+    // imports node builtins only — transitively. Walk the *built* script's static
+    // imports, and every relative import's imports in turn: a sibling under
+    // dist/hooks/ that itself imports nothing but builtins (focus-terms.js, the one
+    // derivation of focus terms) keeps the closure builtins-only; anything reaching
+    // outside dist/hooks/ (`../index.js`, a planner, a grammar) is the library.
     const run = spawnSync(
       process.execPath,
       [
         '-e',
-        `const{readFileSync}=require('node:fs');const s=readFileSync(process.argv[1],'utf8');` +
-          `const specs=[...s.matchAll(/from\\s*['"]([^'"]+)['"]/g)].map(m=>m[1]);` +
-          `console.log(JSON.stringify(specs));`,
+        `const{readFileSync}=require('node:fs');const{dirname,resolve,relative}=require('node:path');` +
+          `const seen=new Set();const out=[];const walk=(file)=>{if(seen.has(file))return;seen.add(file);` +
+          `const s=readFileSync(file,'utf8');` +
+          `for(const m of s.matchAll(/from\\s*['"]([^'"]+)['"]/g)){const spec=m[1];` +
+          `if(spec.startsWith('.')){const target=resolve(dirname(file),spec);` +
+          `out.push({from:relative(process.argv[2],file),spec,escapes:relative(process.argv[2],target).startsWith('..')});walk(target);}` +
+          `else out.push({from:relative(process.argv[2],file),spec,escapes:false});}};` +
+          `walk(process.argv[1]);console.log(JSON.stringify(out));`,
         script,
+        dirname(script),
       ],
       { encoding: 'utf8' },
     );
-    const specifiers = JSON.parse(run.stdout) as string[];
-    expect(specifiers.length).toBeGreaterThan(0);
-    for (const specifier of specifiers) {
-      expect(specifier.startsWith('node:'), `guard-core imports "${specifier}"`).toBe(true);
+    const edges = JSON.parse(run.stdout) as { from: string; spec: string; escapes: boolean }[];
+    expect(edges.length).toBeGreaterThan(0);
+    for (const edge of edges) {
+      const ok = edge.spec.startsWith('node:') || (edge.spec.startsWith('./') && !edge.escapes);
+      expect(ok, `${edge.from} imports "${edge.spec}"`).toBe(true);
     }
+    // The transitive closure is exactly the guard core and its zero-import sibling.
+    const relatives = edges.filter((edge) => edge.spec.startsWith('.')).map((edge) => edge.spec);
+    expect([...new Set(relatives)]).toEqual(['./focus-terms.js']);
   });
 });

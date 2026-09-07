@@ -104,10 +104,10 @@
       "id": "git-diff",
       "file": "corpus/bench-argv.diff",
       "path": "bench-argv.diff",
-      "strategy": "lexical",
+      "strategy": "auto",
       "focus": ["parseBenchArgs"],
       "budgetBytes": 1200,
-      "task": "an agent reviewed a diff for the change to parseBenchArgs and nothing else — a content-kind probe: a piped diff is path-less, detects unknown, and can only ever reach the lexical planner",
+      "task": "an agent reviewed a diff for the change to parseBenchArgs and nothing else — a content-kind probe: a piped diff is path-less, detects unknown, and reaches the diff planner through auto, kind first",
       "provenance": "byte-exact output of `git show --format= 6135228` in this repository (commit 6135228, \"bench: drop the argv separator pnpm leaks through the workspace double hop\"), committed as bench/corpus/bench-argv.diff — reproducible from the repository's own history",
       "abQuestion": "What does parseBenchArgs do with a bare `--` argument, and which two files besides lib.mjs does this diff change?"
     },
@@ -115,10 +115,10 @@
       "id": "json-tool-result",
       "file": "corpus/judge-log",
       "path": "ab-log/java-classes.json",
-      "strategy": "lexical",
+      "strategy": "auto",
       "focus": ["verdict"],
       "budgetBytes": 1500,
-      "task": "an agent read a JSON tool result to find the judge's verdict and its reasons — a content-kind probe: JSON reaches the lexical planner, which sees lines, not structure",
+      "task": "an agent read a JSON tool result to find the judge's verdict and its reasons — a content-kind probe: JSON reaches the json planner through auto, kind first — the row before this one measured lexical on the same bytes",
       "provenance": "materialized at run time from this repository's packages/core/bench/ab-log/java-classes.json (a real tier-4 A/B log), sha256-pinned by the committed corpus/judge-log.json reference — the runner refuses a hash mismatch",
       "abQuestion": "Which arm did the judge prefer for the java-classes case, and what reasons did it give?"
     }

@@ -2,6 +2,8 @@ import { applyPlan, markerForLanguage, markerPricing, reconstruct } from './appl
 import type { ApplyOptions, MarkerBuilder } from './apply.ts';
 import { detectLanguage } from './detect.ts';
 import { SmeltError } from './errors.ts';
+import type { DiffPlannerOptions } from './plan/diff.ts';
+import type { JsonPlannerOptions } from './plan/json.ts';
 import type { LexicalPlannerOptions } from './plan/lexical.ts';
 import { DEFAULT_STRATEGY, PLANNERS } from './plan/planners.ts';
 import type { Strategy } from './plan/planners.ts';
@@ -50,6 +52,8 @@ export interface SmelterConfig {
   readonly measure?: Measure;
   readonly lexical?: LexicalPlannerOptions;
   readonly structural?: StructuralPlannerOptions;
+  readonly json?: JsonPlannerOptions;
+  readonly diff?: DiffPlannerOptions;
 }
 
 /** Options for one `smelt()` call. `budgetBytes` may come from the smelter instead. */

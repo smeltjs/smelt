@@ -85,9 +85,16 @@ in 7,297 B → out 985 B   (-86.5%, 3 elisions)
 
 - `--strategy structural` parses the file and collapses whole sibling declarations,
   keeping every signature and doc comment. `--strategy lexical` (the default) uses focus
-  windows — right for logs, traces, and anything that is not code. `--strategy auto`
-  picks between them on the language and labels what it ran, for a stream that is
-  sometimes code and sometimes a build log.
+  windows — right for logs, traces, and anything that is not code. `--strategy json`
+  cuts a JSON document by members and elements, `--strategy diff` cuts a unified diff by
+  files and hunks, and each refuses any other content. `--strategy auto` picks by content
+  kind first (json, diff), then by language (structural where a grammar is bundled,
+  lexical otherwise), and labels what it ran — for a stream that is sometimes code,
+  sometimes a build log, sometimes a diff.
+- Every structural cut's report row carries an **outline** — the names of the
+  declarations behind the marker — so you (or a model) can decide what to retrieve
+  without retrieving it. `--producer '<cmd>'` names the command whose output you are
+  piping, and derives the focus from it exactly as the hooks guard does.
 - `--json` prints a versioned envelope; `--reconstruct` reads it back and prints the
   original, byte for byte. Reversibility you can run from a shell.
 - `smelt map <dir> --budget 4000` prints a ranked symbol map of a whole repository —

@@ -340,9 +340,12 @@ function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool)
               '"structural" parses the file and collapses whole sibling declarations ' +
               '(refused, never approximated, for languages without a bundled grammar); ' +
               '"lexical" uses focus windows — right for logs, traces, and anything that ' +
-              'is not code; "auto" picks structural for a language smelt has a grammar ' +
-              'for and lexical for everything else, and the report names whichever one ' +
-              'ran. Defaults to the smelt.config.json strategy, else "lexical".',
+              'is not code; "json" cuts members and elements of a JSON document and ' +
+              '"diff" cuts files and hunks of a unified diff, each refusing any other ' +
+              'content; "auto" picks by content kind first (json, diff), then structural ' +
+              'for a language smelt has a grammar for and lexical for everything else, ' +
+              'and the report names whichever one ran. Defaults to the smelt.config.json ' +
+              'strategy, else "lexical".',
           },
         },
         required: ['budgetBytes'],

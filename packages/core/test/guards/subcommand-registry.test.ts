@@ -53,6 +53,7 @@ const SHIPPED_VERBS = Object.keys(SHIPPED).toSorted();
 const FLAG_ARGV: Record<VerbFlag, readonly string[]> = {
   budget: ['--budget', '4000'],
   focus: ['--focus', 'handleRequest'],
+  producer: ['--producer', 'grep -C 2 handleRequest src'],
   language: ['--language', 'python'],
   strategy: ['--strategy', 'lexical'],
   ignore: ['--ignore', 'vendor'],
@@ -67,7 +68,7 @@ const FLAG_ARGV: Record<VerbFlag, readonly string[]> = {
 
 /** Restated by hand: which verb owns which flag. The registry must not be its own witness. */
 const OWNED: Record<Verb, readonly VerbFlag[]> = {
-  smelt: ['budget', 'focus', 'language', 'strategy', 'json', 'reconstruct'],
+  smelt: ['budget', 'focus', 'producer', 'language', 'strategy', 'json', 'reconstruct'],
   init: [],
   map: ['budget', 'focus', 'ignore', 'cache', 'json'],
   retrieve: [],
@@ -272,7 +273,14 @@ describe('the round trip refuses every flag it cannot honour, rather than ignori
   const beside = OWNED.smelt.filter((flag) => flag !== 'reconstruct');
 
   it('leaves nothing the verb owns unaccounted for', () => {
-    expect([...beside].toSorted()).toEqual(['budget', 'focus', 'json', 'language', 'strategy']);
+    expect([...beside].toSorted()).toEqual([
+      'budget',
+      'focus',
+      'json',
+      'language',
+      'producer',
+      'strategy',
+    ]);
   });
 
   it.each(beside)('`smelt --reconstruct --%s` is refused, naming the flag', (flag) => {

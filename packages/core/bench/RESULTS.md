@@ -202,3 +202,19 @@ exercise it, and a case that does is worth adding.
 | django-query-utils | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 4584 | 1210 | 2 | raw 4584 in/968 out · smelted 1210 in/825 out · 0 retrieve(s) · verdict: tie |
 | sklearn-ridge | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 35024 | 49082 | 2 | raw 35024 in/1893 out · smelted 49082 in/1746 out · 2 retrieve(s) · verdict: tie |
 | sympy-boolalg | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 45322 | 15024 | 4 | raw 45322 in/1356 out · smelted 15024 in/2009 out · 2 retrieve(s) · verdict: tie |
+
+## run 2026-09-07 — tier 1 — corpus 226c91db4f95
+
+| case | tier | date | corpus commit | model | unit | input | output | elisions | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| large-ts-file | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 36204 | 11324 | 3 | budget 4000 B, structural/v1 — OVER BUDGET |
+| tsx-component | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 1090 | 861 | 1 | budget 700 B, structural/v1 — OVER BUDGET |
+| java-classes | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 689 | 366 | 2 | budget 400 B, structural/v1 |
+| multi-file-grep | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 6451 | 986 | 2 | budget 1500 B, lexical/v1 |
+| stack-trace | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 452 | 344 | 1 | budget 400 B, lexical/v1 |
+| build-log | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 16354 | 109 | 1 | budget 800 B, lexical/v1 |
+| django-query-utils | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 13389 | 1697 | 2 | budget 4000 B, structural/v1 |
+| sklearn-ridge | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 91082 | 31951 | 2 | budget 40000 B, structural/v1 |
+| sympy-boolalg | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 114180 | 8151 | 4 | budget 10000 B, structural/v1 |
+| git-diff | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 4132 | 1516 | 7 | budget 1200 B, lexical/v1 — OVER BUDGET |
+| json-tool-result | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 11447 | 2996 | 4 | budget 1500 B, lexical/v1 — OVER BUDGET |

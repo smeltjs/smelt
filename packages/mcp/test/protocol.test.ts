@@ -176,6 +176,7 @@ describe('the built server over real stdio', () => {
       'repo_map',
       'smelt_file',
       'smelt_retrieve',
+      'smelt_retrieve_batch',
       'smelt_stats',
     ]);
 

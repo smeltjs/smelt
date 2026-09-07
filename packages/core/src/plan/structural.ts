@@ -15,6 +15,7 @@ import type {
 
 import { predictOutputBytes, savingBytes } from './budget.ts';
 import { loadGrammar } from './grammar.ts';
+import { utf8OffsetIndex } from './offsets.ts';
 
 export const STRUCTURAL_PLANNER_ID = 'structural/v1';
 
@@ -795,24 +796,4 @@ function nameOf(node: Node, structure: LanguageStructure, depth: number): string
     }
   }
   return undefined;
-}
-
-/**
- *
- * web-tree-sitter reports positions in code units of the JS string it parsed;
- * {@link ElisionPlan} ranges are UTF-8 bytes. Because every converted index is a parse
- * node boundary, a range can never split a multi-byte character — a node boundary is
- * always a character boundary. One forward pass, so the conversion is linear.
- */
-function utf8OffsetIndex(text: string, indices: readonly number[]): ReadonlyMap<number, number> {
-  const sorted = [...new Set(indices)].toSorted((a, b) => a - b);
-  const map = new Map<number, number>();
-  let previousIndex = 0;
-  let previousByte = 0;
-  for (const index of sorted) {
-    previousByte += Buffer.byteLength(text.slice(previousIndex, index), 'utf8');
-    previousIndex = index;
-    map.set(index, previousByte);
-  }
-  return map;
 }

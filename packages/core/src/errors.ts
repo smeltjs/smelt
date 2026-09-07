@@ -167,3 +167,14 @@ function describeIoCause(cause: unknown): string {
   if (cause instanceof Error && cause.message !== '') return cause.message;
   return String(cause);
 }
+
+/**
+ * A content-kind planner (`json`, `diff`) was asked to plan text that is not that kind.
+ * It refuses rather than approximating, for the reason the structural planner refuses
+ * an unknown language: output labelled `json/v1` that is really line windows would be
+ * undetectable from outside. `auto` never raises this — it probes the kind first and
+ * routes only what the probe proved.
+ */
+export class ContentKindError extends SmeltError {
+  override readonly name = 'ContentKindError';
+}
