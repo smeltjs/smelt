@@ -550,7 +550,17 @@ runs no match sits near — the lexical window, confined to the hunk, so it neve
 more of a hunk than a line planner would (the bench's real diff mentions its focus term
 in every hunk; without that third rule the planner cut nothing). Each refuses any other content
 with `ContentKindError`, for the structural planner's reason, and each labels its plan.
-The rows after the lexical ones in `bench/RESULTS.md` measure them on the same bytes.
+The rows after the lexical ones in `bench/RESULTS.md` measure them on the same bytes, and
+the honest reading is a trade, not a win: at corpus `19b11585126f`, `diff/v1` left 2706 B
+(8 elisions) where lexical left 1516, and `json/v1` left 3280 B (5 elisions) where
+lexical left 2996 — both still over the probe budgets. What the extra bytes buy is
+structure the line planner cannot keep: every file header and hunk header of the diff,
+so a kept `+` line still says which file it is in; the JSON document's skeleton, with an
+outline naming every key behind every marker. On the probe cases the binding cost was a
+single matched value in both planners' reach — the judge prompt's 2.2 KB string, the
+one hunk every match sat in — which no member- or hunk-level cut can shorten. If a
+byte-tightest survivor is what a caller wants on these kinds, `lexical` is one flag
+away and `auto` has not moved the default.
 
 `DEFAULT_STRATEGY` stays `lexical`, deliberately. Promoting `auto` would change which
 planner runs, and therefore what `result.planner` says, for every existing caller who
