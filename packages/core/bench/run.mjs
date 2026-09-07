@@ -43,6 +43,7 @@ import {
   appendResults,
   CORPUS_REF_FORMAT,
   corpusRefMismatch,
+  parseBenchArgs,
   renderTable,
   resultRow,
   tier3Aggregate,
@@ -79,11 +80,9 @@ function fail(message) {
   process.exit(1);
 }
 
-const args = new Set(process.argv.slice(2));
-const wantTier3 = args.delete('--tier3');
-const wantTier4 = args.delete('--tier4');
-if (args.size > 0) {
-  fail(`unknown arguments: ${[...args].join(' ')} (only --tier3 and --tier4 are accepted)`);
+const { wantTier3, wantTier4, unknown } = parseBenchArgs(process.argv.slice(2));
+if (unknown.length > 0) {
+  fail(`unknown arguments: ${unknown.join(' ')} (only --tier3 and --tier4 are accepted)`);
 }
 
 if (!existsSync(distEntry)) {

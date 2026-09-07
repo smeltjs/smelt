@@ -53,6 +53,22 @@ export const FORBIDDEN_RESULT_PHRASES = ['up to', 'cache hit rate'];
 export const BENCH_STRATEGIES = ['lexical', 'structural', 'auto'];
 
 /**
+ * The runner's argv: which tier flags it carries, and every argument it does not
+ * know. A bare `--` is dropped rather than refused — it is the standard
+ * end-of-options separator, and pnpm's double hop through the workspace scripts
+ * leaks it into `process.argv` verbatim (`pnpm bench -- --tier3` from the root
+ * reaches the runner as `-- --tier3`). Dropping the separator is argv convention,
+ * not leniency: unknown arguments are still refused, because a typo'd flag must
+ * never silently enable nothing.
+ */
+export function parseBenchArgs(argv) {
+  const args = new Set((argv ?? []).filter((arg) => arg !== '--'));
+  const wantTier3 = args.delete('--tier3');
+  const wantTier4 = args.delete('--tier4');
+  return { wantTier3, wantTier4, unknown: [...args] };
+}
+
+/**
  * Validates the parsed `cases.json`. `fileExists` is injected so this stays pure.
  * Returns the list of problems — an empty array is a pass.
  */

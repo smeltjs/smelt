@@ -52,6 +52,11 @@ interface BenchLib {
   }): string;
   CORPUS_REF_FORMAT: string;
   BENCH_STRATEGIES: readonly string[];
+  parseBenchArgs(argv: readonly string[]): {
+    wantTier3: boolean;
+    wantTier4: boolean;
+    unknown: readonly string[];
+  };
   AB_VERDICT_TOOL: { name: string; input_schema: Record<string, unknown> };
   abArmPrompt(input: { question: string; text: string; toolName?: string }): string;
   abJudgeMessages(input: {
@@ -694,6 +699,31 @@ describe('the tier-4 A/B measurement (transport-injected)', () => {
     // 1 raw call + the cap's worth of smelted rounds — and no judge call after them.
     expect(calls).toBe(1 + result.log.maxRounds);
     expect(result.log.judge.transcript).toHaveLength(0);
+  });
+});
+
+describe('the runner argv (pure half)', () => {
+  it('reads the tier flags and refuses every argument it does not know', () => {
+    expect(lib.parseBenchArgs([])).toEqual({ wantTier3: false, wantTier4: false, unknown: [] });
+    expect(lib.parseBenchArgs(['--tier3'])).toEqual({
+      wantTier3: true,
+      wantTier4: false,
+      unknown: [],
+    });
+    expect(lib.parseBenchArgs(['--tier4']).wantTier4).toBe(true);
+    expect(lib.parseBenchArgs(['--vibes']).unknown).toEqual(['--vibes']);
+  });
+
+  it("drops a bare '--' — the separator pnpm leaks through the workspace double hop", () => {
+    // The regression: `pnpm bench -- --tier3 --tier4` from the repository root
+    // reaches run.mjs as `-- --tier3 --tier4`, and the literal separator used to
+    // be refused as an unknown argument. It is argv convention, not an argument.
+    expect(lib.parseBenchArgs(['--', '--tier3', '--tier4'])).toEqual({
+      wantTier3: true,
+      wantTier4: true,
+      unknown: [],
+    });
+    expect(lib.parseBenchArgs(['--']).unknown).toEqual([]);
   });
 });
 
