@@ -324,6 +324,14 @@ function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool)
           },
           budgetBytes: BUDGET_SCHEMA,
           focus: FOCUS_SCHEMA,
+          producer: {
+            type: 'string',
+            description:
+              'The command whose output "text" is, e.g. "grep -C 3 foo src". When "focus" ' +
+              'is absent, the focus is derived from it exactly as the smelt hooks guard ' +
+              'derives it: a search pattern, only when the output also holds non-matching ' +
+              'lines (context flags). cat, diffs and logs name no term.',
+          },
           strategy: {
             type: 'string',
             enum: [...STRATEGIES],
@@ -480,9 +488,10 @@ async function handleSmeltFile(
   resolved: ResolvedMcpStore,
   cwd: string,
 ): Promise<CallToolResult> {
-  refuseUnknownKeys(args, ['path', 'text', 'budgetBytes', 'focus', 'strategy']);
+  refuseUnknownKeys(args, ['path', 'text', 'budgetBytes', 'focus', 'producer', 'strategy']);
   const path = optionalString(args, 'path');
   const inline = optionalString(args, 'text');
+  const producer = optionalString(args, 'producer');
   if ((path === undefined) === (inline === undefined)) {
     throw new ToolArgumentError(
       'pass exactly one of "path" (a file to read) or "text" (the blob itself).',
@@ -508,13 +517,19 @@ async function handleSmeltFile(
     store: resolved.store,
     ...(path === undefined ? {} : { path }),
     ...(focus === undefined ? {} : { focus }),
+    ...(producer === undefined ? {} : { producer }),
   });
 
   // Two blocks: the payload, then the same report the CLI prints to stderr — built
   // from the values the op returned, so no total is counted twice. Over budget is
   // reported in the report (the plan came back as it came back), not dressed up as an
-  // error.
-  return { content: [text(outcome.result.text), text(formatReport(outcome))] };
+  // error. The one word this surface supplies is how it spells the producer knob.
+  return {
+    content: [
+      text(outcome.result.text),
+      text(formatReport({ ...outcome, producerKnob: 'producer' })),
+    ],
+  };
 }
 
 function handleRetrieve(args: Record<string, unknown>, resolved: ResolvedMcpStore): CallToolResult {

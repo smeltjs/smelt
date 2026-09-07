@@ -32,6 +32,7 @@ import { CLI_NAME } from '../shell.ts';
 export const CLI_FLAGS = {
   budget: { type: 'string' },
   focus: { type: 'string', multiple: true },
+  producer: { type: 'string' },
   language: { type: 'string' },
   strategy: { type: 'string' },
   ignore: { type: 'string', multiple: true },
@@ -161,6 +162,16 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'their context survive; the runs between them collapse. For',
       'map: symbols matching a term (by name or path) are promoted',
       'to the front of the fill order, ranks unchanged.',
+    ],
+  },
+  producer: {
+    label: '--producer <cmd>',
+    body: () => [
+      'The command whose output this is, e.g. "grep -C 3 foo src". When',
+      'no --focus is given, the focus is derived from it exactly as the',
+      'hooks guard derives it: a search pattern, only when the output',
+      'also holds non-matching lines (context flags). cat, diffs and',
+      'logs name no term; the head and tail are kept instead.',
     ],
   },
   language: {

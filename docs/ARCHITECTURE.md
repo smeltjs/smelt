@@ -885,6 +885,21 @@ verified / experimental / advisory — against the primary-source survey in
 Enforcement defaults to deny-with-reason; rewrite is opt-in and never silent. The
 README's harness section is the user-facing walkthrough.
 
+The guard is the **producer expert** — to decide anything about a `grep` it has already
+parsed the pattern — and that knowledge used to die inside it: the deny reason printed
+`--focus <?>` and the model reinvented what the guard knew. `src/hooks/focus-terms.ts`
+is the one derivation, a zero-import sibling of the guard core (the guard's
+no-library-import rule is a latency budget, so the derivation had to be a sibling
+rather than an exception): `focusTermsFor(command)` answers _which terms distinguish the
+output lines the task is about_ — a search pattern only when the search also prints
+non-matching lines (`-C`, `-A`, `-B`), nothing for a plain grep whose every line already
+matches, nothing for a listing search, nothing for `cat` or a diff. The rewrite wrap
+carries the literal `--focus <term>` it derives, and `smeltBlob` applies the same
+function to a `producer` hint (`smelt --producer <cmd>`, `smelt_file`'s `producer`),
+filling only what the caller's own `--focus` left unsaid — so the guard and both front
+doors cannot disagree about which terms a command names. The report attributes the
+focus it planned with (`focus  handleRequest   (from --producer)`).
+
 A harness is **one file**, `src/harness/<id>.ts`: its tier and caveats, the paths that
 detect it, its instruction file, its hook schema as data (tool names, payload keys, the
 deny and rewrite documents), and its install steps — each step's kind being also how

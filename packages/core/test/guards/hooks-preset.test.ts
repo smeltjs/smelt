@@ -110,11 +110,45 @@ describe('the installer never touches an existing file without a per-file yes', 
   });
 });
 
+describe('the guard hands its command knowledge to the plan', () => {
+  it('a context search is wrapped with the literal --focus the guard already parsed', () => {
+    // The guard is the producer expert — it parsed the pattern to decide at all — and
+    // before this it printed `--focus <?>` and let the model reinvent what it knew.
+    // The derivation is `focusTermsFor` in hooks/focus-terms.ts, the same one
+    // `smeltBlob` applies to a `producer` hint, so the guard, the CLI and the MCP
+    // server cannot disagree about which terms a command names.
+    const decision = decide(
+      { tool: 'Bash', input: { command: 'grep -C 3 handleRequest src' } },
+      { ...DEFAULT_GUARD_SETTINGS, enforcement: 'rewrite' },
+      dir,
+      () => undefined,
+    );
+    expect(decision.action).toBe('deny');
+    expect(decision.suggestion).toContain('--focus handleRequest');
+    // And the plain search stays unfocused: every line of its output carries the
+    // pattern, so a focus on it would protect the whole output.
+    const plain = decide(
+      { tool: 'Bash', input: { command: 'grep -rn handleRequest src' } },
+      { ...DEFAULT_GUARD_SETTINGS, enforcement: 'rewrite' },
+      dir,
+      () => undefined,
+    );
+    expect(plain.suggestion).not.toContain('--focus');
+  });
+});
+
 /**
  * The breaks this guard must catch. `pnpm mutate` applies each one to a scratch copy
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'hooks-focus-terms-dropped',
+    file: 'hooks/focus-terms.ts',
+    find: '  if (!printsContext(words)) return [];',
+    replace: '  return [];',
+    why: "the one derivation of focus terms wired to nothing — the guard's rewrite wrap, the CLI's --producer and the tool's producer all silently stop focusing, and the model is back to inventing what the guard knew",
+  },
   {
     id: 'hooks-threshold-wired-to-constant',
     file: 'hooks/guard-core.ts',

@@ -141,6 +141,11 @@ OPTIONS
                        their context survive; the runs between them collapse. For
                        map: symbols matching a term (by name or path) are promoted
                        to the front of the fill order, ranks unchanged.
+  --producer <cmd>     The command whose output this is, e.g. "grep -C 3 foo src". When
+                       no --focus is given, the focus is derived from it exactly as the
+                       hooks guard derives it: a search pattern, only when the output
+                       also holds non-matching lines (context flags). cat, diffs and
+                       logs name no term; the head and tail are kept instead.
   --language <id>      Override detection. One of: typescript, tsx, javascript, rust, python, go, java, c, cpp, c_sharp, ruby, php, kotlin, swift, bash, unknown.
   --strategy <id>      lexical, structural, auto. Defaults to lexical, unless
                        smelt.config.json says otherwise. structural parses

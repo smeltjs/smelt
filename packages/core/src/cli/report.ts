@@ -1,6 +1,7 @@
 import { GUIDE, GUIDE_TITLE } from '../agents/guide.ts';
 import { overBudgetBytes } from '../agents/lint.ts';
 import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
+import type { ResolvedFocus } from '../ops/verbs.ts';
 import type { RepoMap } from '../repomap/map.ts';
 import type { SmeltResult } from '../types.ts';
 
@@ -15,6 +16,14 @@ export interface ReportInput {
   readonly budgetBytes: number;
   /** The exact text that was smelted. Used only to count lines inside each range. */
   readonly inputText: string;
+  /**
+   * The focus the planner saw and whose it was — printed so a reader can tell a cut
+   * the caller asked for from one a producer hint derived. Absent when the caller
+   * built the input by hand and has no focus to attribute.
+   */
+  readonly focus?: ResolvedFocus;
+  /** How *this* surface spells the producer knob: `--producer` for the CLI. */
+  readonly producerKnob?: string;
 }
 
 /** Longest explanation printed in full before it gets an ellipsis. */
@@ -29,7 +38,14 @@ const EXPLANATION_WIDTH = 46;
  * library it is reporting on, and the report is the thing a human believes.
  * `test/cli.test.ts` asserts the printed numbers equal the result's fields.
  */
-export function formatReport({ result, source, budgetBytes, inputText }: ReportInput): string {
+export function formatReport({
+  result,
+  source,
+  budgetBytes,
+  inputText,
+  focus,
+  producerKnob = '--producer',
+}: ReportInput): string {
   const lines: string[] = [];
 
   lines.push([CLI_NAME, source, result.language, result.planner].join('  '));
@@ -37,6 +53,12 @@ export function formatReport({ result, source, budgetBytes, inputText }: ReportI
     `in ${group(result.inputBytes)} B → out ${group(result.outputBytes)} B   ` +
       `(${delta(result.inputBytes, result.outputBytes)}, ${count(result.elisions.length, 'elision')})`,
   );
+  if (focus !== undefined && focus.terms.length > 0) {
+    lines.push(
+      `focus  ${focus.terms.join(', ')}` +
+        (focus.source === 'producer' ? `   (from ${producerKnob})` : ''),
+    );
+  }
 
   if (result.measured !== undefined) {
     const { input, output, unit, measure } = result.measured;

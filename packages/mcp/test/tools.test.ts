@@ -274,6 +274,42 @@ describe('smelt_file', () => {
   });
 });
 
+function contextGrep(): string {
+  const lines: string[] = [];
+  for (let file = 0; file < 12; file += 1) {
+    for (let i = 0; i < 20; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+    lines.push(`src/f${String(file)}.ts:21:  return handleRequest(path);`);
+    for (let i = 22; i < 40; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+describe('smelt_file — the producer hint', () => {
+  it('derives the focus from "producer" the same way the CLI and the guard do', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: contextGrep(),
+      budgetBytes: 1500,
+      producer: 'grep -C 2 handleRequest src',
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[0]).toContain('handleRequest(path)');
+    expect(result.texts[1]).toContain('focus  handleRequest');
+    expect(result.texts[1]).toContain('from producer');
+  });
+
+  it('refuses a non-string producer as an argument', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: 'x',
+      budgetBytes: 100,
+      producer: 7,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('"producer" must be a string');
+  });
+});
+
 describe('smelt_retrieve_batch', () => {
   async function smeltedHashes(client: Client): Promise<{ input: string; hashes: string[] }> {
     const input = fixtureText(900);

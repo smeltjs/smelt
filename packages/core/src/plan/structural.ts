@@ -520,14 +520,14 @@ function unitsOf(root: Node, text: string, structure: LanguageStructure): readon
         start: child.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
-        ...named(child, structure, kindOf(child, structure)),
+        ...outlineName(child, structure, kindOf(child, structure)),
       });
     } else if (attached) {
       units.push({
         start: pending[0]!.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
-        ...named(child, structure, kindOf(child, structure)),
+        ...outlineName(child, structure, kindOf(child, structure)),
       });
       pending = [];
       pendingHasAttribute = false;
@@ -537,7 +537,7 @@ function unitsOf(root: Node, text: string, structure: LanguageStructure): readon
         start: child.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
-        ...named(child, structure, kindOf(child, structure)),
+        ...outlineName(child, structure, kindOf(child, structure)),
       });
     }
     for (const comment of trailing) pending.push(comment);
@@ -699,7 +699,11 @@ function kindOf(node: Node, structure: LanguageStructure): string {
  * has an identifier in it too (`require 'json'`, `using System;`) but naming it would
  * put a word on the outline that names nothing a model could be looking for.
  */
-function named(node: Node, structure: LanguageStructure, kind: string): { readonly name?: string } {
+function outlineName(
+  node: Node,
+  structure: LanguageStructure,
+  kind: string,
+): { readonly name?: string } {
   if (UNNAMED_KINDS.has(kind)) return {};
   const name = nameOf(node, structure, 0);
   return name === undefined ? {} : { name };

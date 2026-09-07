@@ -52,8 +52,10 @@ export type {
 } from './inputs.ts';
 export { mapTree, readCounters, retrieveBytes, retrieveMany, smeltBlob } from './verbs.ts';
 export type {
+  FocusSource,
   MapTreeOp,
   ReadCountersOp,
+  ResolvedFocus,
   RetrieveBytesOp,
   RetrieveManyOp,
   SmeltBlobOp,

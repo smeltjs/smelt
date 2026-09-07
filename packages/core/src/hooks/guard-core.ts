@@ -3,6 +3,21 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import process from 'node:process';
 
+import { focusTermsFor, searchPattern, shellQuote, simpleCommandWords } from './focus-terms.ts';
+
+/**
+ * The command parsing lives in `./focus-terms.ts` — a zero-import sibling, so the
+ * guard's no-library-import rule holds — and is re-exported here because this module
+ * is the published `hooks/guard-core` subpath every shim and the opencode plugin load.
+ */
+export {
+  focusTermsFor,
+  searchPattern,
+  searchPatterns,
+  shellQuote,
+  simpleCommandWords,
+} from './focus-terms.ts';
+
 /**
  * The guard core — one zero-dependency node module, shared by every harness shim.
  *
@@ -21,7 +36,8 @@ import process from 'node:process';
  *    A guard that can brick a session on bad input is worse than no guard; the agent
  *    loses nothing but the optimization, and the warning says so.
  *  - **No library import on any path.** This module imports node builtins only —
- *    never `../index.ts`, never a planner, never web-tree-sitter. The allow case is
+ *    never `../index.ts`, never a planner, never web-tree-sitter — plus its one
+ *    zero-import sibling `./focus-terms.ts`, which owns the command parsing. The allow case is
  *    a stat and an exit; the research note
  *    (docs/research/2026-09-02-agent-enforcement.md § 5) budgets the always-on guard
  *    at tens of milliseconds, and loading grammar machinery here would spend that
@@ -378,19 +394,25 @@ function decideBash(
   if ((program === 'grep' || program === 'rg') && settings.enforcement === 'rewrite') {
     const pattern = searchPattern(words);
     if (pattern === undefined) return ALLOW;
-    // Deliberately no `--focus` on the wrap: a plain grep's every output line contains
-    // the searched pattern, so focusing on it would protect the entire output — zero
-    // elisions exactly when the output is large, plus an over-budget exit. The wrap
-    // lets smelt's lexical planner keep the head and tail and collapse the middle
-    // into retrievable markers instead.
-    const wrapped = `${command} | ${SMELT_CLI} --budget ${String(settings.budgetBytes)}`;
+    // `--focus` on the wrap only where it distinguishes lines: a plain grep's every
+    // output line contains the searched pattern, so focusing on it would protect the
+    // entire output — zero elisions exactly when the output is large, plus an
+    // over-budget exit — and the wrap lets the lexical planner keep the head and tail
+    // and collapse the middle instead. A search with context prints non-matching
+    // lines too, and there the pattern the guard already parsed is exactly the focus.
+    // One derivation, `focusTermsFor`, states which is which; the same function
+    // resolves a `--producer` hint in the ops seam, so both doors agree with this wrap.
+    const focus = focusTermsFor(command);
+    const focused = focus.map((term) => ` --focus ${shellQuote(term)}`).join('');
+    const wrapped = `${command} | ${SMELT_CLI} --budget ${String(settings.budgetBytes)}${focused}`;
     return {
       action: 'deny',
       reason:
         `smelt guard (rewrite mode): \`${program}\` output size is unknowable before it runs, ` +
         `so pipe it through smelt instead. Run exactly: ${wrapped} — output within the ` +
         `budget passes through untouched; past it, elided regions leave <<smelt/v1 …>> ` +
-        `markers. ${retrieveSentence(settings)}`,
+        `markers${focused === '' ? '' : `, and the${focused} keeps every match and its context verbatim`}. ` +
+        `${retrieveSentence(settings)}`,
       suggestion: wrapped,
     };
   }
@@ -431,115 +453,6 @@ function denyOversized(
       `of just the lines you need is also fine.`,
     suggestion: replacement,
   };
-}
-
-/**
- * Split a command into words IF it is one simple command: no pipes, no logic, no
- * redirects, no substitutions, no expansions this code would have to model. Anything
- * else returns `undefined` and the caller allows — the guard judges only what it can
- * see whole.
- */
-export function simpleCommandWords(command: string): readonly string[] | undefined {
-  const words: string[] = [];
-  let current = '';
-  let started = false;
-  let i = 0;
-  const push = (): void => {
-    if (started) words.push(current);
-    current = '';
-    started = false;
-  };
-  while (i < command.length) {
-    const ch = command[i]!;
-    if ('|&;<>()`$\\\n*?~{}!'.includes(ch)) return undefined; // shell would interpret it
-    if (ch === "'" || ch === '"') {
-      const quote = ch;
-      i += 1;
-      started = true;
-      while (i < command.length && command[i] !== quote) {
-        if (quote === '"' && (command[i] === '$' || command[i] === '`' || command[i] === '\\')) {
-          return undefined; // expansions inside double quotes — not simple
-        }
-        current += command[i]!;
-        i += 1;
-      }
-      if (i >= command.length) return undefined; // unterminated quote
-      i += 1;
-      continue;
-    }
-    if (ch === ' ' || ch === '\t') {
-      push();
-      i += 1;
-      continue;
-    }
-    current += ch;
-    started = true;
-    i += 1;
-  }
-  push();
-  return words;
-}
-
-/**
- * The pattern a grep/rg invocation searches for: an explicit `-e`/`--regexp` value if
- * given, else the first word that is not a flag or a flag's value. `undefined` when
- * the parse is not sure — and unsure means allow, like everything else here.
- */
-export function searchPattern(words: readonly string[]): string | undefined {
-  const takesValue = new Set([
-    '-e',
-    '--regexp',
-    '-f',
-    '--file',
-    '-m',
-    '--max-count',
-    '-A',
-    '--after-context',
-    '-B',
-    '--before-context',
-    '-C',
-    '--context',
-    '-d',
-    '--directories',
-    '-D',
-    '--devices',
-    '--include',
-    '--exclude',
-    '--exclude-dir',
-    '-t',
-    '--type',
-    '-T',
-    '--type-not',
-    '-g',
-    '--glob',
-    '--iglob',
-    '-j',
-    '--threads',
-    '--color',
-    '--colour',
-  ]);
-  let i = 1;
-  while (i < words.length) {
-    const word = words[i]!;
-    if (word === '--') return words[i + 1];
-    if (word === '-e' || word === '--regexp') return words[i + 1];
-    if (word.startsWith('--') && word.includes('=')) {
-      i += 1;
-      continue;
-    }
-    if (word.startsWith('-') && word.length > 1) {
-      i += takesValue.has(word) ? 2 : 1;
-      continue;
-    }
-    return word;
-  }
-  return undefined;
-}
-
-/** Single-quote a value for `sh` unless it is plainly safe bare. */
-export function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_./:=-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 /* ------------------------------------------------------------------------------------

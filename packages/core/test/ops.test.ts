@@ -288,6 +288,58 @@ describe('mapTree', () => {
   });
 });
 
+function contextGrep(): string {
+  // What `grep -C 2 handleRequest src` prints: matches with two lines of context,
+  // so most lines do NOT contain the term — exactly where a focus window can cut.
+  const lines: string[] = [];
+  for (let file = 0; file < 12; file += 1) {
+    for (let i = 0; i < 20; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+    lines.push(`src/f${String(file)}.ts:21:  return handleRequest(path);`);
+    for (let i = 22; i < 40; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+describe('smeltBlob — the producer hint', () => {
+  it('derives the focus from the producer when the caller gave none', async () => {
+    const outcome = await smeltBlob({
+      text: contextGrep(),
+      source: '<stdin>',
+      budgetBytes: 1500,
+      strategy: 'lexical',
+      producer: 'grep -C 2 handleRequest src',
+    });
+    expect(outcome.focus).toEqual({ terms: ['handleRequest'], source: 'producer' });
+    expect(outcome.result.elisions.length).toBeGreaterThan(0);
+    expect(outcome.result.elisions.every((e) => e.reason.rule === 'focus-window')).toBe(true);
+    expect(outcome.result.text).toContain('handleRequest(path)');
+  });
+
+  it('lets an explicit focus win over the producer, and says whose it was', async () => {
+    const outcome = await smeltBlob({
+      text: contextGrep(),
+      source: '<stdin>',
+      budgetBytes: 1500,
+      strategy: 'lexical',
+      focus: ['f3.ts'],
+      producer: 'grep -C 2 handleRequest src',
+    });
+    expect(outcome.focus).toEqual({ terms: ['f3.ts'], source: 'caller' });
+  });
+
+  it('reports no focus when neither the caller nor the producer names a term', async () => {
+    const outcome = await smeltBlob({
+      text: contextGrep(),
+      source: '<stdin>',
+      budgetBytes: 1500,
+      strategy: 'lexical',
+      producer: 'cat grep-output.txt',
+    });
+    expect(outcome.focus).toEqual({ terms: [], source: 'none' });
+    expect(outcome.result.elisions.every((e) => e.reason.rule === 'head-tail')).toBe(true);
+  });
+});
+
 describe('retrieveBytes and readCounters', () => {
   it('gives the exact bytes back, and counts the asking', async () => {
     const store = openStore({ kind: 'memory' });

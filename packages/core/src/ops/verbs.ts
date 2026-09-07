@@ -1,5 +1,6 @@
 import { buildRepoMap } from '../repomap/map.ts';
 import type { RepoMap } from '../repomap/map.ts';
+import { focusTermsFor } from '../hooks/focus-terms.ts';
 import { retrieveEach } from '../retrieve.ts';
 import { createSmelter } from '../smelter.ts';
 import type { Strategy } from '../plan/planners.ts';
@@ -56,6 +57,23 @@ export interface SmeltBlobOp {
   readonly language?: DetectedLanguage;
   /** What the task is about. Empty and absent mean the same thing to every planner. */
   readonly focus?: readonly string[];
+  /**
+   * The command whose output this blob is — `grep -C 3 foo src` — when the front door
+   * knows it. Used only when `focus` names nothing: the terms are derived by
+   * `focusTermsFor`, the same zero-import derivation the hooks guard uses for its
+   * rewrite wrap, so the guard, the CLI and the tool cannot disagree about which terms
+   * a command names. A producer that states no term (`cat`, a diff) derives none.
+   */
+  readonly producer?: string;
+}
+
+/** Where a run's focus came from, so a report can attribute it. */
+export type FocusSource = 'caller' | 'producer' | 'none';
+
+/** The focus a run actually planned with, and whose it was. */
+export interface ResolvedFocus {
+  readonly terms: readonly string[];
+  readonly source: FocusSource;
 }
 
 /**
@@ -78,6 +96,11 @@ export interface SmeltBlobOutcome {
   readonly inputText: string;
   /** The store the run actually used — the one passed in, or the library's default. */
   readonly store: ElisionStore;
+  /**
+   * The focus the planner saw — the caller's terms, else the ones derived from
+   * `producer`, else none — with its source, so a report says whose terms cut.
+   */
+  readonly focus: ResolvedFocus;
 }
 
 /**
@@ -95,11 +118,12 @@ export async function smeltBlob(op: SmeltBlobOp): Promise<SmeltBlobOutcome> {
     strategy: op.strategy,
     ...(op.store === undefined ? {} : { store: op.store }),
   });
+  const focus = resolveFocus(op);
   const result = await smelter.smelt(op.text, {
     budgetBytes: op.budgetBytes,
     ...(op.path === undefined ? {} : { path: op.path }),
     ...(op.language === undefined ? {} : { language: op.language }),
-    ...(op.focus === undefined || op.focus.length === 0 ? {} : { focus: op.focus }),
+    ...(focus.terms.length === 0 ? {} : { focus: focus.terms }),
   });
   return {
     result,
@@ -107,7 +131,22 @@ export async function smeltBlob(op: SmeltBlobOp): Promise<SmeltBlobOutcome> {
     budgetBytes: op.budgetBytes,
     inputText: op.text,
     store: smelter.store,
+    focus,
   };
+}
+
+/**
+ * The caller's terms win; the producer fills only what the caller left unsaid; and
+ * an answer of none is reported as none rather than as an empty list nobody can
+ * attribute. The precedence is one-directional on purpose — a producer hint can never
+ * override a term the caller typed.
+ */
+function resolveFocus(op: SmeltBlobOp): ResolvedFocus {
+  const caller = (op.focus ?? []).filter((term) => term.length > 0);
+  if (caller.length > 0) return { terms: caller, source: 'caller' };
+  const derived = focusTermsFor(op.producer);
+  if (derived.length > 0) return { terms: derived, source: 'producer' };
+  return { terms: [], source: 'none' };
 }
 
 /** One tree to map, fully resolved. */

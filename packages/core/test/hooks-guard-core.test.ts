@@ -200,6 +200,33 @@ describe('the Bash guard', () => {
     );
     expect(quoted.suggestion).toBe("rg -e 'foo bar' src | smelt --budget 8000");
   });
+
+  it('rewrite mode carries the pattern as a literal --focus when the search prints context', () => {
+    // With -C the output holds non-matching lines too, so the pattern distinguishes
+    // the lines the task is about — and the guard, which already parsed it, says so
+    // in the command instead of leaving the model to reinvent it.
+    const decision = decide(
+      { tool: 'Bash', input: { command: 'grep -C 3 handleRequest src' } },
+      REWRITE,
+      '/repo',
+      stat,
+    );
+    expect(decision.action).toBe('deny');
+    expect(decision.suggestion).toBe(
+      'grep -C 3 handleRequest src | smelt --budget 8000 --focus handleRequest',
+    );
+    expect(decision.reason).toContain('--focus handleRequest');
+
+    const quoted = decide(
+      { tool: 'Bash', input: { command: "rg -C 2 -e 'foo bar' src" } },
+      REWRITE,
+      '/repo',
+      stat,
+    );
+    expect(quoted.suggestion).toBe(
+      "rg -C 2 -e 'foo bar' src | smelt --budget 8000 --focus 'foo bar'",
+    );
+  });
 });
 
 describe('command parsing helpers', () => {

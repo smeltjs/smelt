@@ -204,8 +204,10 @@ export {
 export type {
   BudgetFault,
   BudgetNaming,
+  FocusSource,
   MapTreeOp,
   ReadCountersOp,
+  ResolvedFocus,
   ResolvedStrategy,
   RetrieveBytesOp,
   RetrieveManyOp,
