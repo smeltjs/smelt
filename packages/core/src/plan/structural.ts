@@ -70,6 +70,8 @@ interface Unit {
   readonly end: number;
   /** Human word for the declaration's kind, e.g. `'function'`. */
   readonly kind: string;
+  /** The declaration's own name, read off the tree — `'parseConfig'` — when it has one. */
+  readonly name?: string;
   /**
    * A unit the planner must never collapse, matched or not. Every pin follows one
    * law: collapsing it would silently change what the survivor *is*, not what it
@@ -242,9 +244,15 @@ function planFromTree(
     }
     const start = toByte.get(group[0]!.start)!;
     const end = toByte.get(group[group.length - 1]!.end)!;
+    // The outline: every named unit in the run, in source order. Out of band — the
+    // marker below is priced and rendered from `reason` alone, so attaching names
+    // moves no byte of the wire surface. Absent rather than empty when nothing in the
+    // run has a name (a run of comments, or unparsed regions).
+    const names = group.flatMap((unit) => (unit.name === undefined ? [] : [unit.name]));
     const candidate: PlannedElision = {
       range: { start, end },
       reason: { rule: SIBLING_COLLAPSE_RULE, explanation: explain(group) },
+      ...(names.length === 0 ? {} : { names }),
     };
     // Profitability, priced rather than estimated: ask the MarkerPricing seam for the
     // exact cost of the marker this cut would earn — the explanation's length varies
@@ -512,12 +520,14 @@ function unitsOf(root: Node, text: string, structure: LanguageStructure): readon
         start: child.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
+        ...named(child, structure, kindOf(child, structure)),
       });
     } else if (attached) {
       units.push({
         start: pending[0]!.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
+        ...named(child, structure, kindOf(child, structure)),
       });
       pending = [];
       pendingHasAttribute = false;
@@ -527,6 +537,7 @@ function unitsOf(root: Node, text: string, structure: LanguageStructure): readon
         start: child.startIndex,
         end: childEnd,
         kind: kindOf(child, structure),
+        ...named(child, structure, kindOf(child, structure)),
       });
     }
     for (const comment of trailing) pending.push(comment);
@@ -680,6 +691,106 @@ function kindOf(node: Node, structure: LanguageStructure): string {
   if (node.type === 'ERROR') return 'unparsed region';
   if (node.type.endsWith('_statement') || node.type === 'statement_block') return 'statement';
   return 'declaration';
+}
+
+/**
+ * `{ name }` when the unit is a declaration with a name, `{}` otherwise — spread into
+ * a unit. Only declarations are named: an import, a package clause or a bare statement
+ * has an identifier in it too (`require 'json'`, `using System;`) but naming it would
+ * put a word on the outline that names nothing a model could be looking for.
+ */
+function named(node: Node, structure: LanguageStructure, kind: string): { readonly name?: string } {
+  if (UNNAMED_KINDS.has(kind)) return {};
+  const name = nameOf(node, structure, 0);
+  return name === undefined ? {} : { name };
+}
+
+/**
+ * Kinds whose units carry no outline name: everything that is not a declaration, plus
+ * the declaration-shaped kinds that name a *module* rather than something defined
+ * here (imports, includes, usings, package clauses).
+ */
+const UNNAMED_KINDS: ReadonlySet<string> = new Set([
+  ...NON_DECLARATION_KINDS,
+  'import statement',
+  'import declaration',
+  'import list',
+  'include directive',
+  'using directive',
+  'using declaration',
+  'package clause',
+  'package declaration',
+  'package header',
+]);
+
+/**
+ * The node types that *are* a name, across the bundled grammars: `identifier` almost
+ * everywhere, `simple_identifier` in kotlin and swift, `type_identifier` for a rust
+ * `impl` block's type or a C typedef, `constant` for a ruby class, `name` in php,
+ * `word` for a bash function. A grammar that names its declaration through a field
+ * is read through the field first; this set is the fallback for the ones that do not.
+ */
+const NAME_NODE_TYPES: ReadonlySet<string> = new Set([
+  'identifier',
+  'simple_identifier',
+  'type_identifier',
+  'property_identifier',
+  'field_identifier',
+  'constant',
+  'name',
+  'word',
+]);
+
+/** How deep the name search descends through wrappers and declarators before giving up. */
+const NAME_SEARCH_DEPTH = 4;
+
+/**
+ * The declaration's name, read off the tree — or `undefined`, honestly, when the node
+ * has none (an expression statement, an import, an unparsed region). Three readings in
+ * order, each a fact the grammar states rather than a guess about the text:
+ *
+ *  1. A wrapper (`export …`, `@decorator`) names what it wraps, so descend to it.
+ *  2. The `name` field, which most grammars put on a declaration — and failing that
+ *     the `declarator` chain C and C++ use (`int (*fn)(void)` names `fn` three levels
+ *     down), which is followed to the identifier at its end.
+ *  3. The first named child that is itself a name node, or that carries a `name`
+ *     field of its own (go's `type_declaration` → `type_spec`, a `lexical_declaration`
+ *     → `variable_declarator`).
+ *
+ * The search is bounded so a pathological tree cannot make it quadratic, and a name
+ * is returned only when the tree says so — a wrong name on an outline would send a
+ * model to retrieve the wrong marker, which is worse than no outline at all.
+ */
+function nameOf(node: Node, structure: LanguageStructure, depth: number): string | undefined {
+  if (depth > NAME_SEARCH_DEPTH) return undefined;
+  if (NAME_NODE_TYPES.has(node.type)) return node.text;
+  if (structure.wrapperTypes[node.type] !== undefined) {
+    for (const child of node.namedChildren) {
+      if (child === null || structure.commentTypes.has(child.type)) continue;
+      const inner = nameOf(child, structure, depth + 1);
+      if (inner !== undefined) return inner;
+    }
+    return undefined;
+  }
+  const byField = node.childForFieldName('name');
+  if (byField !== null) {
+    return NAME_NODE_TYPES.has(byField.type) || byField.namedChildCount === 0
+      ? byField.text
+      : (nameOf(byField, structure, depth + 1) ?? byField.text);
+  }
+  const declarator = node.childForFieldName('declarator');
+  if (declarator !== null) return nameOf(declarator, structure, depth + 1);
+  for (const child of node.namedChildren) {
+    if (child === null || structure.commentTypes.has(child.type)) continue;
+    if (NAME_NODE_TYPES.has(child.type)) return child.text;
+    if (
+      child.childForFieldName('name') !== null ||
+      child.childForFieldName('declarator') !== null
+    ) {
+      return nameOf(child, structure, depth + 1);
+    }
+  }
+  return undefined;
 }
 
 /**

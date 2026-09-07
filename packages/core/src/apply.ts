@@ -211,7 +211,7 @@ export function applyPlan(
   let cursor = 0;
   let outputBytes = 0;
 
-  for (const { range, reason } of ordered) {
+  for (const { range, reason, names } of ordered) {
     const kept = input.subarray(cursor, range.start);
     pieces.push(kept);
     outputBytes += kept.length;
@@ -235,6 +235,10 @@ export function applyPlan(
       bytes: removed.length,
       reason,
       marker,
+      // The outline rides beside the marker, never inside it: `buildMarker` above was
+      // handed the reason and nothing else, so the wire surface and its priced cost
+      // are the same with or without names.
+      ...(names === undefined ? {} : { names }),
     });
     outputBytes += markerBuffer.length;
     cursor = range.end;

@@ -17,13 +17,13 @@ mutation-tested like every other guarantee in this repository.
 
 ## The five tools
 
-| Tool                   | In                                                       | Out                                                                                                                                                              |
-| ---------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `smelt_file`           | `path` _or_ `text`, `budgetBytes`, `focus?`, `strategy?` | The smelted text, then a report of every elision (rule, lines, bytes, hash, explanation)                                                                         |
-| `smelt_retrieve`       | `hash` (from a marker's `retrieve("hash")`)              | The exact original bytes, verbatim. **Counted** — this is the expansion rate moving                                                                              |
-| `smelt_retrieve_batch` | `hashes` (several, in one call)                          | One text block per hash, in order: a first line naming the hash and its size, then the exact bytes. Each hit **counted** exactly as a single call would count it |
-| `repo_map`             | `dir`, `budgetBytes`, `focus?`                           | A ranked symbol map of the tree, fitted to the budget by construction (modelled on Aider's repo map)                                                             |
-| `smelt_stats`          | —                                                        | The store's `RetrieveStats`, verbatim JSON. An **uncounted** read: watching the counters never moves them                                                        |
+| Tool                   | In                                                       | Out                                                                                                                                                               |
+| ---------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smelt_file`           | `path` _or_ `text`, `budgetBytes`, `focus?`, `strategy?` | The smelted text, then a report of every elision (rule, lines, bytes, hash, explanation, and for structural cuts the names of the declarations behind the marker) |
+| `smelt_retrieve`       | `hash` (from a marker's `retrieve("hash")`)              | The exact original bytes, verbatim. **Counted** — this is the expansion rate moving                                                                               |
+| `smelt_retrieve_batch` | `hashes` (several, in one call)                          | One text block per hash, in order: a first line naming the hash and its size, then the exact bytes. Each hit **counted** exactly as a single call would count it  |
+| `repo_map`             | `dir`, `budgetBytes`, `focus?`                           | A ranked symbol map of the tree, fitted to the budget by construction (modelled on Aider's repo map)                                                              |
+| `smelt_stats`          | —                                                        | The store's `RetrieveStats`, verbatim JSON. An **uncounted** read: watching the counters never moves them                                                         |
 
 `smelt_retrieve_batch` exists because of a measured cost, not a convenience: every tool
 call is a new request and input tokens are billed per request, so a model expanding

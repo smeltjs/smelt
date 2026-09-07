@@ -67,6 +67,7 @@ export function formatReport({ result, source, budgetBytes, inputText }: ReportI
     bytes: group(elision.bytes),
     hash: elision.hash,
     explanation: clip(elision.reason.explanation, EXPLANATION_WIDTH),
+    names: elision.names ?? [],
   }));
 
   const ruleWidth = width(
@@ -96,10 +97,21 @@ export function formatReport({ result, source, budgetBytes, inputText }: ReportI
       `  ${row.rule.padEnd(ruleWidth)}  ${row.lines.padStart(linesWidth)}  ` +
         `${row.bytes.padStart(bytesWidth)}  ${row.hash.padEnd(hashWidth)}  ${row.explanation}`,
     );
+    // The outline — what is behind this marker, by name — on its own wrapped lines
+    // beneath the row. Never clipped: it is the index a reader (or a model deciding
+    // whether to retrieve) needs whole, and Law 2's explanation is already the row.
+    if (row.names.length > 0) {
+      for (const wrapped of wrap(`${OUTLINE_LEADER} ${row.names.join(', ')}`, EXPLANATION_WRAP)) {
+        lines.push(`      ${wrapped}`);
+      }
+    }
   }
 
   return `${lines.join('\n')}\n`;
 }
+
+/** Introduces an elision's outline line. */
+const OUTLINE_LEADER = '↳ names:';
 
 /** What `smelt map` prints to stderr. */
 export interface MapReportInput {

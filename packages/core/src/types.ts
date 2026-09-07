@@ -41,6 +41,20 @@ export interface ElisionReason {
 export interface PlannedElision {
   readonly range: ByteRange;
   readonly reason: ElisionReason;
+  /**
+   * The **outline**: the names of the declarations this elision collapses, in source
+   * order — `['parseConfig', 'normalisePath']` — when the planner can read them off a
+   * parse tree. Absent, never empty, when it cannot (a lexical planner sees lines, not
+   * declarations; a run of comments has nothing to name).
+   *
+   * Out of band by design. The names ride on the plan, the applied elision and the
+   * report — never in the marker, whose bytes and priced cost do not move by one byte
+   * (`test/guards/marker-format.test.ts` pins that). It exists because the planner
+   * held the cheapest possible index of what it hid and threw it away at explanation
+   * time, leaving a model on a whole-file task to retrieve hash by hash just to learn
+   * what was behind each marker.
+   */
+  readonly names?: readonly string[];
 }
 
 /**
@@ -129,6 +143,8 @@ export interface AppliedElision {
   readonly reason: ElisionReason;
   /** The exact marker text substituted into the output. */
   readonly marker: string;
+  /** The planner's outline, carried verbatim from {@link PlannedElision.names}. */
+  readonly names?: readonly string[];
 }
 
 /**

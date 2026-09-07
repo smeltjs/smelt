@@ -304,7 +304,9 @@ function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool)
         'hash that smelt_retrieve turns back into the exact original bytes. Use it ' +
         'instead of reading a large file raw; for a small file, reading raw is cheaper ' +
         'than a round trip. Returns two text blocks: the smelted text, then a report of ' +
-        'every elision (rule, lines, bytes, hash, explanation).',
+        'every elision (rule, lines, bytes, hash, explanation, and — for structural cuts — ' +
+        'the names of the declarations behind the marker, so you can decide what to ' +
+        'retrieve without retrieving it).',
       inputSchema: {
         type: 'object',
         properties: {

@@ -4,6 +4,10 @@ exports[`the structural planner > plans boundary.ts (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "greetInGerman",
+        "greetInRussian",
+      ],
       "range": {
         "end": 359,
         "start": 0,
@@ -14,6 +18,10 @@ exports[`the structural planner > plans boundary.ts (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "greetInJapanese",
+        "farewell",
+      ],
       "range": {
         "end": 868,
         "start": 493,
@@ -33,6 +41,10 @@ exports[`the structural planner > plans functions.c (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "MAX_PATH_BYTES",
+        "parse_config",
+      ],
       "range": {
         "end": 252,
         "start": 0,
@@ -43,6 +55,10 @@ exports[`the structural planner > plans functions.c (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "render_response",
+        "log_line",
+      ],
       "range": {
         "end": 746,
         "start": 413,
@@ -62,6 +78,9 @@ exports[`the structural planner > plans functions.cpp (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "parse_config",
+      ],
       "range": {
         "end": 196,
         "start": 0,
@@ -72,6 +91,10 @@ exports[`the structural planner > plans functions.cpp (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "render_response",
+        "log_line",
+      ],
       "range": {
         "end": 625,
         "start": 327,
@@ -91,6 +114,9 @@ exports[`the structural planner > plans functions.cs (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "ConfigParser",
+      ],
       "range": {
         "end": 191,
         "start": 0,
@@ -101,6 +127,10 @@ exports[`the structural planner > plans functions.cs (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "ResponseRenderer",
+        "LineLogger",
+      ],
       "range": {
         "end": 673,
         "start": 346,
@@ -120,6 +150,11 @@ exports[`the structural planner > plans functions.go (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "ParseConfig",
+        "Registry",
+        "Add",
+      ],
       "range": {
         "end": 412,
         "start": 0,
@@ -130,6 +165,10 @@ exports[`the structural planner > plans functions.go (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "Normalise",
+        "LogLine",
+      ],
       "range": {
         "end": 892,
         "start": 606,
@@ -149,6 +188,9 @@ exports[`the structural planner > plans functions.java (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "ConfigParser",
+      ],
       "range": {
         "end": 232,
         "start": 0,
@@ -159,6 +201,10 @@ exports[`the structural planner > plans functions.java (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "ResponseRenderer",
+        "LineLogger",
+      ],
       "range": {
         "end": 688,
         "start": 376,
@@ -178,6 +224,9 @@ exports[`the structural planner > plans functions.js (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "readConfig",
+      ],
       "range": {
         "end": 254,
         "start": 20,
@@ -188,6 +237,10 @@ exports[`the structural planner > plans functions.js (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "renderResponse",
+        "normalise",
+      ],
       "range": {
         "end": 710,
         "start": 385,
@@ -217,6 +270,11 @@ exports[`the structural planner > plans functions.kt (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "parseConfig",
+        "renderResponse",
+        "logLine",
+      ],
       "range": {
         "end": 633,
         "start": 247,
@@ -236,6 +294,9 @@ exports[`the structural planner > plans functions.php (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "parse_config",
+      ],
       "range": {
         "end": 186,
         "start": 7,
@@ -246,6 +307,10 @@ exports[`the structural planner > plans functions.php (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "render_response",
+        "log_line",
+      ],
       "range": {
         "end": 609,
         "start": 317,
@@ -265,6 +330,11 @@ exports[`the structural planner > plans functions.py (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "load_config",
+        "cached_count",
+        "Registry",
+      ],
       "range": {
         "end": 472,
         "start": 23,
@@ -275,6 +345,10 @@ exports[`the structural planner > plans functions.py (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "format_user",
+        "forget_user",
+      ],
       "range": {
         "end": 933,
         "start": 732,
@@ -294,6 +368,9 @@ exports[`the structural planner > plans functions.rb (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "load_config",
+      ],
       "range": {
         "end": 173,
         "start": 51,
@@ -304,6 +381,10 @@ exports[`the structural planner > plans functions.rb (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "render_response",
+        "log_line",
+      ],
       "range": {
         "end": 505,
         "start": 282,
@@ -323,6 +404,10 @@ exports[`the structural planner > plans functions.rs (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "parse_config",
+        "normalise",
+      ],
       "range": {
         "end": 384,
         "start": 0,
@@ -333,6 +418,10 @@ exports[`the structural planner > plans functions.rs (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "Registry",
+        "Registry",
+      ],
       "range": {
         "end": 797,
         "start": 584,
@@ -352,6 +441,9 @@ exports[`the structural planner > plans functions.sh (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "load_config",
+      ],
       "range": {
         "end": 145,
         "start": 20,
@@ -362,6 +454,10 @@ exports[`the structural planner > plans functions.sh (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "render_response",
+        "log_line",
+      ],
       "range": {
         "end": 445,
         "start": 231,
@@ -381,6 +477,9 @@ exports[`the structural planner > plans functions.swift (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "parseConfig",
+      ],
       "range": {
         "end": 184,
         "start": 0,
@@ -391,6 +490,10 @@ exports[`the structural planner > plans functions.swift (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "renderResponse",
+        "logLine",
+      ],
       "range": {
         "end": 579,
         "start": 309,
@@ -410,6 +513,10 @@ exports[`the structural planner > plans functions.ts (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "parseConfig",
+        "normalisePath",
+      ],
       "range": {
         "end": 387,
         "start": 0,
@@ -420,6 +527,10 @@ exports[`the structural planner > plans functions.ts (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "renderResponse",
+        "logLine",
+      ],
       "range": {
         "end": 986,
         "start": 625,
@@ -439,6 +550,13 @@ exports[`the structural planner > plans functions.ts, no focus (snapshot) 1`] = 
 {
   "elisions": [
     {
+      "names": [
+        "parseConfig",
+        "normalisePath",
+        "handleRequest",
+        "renderResponse",
+        "logLine",
+      ],
       "range": {
         "end": 986,
         "start": 0,
@@ -458,6 +576,10 @@ exports[`the structural planner > plans long-doc.ts (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "readAll",
+        "sleep",
+      ],
       "range": {
         "end": 419,
         "start": 0,
@@ -468,6 +590,10 @@ exports[`the structural planner > plans long-doc.ts (snapshot) 1`] = `
       },
     },
     {
+      "names": [
+        "formatDuration",
+        "clamp",
+      ],
       "range": {
         "end": 3596,
         "start": 3218,
@@ -487,6 +613,10 @@ exports[`the structural planner > plans mixed.tsx (snapshot) 1`] = `
 {
   "elisions": [
     {
+      "names": [
+        "BadgeProps",
+        "Badge",
+      ],
       "range": {
         "end": 364,
         "start": 0,
