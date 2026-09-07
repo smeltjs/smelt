@@ -42,7 +42,8 @@ import { postJson } from './net.mjs';
  * Runs one case against a real model and returns its retrieval log.
  *
  * `smelter` is a live Smelter whose store already holds the case's elisions;
- * `smeltedText` is the result text the model sees. The returned log carries the
+ * `smeltedText` is what the model sees — the smelted text followed by its report,
+ * as `shownToModel` joins them (log format v3; v2 logs carried the text alone). The returned log carries the
  * full transcript (initial prompt, every assistant response, every tool_result),
  * the per-round stop reasons, a `truncated` flag for a run cut off at the round
  * cap mid-task, and the store's final counters.
@@ -99,7 +100,7 @@ export async function measureExpansion({
 
   const stats = smelter.stats();
   return {
-    format: 'smelt-bench-tier3-log/v2',
+    format: 'smelt-bench-tier3-log/v3',
     case: benchCase.id,
     model,
     maxRounds: MAX_ROUNDS,

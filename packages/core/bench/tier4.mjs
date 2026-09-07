@@ -143,7 +143,7 @@ export async function measureAb({
 
   return {
     log: {
-      format: 'smelt-bench-tier4-log/v1',
+      format: 'smelt-bench-tier4-log/v2',
       case: benchCase.id,
       model,
       maxRounds: MAX_ROUNDS,

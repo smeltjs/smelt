@@ -361,6 +361,18 @@ export function abRowNote({ verdict, rawUsage, smeltedUsage, retrieves, truncate
 export const CORPUS_REF_FORMAT = 'smelt-bench-corpus-ref/v1';
 
 /**
+ * What tiers 3 and 4 show the model: the smelted text, then its report — the two
+ * blocks `smelt_file` returns, in the product's order. Until the tier-3/v3 and
+ * tier-4/v2 log formats the bench showed the smelted text alone, so the measured
+ * ergonomics excluded an index (rule, lines, bytes, hash, explanation per elision)
+ * the product had always shipped. A number measured on less than the product shows
+ * is a number about something else.
+ */
+export function shownToModel({ smeltedText, report }) {
+  return `${smeltedText}\n\n${report}`;
+}
+
+/**
  * The refusal for a by-reference corpus entry whose source drifted from its pinned
  * hash. Refusing IS the provenance discipline: a source that moved since the hash was
  * pinned must never be silently measured under the old reference, because the corpus

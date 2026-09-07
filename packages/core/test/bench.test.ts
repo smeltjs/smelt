@@ -58,6 +58,7 @@ interface BenchLib {
     unknown: readonly string[];
   };
   AB_VERDICT_TOOL: { name: string; input_schema: Record<string, unknown> };
+  shownToModel(input: { smeltedText: string; report: string }): string;
   abArmPrompt(input: { question: string; text: string; toolName?: string }): string;
   abJudgeMessages(input: {
     question: string;
@@ -369,6 +370,19 @@ function fakeSmelter(): unknown {
   };
 }
 
+describe('what the model is shown is what smelt_file returns', () => {
+  it('joins the smelted text and its report — the two blocks the product hands a model', () => {
+    // The bench measured tiers 3 and 4 with the smelted text alone, while `smelt_file`
+    // has always returned the report block beside it. An index the product already
+    // ships was excluded from the measured ergonomics; from here on the prompt carries
+    // both, in the product's order, so a measured number is a number about the product.
+    const shown = lib.shownToModel({ smeltedText: 'THE TEXT', report: 'THE REPORT\n' });
+    expect(shown.startsWith('THE TEXT')).toBe(true);
+    expect(shown.endsWith('THE REPORT\n')).toBe(true);
+    expect(shown.indexOf('THE TEXT')).toBeLessThan(shown.indexOf('THE REPORT'));
+  });
+});
+
 describe('the tier-3 retrieval log is the whole conversation', () => {
   interface Tier3Log {
     format: string;
@@ -415,6 +429,7 @@ describe('the tier-3 retrieval log is the whole conversation', () => {
       transport: () => Promise.resolve(responses.shift()),
     });
 
+    expect(log.format).toBe('smelt-bench-tier3-log/v3');
     expect(log.truncated).toBe(false);
     expect(log.stopReasons).toEqual(['tool_use', 'end_turn']);
     // The initial user message — task and smelted text — is in the log verbatim.
@@ -639,7 +654,7 @@ describe('the tier-4 A/B measurement (transport-injected)', () => {
     expect(result.log.raw.transcript).toHaveLength(2);
     expect(JSON.stringify(result.log.smelted.transcript)).toContain('RESTORED:abc');
     expect(result.log.judge.reasons).toBe('the second is complete');
-    expect(result.log.format).toBe('smelt-bench-tier4-log/v1');
+    expect(result.log.format).toBe('smelt-bench-tier4-log/v2');
   });
 
   it('an odd case index flips the blind order — the same judge call names the other arm', async () => {

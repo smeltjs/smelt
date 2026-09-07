@@ -48,6 +48,7 @@ import {
   parseBenchArgs,
   renderTable,
   resultRow,
+  shownToModel,
   tier3Aggregate,
   tier3RowNote,
   tier3Verdict,
@@ -195,7 +196,7 @@ for (const benchCase of Array.isArray(manifest?.cases) ? manifest.cases : []) {
 const problems = validateCases(manifest, (file) => existsSync(join(benchDir, file)));
 if (problems.length > 0) fail(`cases.json is invalid:\n  ${problems.join('\n  ')}`);
 
-const { createSmelter } = await import(distEntry);
+const { createSmelter, formatReport } = await import(distEntry);
 const date = new Date().toISOString().slice(0, 10);
 const rows = [];
 const tiersRun = [];
@@ -209,7 +210,19 @@ async function smeltCase(benchCase) {
     focus: benchCase.focus,
     budgetBytes: benchCase.budgetBytes,
   });
-  return { smelter, text, result };
+  // What a model actually receives from `smelt_file`: the text, then the report —
+  // the elision index (rule, lines, bytes, hash, explanation, and the collapsed
+  // declarations' names) the product has always returned beside the payload.
+  const shown = shownToModel({
+    smeltedText: result.text,
+    report: formatReport({
+      result,
+      source: benchCase.path,
+      budgetBytes: benchCase.budgetBytes,
+      inputText: text,
+    }),
+  });
+  return { smelter, text, result, shown };
 }
 
 const fingerprint = (result) =>
@@ -289,13 +302,13 @@ if (wantTier3) {
   const completed = [];
   let truncatedCount = 0;
   for (const benchCase of manifest.cases) {
-    const { smelter, result } = await smeltCase(benchCase);
+    const { smelter, shown } = await smeltCase(benchCase);
     const log = await measureExpansion({
       apiKey,
       model,
       benchCase,
       smelter,
-      smeltedText: result.text,
+      smeltedText: shown,
     });
     writeFileSync(join(logDir, `${benchCase.id}.json`), `${JSON.stringify(log, null, 2)}\n`);
     const verdict = tier3Verdict(log.stats);
@@ -360,13 +373,13 @@ if (wantTier4) {
           'question cannot be measured for answer quality. Add one to cases.json.',
       );
     }
-    const { smelter, text, result } = await smeltCase(benchCase);
+    const { smelter, text, shown } = await smeltCase(benchCase);
     const { log, verdict, rawUsage, smeltedUsage, retrieves, truncated } = await measureAb({
       apiKey,
       model,
       benchCase,
       rawText: text,
-      smeltedText: result.text,
+      smeltedText: shown,
       smelter,
       index,
     });

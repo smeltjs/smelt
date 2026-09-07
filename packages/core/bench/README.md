@@ -20,7 +20,9 @@ ANTHROPIC_API_KEY=… pnpm bench -- --tier4   # + tier 4: answer-quality A/B (PA
 Rows land in [`RESULTS.md`](RESULTS.md), append-only. Tier 3 additionally writes a
 retrieval log per case to `tier3-log/`, to be committed alongside its rows so the
 expansion rate is checkable from a file rather than from trust. The log is the full
-transcript — the initial prompt with the smelted text the model saw, every
+transcript — the initial prompt with what the model saw (the smelted text and its
+report, the two blocks `smelt_file` returns; log formats tier3/v3 and tier4/v2 —
+earlier logs carried the text alone, which excluded an index the product ships), every
 assistant response, and every tool_result payload — because tier 3 is run once and
 the committed file is the only evidence. A run cut off at the round cap while the
 model was still calling tools is flagged `truncated` in its log, marked TRUNCATED
