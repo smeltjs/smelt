@@ -160,3 +160,45 @@ the two rows marked OVER BUDGET (large-ts-file 10866/4000, tsx-component 861/700
 the maximal-run pass alone, over budget with no profitable sub-run left to take. The
 rung's own case is a 158-byte fixture in `test/structural.test.ts`; this corpus does not
 exercise it, and a case that does is worth adding.
+
+## run 2026-09-07 — tier 1 + 2 + 3 + 4 — corpus 10462aa46b8e
+
+| case | tier | date | corpus commit | model | unit | input | output | elisions | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| large-ts-file | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 31229 | 10866 | 3 | budget 4000 B, structural/v1 — OVER BUDGET |
+| tsx-component | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 1090 | 861 | 1 | budget 700 B, structural/v1 — OVER BUDGET |
+| java-classes | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 689 | 366 | 2 | budget 400 B, structural/v1 |
+| multi-file-grep | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 6451 | 986 | 2 | budget 1500 B, lexical/v1 |
+| stack-trace | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 452 | 344 | 1 | budget 400 B, lexical/v1 |
+| build-log | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 16354 | 109 | 1 | budget 800 B, lexical/v1 |
+| django-query-utils | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 13389 | 1697 | 2 | budget 4000 B, structural/v1 |
+| sklearn-ridge | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 91082 | 31951 | 2 | budget 40000 B, structural/v1 |
+| sympy-boolalg | tier 1 | 2026-09-07 | 10462aa46b8e | — | bytes | 114180 | 8151 | 4 | budget 10000 B, structural/v1 |
+| large-ts-file | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 11768 | 4036 | 3 | count_tokens, text as one user message |
+| tsx-component | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 429 | 353 | 1 | count_tokens, text as one user message |
+| java-classes | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 256 | 172 | 2 | count_tokens, text as one user message |
+| multi-file-grep | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 2835 | 426 | 2 | count_tokens, text as one user message |
+| stack-trace | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 196 | 148 | 1 | count_tokens, text as one user message |
+| build-log | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 9090 | 58 | 1 | count_tokens, text as one user message |
+| django-query-utils | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 4534 | 577 | 2 | count_tokens, text as one user message |
+| sklearn-ridge | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 34962 | 12365 | 2 | count_tokens, text as one user message |
+| sympy-boolalg | tier 2 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | tokens | 45278 | 3561 | 4 | count_tokens, text as one user message |
+| large-ts-file | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 3 | 3 | — | expansion rate 1.00, 3 calls — LOSS: the model retrieved everything back |
+| tsx-component | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 1 | 1 | — | expansion rate 1.00, 1 calls — LOSS: the model retrieved everything back |
+| java-classes | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 2 | 2 | — | expansion rate 1.00, 2 calls — LOSS: the model retrieved everything back |
+| multi-file-grep | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 2 | 2 | — | expansion rate 1.00, 2 calls — LOSS: the model retrieved everything back |
+| stack-trace | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 1 | 0 | — | expansion rate 0.00, 0 calls |
+| build-log | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 1 | 1 | — | expansion rate 1.00, 1 calls — LOSS: the model retrieved everything back |
+| django-query-utils | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 2 | 2 | — | expansion rate 1.00, 2 calls — LOSS: the model retrieved everything back |
+| sklearn-ridge | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 2 | 2 | — | expansion rate 1.00, 2 calls — LOSS: the model retrieved everything back |
+| sympy-boolalg | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 4 | 4 | — | expansion rate 1.00, 4 calls — LOSS: the model retrieved everything back |
+| ALL CASES | tier 3 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | elisions retrieved | 18 | 17 | — | aggregate expansion rate 0.94 over 9 completed case(s) |
+| large-ts-file | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 11820 | 4671 | 3 | raw 11820 in/1521 out · smelted 4671 in/1117 out · 0 retrieve(s) · verdict: tie |
+| tsx-component | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 472 | 2300 | 1 | raw 472 in/701 out · smelted 2300 in/809 out · 1 retrieve(s) · verdict: tie |
+| java-classes | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 296 | 2050 | 2 | raw 296 in/0 out · smelted 2050 in/739 out · 2 retrieve(s) · verdict: smelted better |
+| multi-file-grep | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 2886 | 5091 | 2 | raw 2886 in/1087 out · smelted 5091 in/1649 out · 2 retrieve(s) · verdict: raw better |
+| stack-trace | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 232 | 1748 | 1 | raw 232 in/603 out · smelted 1748 in/278 out · 1 retrieve(s) · verdict: tie |
+| build-log | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 9138 | 10597 | 1 | raw 9138 in/786 out · smelted 10597 in/674 out · 1 retrieve(s) · verdict: raw better |
+| django-query-utils | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 4584 | 1210 | 2 | raw 4584 in/968 out · smelted 1210 in/825 out · 0 retrieve(s) · verdict: tie |
+| sklearn-ridge | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 35024 | 49082 | 2 | raw 35024 in/1893 out · smelted 49082 in/1746 out · 2 retrieve(s) · verdict: tie |
+| sympy-boolalg | tier 4 | 2026-09-07 | 10462aa46b8e | claude-opus-5 | A/B judged | 45322 | 15024 | 4 | raw 45322 in/1356 out · smelted 15024 in/2009 out · 2 retrieve(s) · verdict: tie |
