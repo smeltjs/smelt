@@ -1,0 +1,38 @@
+{
+  "format": "smelt-bench-tier3-log/v2",
+  "case": "stack-trace",
+  "model": "claude-opus-5",
+  "maxRounds": 16,
+  "stopReasons": [
+    "end_turn"
+  ],
+  "truncated": false,
+  "transcript": [
+    {
+      "role": "user",
+      "content": "an agent's tool call failed and it needs the error name and message, not the frames.\n\nThe content below was shrunk by smelt; elided regions are markers you can expand with the smelt_retrieve tool if — and only if — the task needs them.\n\nfile:///home/smelt/repo/packages/core/dist/store.js:33\n            throw new UnknownHashError(hash);\n                  ^\n\nUnknownHashError: smelt: no stored content for hash \"feedfacedeadbeef\". It was never elided, or the store was reset.\n<<smelt/v1: collapsed 6 lines with no match for the focus terms (213B) — retrieve(\"c3b8479a858f9970\")>>"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAISiQUKjgEIERgCKkBxw3VAT4npDMqeML3+JraIZ+mBXJMTvCrLIOfscYLIIapUMFz65KgbgDiVBeJD2AlgY8p2zr60LC3Qx6jqa1NOMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAdbQ+dQGEgxZkct60CKIwp65Fw4aDIFldjNSJc/fXAmkwCIwAvIuF/l1EncdmwZqVFzBCIGN/DApaWZ+Uc1RgV8musRej6GJmGQT4wWPRWnobhibKqcDIO6kodyaBsYh+BBpBTC9uX1iuU+k5S0NBr4AMnCFi5f1KJFt9B3pByo++/QGeTx3n+tpAvkISaK8YfoI8m1PStBzF3dusIlQ5BiqhnfVV3MlxzUKzBemOW/xfDmpnWJypLHPXB5jOBz8BmXpRSFfYwSIFnFHOBjWtOrjP99zQLPQrHKg1AI3W8vbwiJtl6bdwcN+denGcWb1fKon55FrZMdkt0/0uTD23p+BWbuWJjYK5BRUa6veXrt2hqwK9GVwFImppG3Va4o2Rse3Nwv7zfqta/QrlHyr8QN7EKyIeeBKM1pMZwf+awtszx7pi8aBrR8dH4Cbhvd/pd2NJIh3kBh4++qzgZXp/mL/Q5/A3zwrFqqf5LHWgsw0B9XvoDyWlcojMGdbuTz16eVVZf78sWpzJPh9B4Lq+S1QCsZlfdjymQbI68+OXosr8GwRiiSFr27MQdGlK1JT/z0DqJQz29Bu5crSo5OEXW/7TGG+XLVo2dHJqVtRFlSGadnM80vgJXwaSSjPQpSR7otw1+MPb3U1AzOo1EZGpC/F7aauXbcouESaCa8sGAE="
+        },
+        {
+          "type": "text",
+          "text": "**Error name:** `UnknownHashError`\n\n**Message:**\n```\nsmelt: no stored content for hash \"feedfacedeadbeef\". It was never elided, or the store was reset.\n```\n\nThrown from `packages/core/dist/store.js:33`. The collapsed region below the message is just the stack frames, which you said aren't needed — so I didn't expand it. (If you do want them later, they're at `retrieve(\"c3b8479a858f9970\")`.)\n\nNote on the substance: the hash `feedfacedeadbeef` isn't a real store entry — it looks like a placeholder/dummy value rather than a hash captured from an actual `<<smelt/v1: ...>>` marker. So the fix is likely upstream in whatever produced that hash, not in the store itself."
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "elisionsStored": 1,
+    "retrieveCalls": 0,
+    "uniqueRetrieved": 0,
+    "misses": 0,
+    "expansionRate": 0,
+    "allElisionsRetrieved": false
+  }
+}

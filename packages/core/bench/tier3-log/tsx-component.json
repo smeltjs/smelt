@@ -1,0 +1,74 @@
+{
+  "format": "smelt-bench-tier3-log/v2",
+  "case": "tsx-component",
+  "model": "claude-opus-5",
+  "maxRounds": 16,
+  "stopReasons": [
+    "tool_use",
+    "end_turn"
+  ],
+  "truncated": false,
+  "transcript": [
+    {
+      "role": "user",
+      "content": "an agent opened a component file to change the Toolbar and nothing else.\n\nThe content below was shrunk by smelt; elided regions are markers you can expand with the smelt_retrieve tool if — and only if — the task needs them.\n\n// <<smelt/v1: collapsed 3 sibling declarations (1 import statement, 1 interface, 1 function) (364B) — retrieve(\"fe1a5e2054b9cb57\")>>\n\n/** The align choices the toolbar supports, spelled out as a type alias. */\ntype Align = 'left' | 'center' | 'right';\n\n/** Keeps track of how often each toolbar button has been pressed. */\nclass PressCounter {\n  counts = new Map<string, number>();\n  press(id: string): void {\n    this.counts.set(id, (this.counts.get(id) ?? 0) + 1);\n  }\n}\n\n/** The toolbar — the component this file is really about. */\nexport function Toolbar({ align }: { align: Align }) {\n  return (\n    <div className={`toolbar ${align}`}>\n      <Badge label=\"saved\" />\n    </div>\n  );\n}\n\n/** A footer nobody looks at, present to give the toolbar a sibling below. */\nfunction Footer() {\n  return <footer className=\"footer\">fin — © nobody</footer>;\n}\n"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAISuQYKjgEIERgCKkB+hOhcaVkALtpqPEyYoKoDeaPL3o8phvtfwZO7hJ6pdP9If42nmwMCJa2GEsvgur92snX8/jDHRHbOTfmnOVBsMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAYvQ+dQGEgz16h5kKrsXyac5AIYaDIuNBbu5kdoFzgN/eiIwYklQ+YI2UsJp3fLQWjUDzosQLCo/mH03t/jxa07CB703o2nBSsMk6ixya8EKgmDPKtcElW2qEZffsadHFjIyWoawrD1s2ptPOFNxQKAo4Bpvy9wTYkHIXw8eREqsUiyYqzOF2P3u92s7e/atkmOJy9PJEuFzv/QuuYERU/lYPfloloAG5zww0yCSR3K2yVbs9GvWtmybhZOS/LjEx5w0POHtJZzntEXOkW3PNeyLMcGcHvcxNd++f7L3zvA2SZ3WqwACalWAXjvNKWQzAjEljJHbOZUyyv1v6hjN6E0Br9WlxxYMRFFdVa+rfHhQVT6Hp61N/1abOmka0Bbrlfg26l6cn1SbJQPtP52GUvQv7BJ7GBPE8+imSnI0T33fUZcs9HZpNwVVSsJtoYVludDFqAwUWyZM7JsZ+HBM2EDj8Wrd9fr+mUiW9eZtjD0Je6zYDblFW9Hlp9Yu8JXMEiXoEMtGPYjKSXgrfTkozb97qAIluhtPjbEhyffyBv0jWDtIbQJejmle3BYCpi+hpYL5D8RV1mJkshmpU/1cf3YzRke6oNtbDAXeb7R7kzCy/JeC0KHhypePGQn3DJrlOYZdTm2MluRlt/SdjpGZRRUVtuXJZ4OlJmPIci4syLM1+lX1PpWKIHbTmkWsGZUVvW6S5Uvp15rTjZsmI13JxRH6qH2MUwnPH/WUf+ZyxPJwcMNOg6nsJkP0c/ErAAEuxp7PIv4mwCWNAG4wMRzKFcn8G82usTGTw9PweFh5kzoxSrS7idU+tS9Kb/LrhU8kcTUWXrA4lQ/pq2SZqo6Ls4gFiEBYZV6sAY4i8FABaS08cRcN7Jh2bTSPhuUYVylVcc2Bbodta5bKbd5YSHgYAQ=="
+        },
+        {
+          "type": "text",
+          "text": "I'll expand the one elided region, since the Toolbar's JSX depends on `Badge` (and whatever the import provides), and I can't safely edit a component whose child's props I can't see."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_015RPZeCxLmAZPoUjdHsZroC",
+          "name": "smelt_retrieve",
+          "input": {
+            "hash": "fe1a5e2054b9cb57"
+          },
+          "caller": {
+            "type": "direct"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_015RPZeCxLmAZPoUjdHsZroC",
+          "content": "import { render } from 'preact';\n\n/** Props for the badge: a label and an optional emphasis flag. */\ninterface BadgeProps {\n  label: string;\n  strong?: boolean;\n}\n\n/** A pill-shaped badge used all over the place in this imaginary app. */\nfunction Badge(props: BadgeProps) {\n  return <span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>;\n}"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": "CAISjgQKjgEIERgCKkCZtCFfI0L/UMyMrceTcoEIhPvjCNXO5RNT9L7I/l8HPsarvAmkkxR0latkar5QmhfYtSjKhRwAzHsX7ElNGKHLMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAZDQ+dQGEgz8VXHXAOKQBb0zv1IaDALUEF2edpenWtgLMiIwS9GHRW2rDttBnLMbOQVlExCfWFvqEQq4aCA4tdLwm3aE7efVo1FVosOqQjG9g+xuKqwCk4NSBa/f49KqygnLGY/idkYMaVjdkVtUo8s9EuNM3OcC1jCaJ/EFJ6N/bXrOqWB5AtHlGaI6lTp0ksUmYumnGtp2EyojbeAtGgXOPmcFxrFHIgcSR07DdV7eeQw4WE/HWGPaVcahBNMgkeTz/Oqhk0Yr9/ffrhfWFhF3gzbKwGfSP+Z/2BS//7Za1GZNHRQjrOnwdxqn/Ov2jGPzbfELcPUtkfLbFFyz4WgUGl3ok0ex2H8LAnHakTWP2fMN0dcxnN7BRG92z5vF9BDURUdQLtm7CNOOuJ1lg61qWNkY9ngLW0+Q0fX81PN389ov7pnS/WU8TW+JGEQPPRUrSKbxJwWqA/CSjchxx9Eb7u6xPDj9JuCN2E1YNz22Zk8S7LObg4E3uzZ2vGsor+b0GAE="
+        },
+        {
+          "type": "text",
+          "text": "Here's the full picture of the file now that nothing is hidden:\n\n```tsx\nimport { render } from 'preact';\n\n/** Props for the badge: a label and an optional emphasis flag. */\ninterface BadgeProps {\n  label: string;\n  strong?: boolean;\n}\n\n/** A pill-shaped badge used all over the place in this imaginary app. */\nfunction Badge(props: BadgeProps) {\n  return <span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>;\n}\n\ntype Align = 'left' | 'center' | 'right';\n\nclass PressCounter { /* counts presses by id */ }\n\nexport function Toolbar({ align }: { align: Align }) { /* renders <Badge label=\"saved\" /> */ }\n\nfunction Footer() { /* static footer */ }\n```\n\n**What matters for a Toolbar-only change:**\n\n- **`Align`** is a local type alias, `'left' | 'center' | 'right'`. It's interpolated straight into `className={`toolbar ${align}`}`, so the class names are `toolbar left` / `toolbar center` / `toolbar right`. Adding a new alignment means editing the alias too — that's arguably outside \"the Toolbar and nothing else,\" so worth flagging before doing it.\n- **`Badge`** is defined in this same file, not imported. Its props are `label: string` (required) and `strong?: boolean` (optional). So the Toolbar can pass `strong` if you want the \"saved\" pill emphasized — `<Badge label=\"saved\" strong />` is valid and needs no changes to `Badge`.\n- **`PressCounter`** is declared but never instantiated anywhere in this file, and the Toolbar renders no buttons — despite the docstring saying it counts \"toolbar button\" presses. If your change involves adding buttons, this class is the pre-existing hook for it, currently dead code.\n- **`render` from `preact`** is imported but unused in this file, and the JSX is Preact-flavored (`props.label` style, `className`). Relevant only in that it confirms the JSX runtime; leave the import alone unless you're also cleaning up.\n- **`Footer`** is unexported and unreferenced. Irrelevant to the Toolbar; safe to ignore.\n\n**Bottom line:** you can change the Toolbar in isolation as long as the edit stays within the existing `Align` values and `BadgeProps` shape. The two things that would force you to touch a sibling declaration are adding an alignment (edits `Align`) or adding buttons (would want `PressCounter`, which is currently unwired). Tell me what change you want and I'll scope it."
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "elisionsStored": 1,
+    "retrieveCalls": 1,
+    "uniqueRetrieved": 1,
+    "misses": 0,
+    "expansionRate": 1,
+    "allElisionsRetrieved": true
+  }
+}

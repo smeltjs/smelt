@@ -22,3 +22,8 @@ site/*
 
 # guard scratch — isolated copies of `src` a guard makes and removes
 packages/core/.guard-scratch/
+
+# bench measurement logs — evidence artifacts written by the harness and committed
+# verbatim; a formatter reflowing a committed log is editing the evidence
+packages/core/bench/tier3-log/
+packages/core/bench/ab-log/

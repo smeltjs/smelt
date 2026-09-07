@@ -82,14 +82,16 @@ see `docs/ARCHITECTURE.md` § Decision 4.
 
 Tier 4 asks each case's `abQuestion` twice — once against the raw blob (no tools),
 once against the smelted one with `smelt_retrieve` wired — records both arms' token
-usage from the API's own usage fields, and asks a judge (the same named model,
-temperature 0, the raw blob as reference) which answer is better through a tool
-call. The answers reach the judge blind (`answer_1`/`answer_2`, order reversing on
-odd case indices), a verdict that does not parse is **UNJUDGED** rather than
-guessed, and a smelted arm cut off at the round cap claims no verdict. The verdict
-is a model's opinion — an instrument reading, which is why the log with the judge's
-reasons is committed beside the row. A tier-4 row's `input` column is the raw arm's
-summed input tokens and its `output` column the smelted arm's; the note carries
+usage from the API's own usage fields, and asks a judge (the same named model, the
+raw blob as reference) which answer is better through a tool call. No sampling
+parameters are sent on any call — current models deprecate `temperature`, and the
+reading's discipline is the tool-forced verdict, the blind ordering, and the one
+committed log. The answers reach the judge blind (`answer_1`/`answer_2`, order
+reversing on odd case indices), a verdict that does not parse is **UNJUDGED** rather
+than guessed, and a smelted arm cut off at the round cap claims no verdict. The
+verdict is a model's opinion — an instrument reading, which is why the log with the
+judge's reasons is committed beside the row. A tier-4 row's `input` column is the raw
+arm's summed input tokens and its `output` column the smelted arm's; the note carries
 both arms' full usage, the retrieve count, and the verdict.
 
 ## What this harness refuses to do

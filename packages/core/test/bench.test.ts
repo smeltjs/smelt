@@ -621,7 +621,10 @@ describe('the tier-4 A/B measurement (transport-injected)', () => {
     expect(String(rawCall.messages[0]?.content)).toContain('RAW TEXT');
     expect(firstSmeltedCall.tools[0]?.name).toBe('smelt_retrieve');
     expect(judgeCall.tools[0]?.name).toBe('report_ab_verdict');
-    expect(judgeCall.temperature).toBe(0); // the judge is the instrument, not the subject
+    // No sampling parameters anywhere: current models deprecate `temperature`
+    // outright (a live run was refused with "`temperature` is deprecated for this
+    // model"), and the reading's discipline is the tool-forced verdict, not the knob.
+    expect(judgeCall.temperature).toBeUndefined();
     expect(String(judgeCall.messages[0]?.content)).toContain('answer_1:\n\nRAW ANSWER');
     expect(String(judgeCall.messages[0]?.content)).toContain('answer_2:\n\nSMELTED ANSWER');
 

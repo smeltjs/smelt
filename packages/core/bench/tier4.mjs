@@ -12,9 +12,13 @@
  * against the raw blob (no tools), once against the smelted one with `smelt_retrieve`
  * wired exactly as tier 3 wires it. Both arms' token usage is recorded from the API's
  * own usage fields, summed over the arm's requests; nothing is converted between
- * units. A judge — the same named model, temperature 0, the raw blob as its
- * reference — reports which answer is better through a tool call, so the verdict is
- * parseable or absent, never scraped. The judge sees the answers anonymised as
+ * units. A judge — the same named model, holding the raw blob as its reference —
+ * reports which answer is better through a tool call, so the verdict is parseable or
+ * absent, never scraped. No sampling parameters are sent on any call: current models
+ * deprecate `temperature` outright (a live run of this harness was refused with
+ * "`temperature` is deprecated for this model"), and the reading's discipline never
+ * rested on it anyway — it rests on the tool-forced verdict, the blind ordering, and
+ * the one committed log. The judge sees the answers anonymised as
  * `answer_1`/`answer_2`, and which arm is first reverses on odd case indices, so
  * position bias has no fixed direction across a run.
  *
@@ -117,7 +121,6 @@ export async function measureAb({
     });
     const judgeResponse = await send({
       model,
-      temperature: 0,
       tools: [AB_VERDICT_TOOL],
       messages: judgeMessages,
     });
@@ -206,7 +209,7 @@ function invokeTool(tool, block) {
   }
 }
 
-async function request({ apiKey, model, tools, temperature, messages }) {
+async function request({ apiKey, model, tools, messages }) {
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: {
@@ -214,7 +217,7 @@ async function request({ apiKey, model, tools, temperature, messages }) {
       'x-api-key': apiKey,
       'anthropic-version': API_VERSION,
     },
-    body: JSON.stringify({ model, max_tokens: 4096, tools, temperature, messages }),
+    body: JSON.stringify({ model, max_tokens: 4096, tools, messages }),
   });
   if (!response.ok) {
     const body = await response.text();
