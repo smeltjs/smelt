@@ -7,11 +7,12 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { EXIT, runCli } from '@guard/cli/run';
 import type { CliIo } from '@guard/cli/run';
 import { createSmelter } from '@guard/index';
+import { createRetrieveBatchTool } from '@guard/retrieve';
 import { retrieveStats } from '@guard/stats';
 import type { RawRetrieveCounters } from '@guard/stats';
 import { MemoryElisionStore } from '@guard/store';
 import { DirectoryElisionStore } from '@guard/store-dir';
-import type { ElisionStore } from '@guard/types';
+import type { ElisionStore, RuleLedgerEntry } from '@guard/types';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -42,8 +43,11 @@ afterAll(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
-/** Both shipped stores expose their raw counters, so the guard can watch the seam. */
-type CounterStore = ElisionStore & { rawCounters(): RawRetrieveCounters };
+/** Both shipped stores expose their raw counters and their ledger, so the guard can watch the seam. */
+type CounterStore = ElisionStore & {
+  rawCounters(): RawRetrieveCounters;
+  ledger(): readonly RuleLedgerEntry[];
+};
 
 const STORES: readonly (readonly [string, () => CounterStore])[] = [
   ['MemoryElisionStore', () => new MemoryElisionStore()],
@@ -133,6 +137,66 @@ describe.each(STORES)('the expansion rate is actually counted — %s', (_name, m
     expect(smelter.stats().retrieveCalls).toBe(1);
     expect(smelter.stats().expansionRate).toBeGreaterThan(0);
     expect(smelter.tool.name).toBe('smelt_retrieve');
+  });
+
+  it('keeps a per-rule ledger that the counted read moves and the uncounted read does not', async () => {
+    // The feedback loop, closed as data: which rule's cuts get asked for back. The
+    // rule is persisted at put time (`applyPlan` hands it over), and `ledger()` folds
+    // it against the same hits the expansion rate is folded from — so a rule whose
+    // every cut is retrieved shows up as a fact, never as a threshold.
+    const store = makeStore();
+    const a = store.put('alpha', { rule: 'sibling-collapse', explanation: 'x' });
+    store.put('beta', { rule: 'sibling-collapse', explanation: 'x' });
+    store.put('gamma', { rule: 'head-tail', explanation: 'x' });
+    store.peek(a);
+    expect(store.ledger()).toEqual([
+      { rule: 'head-tail', stored: 1, retrieved: 0 },
+      { rule: 'sibling-collapse', stored: 2, retrieved: 0 },
+    ]);
+    store.retrieve(a);
+    expect(store.ledger()).toEqual([
+      { rule: 'head-tail', stored: 1, retrieved: 0 },
+      { rule: 'sibling-collapse', stored: 2, retrieved: 1 },
+    ]);
+  });
+
+  it('the one byte-remover attributes every cut to its rule', async () => {
+    const store = makeStore();
+    const smelter = createSmelter({ store });
+    const text = Array.from({ length: 300 }, (_, i) => `line ${String(i)} padding padding`).join(
+      '\n',
+    );
+    const result = await smelter.smelt(text, { budgetBytes: 700 });
+    expect(result.elisions.length).toBeGreaterThan(0);
+    expect(store.ledger()).toEqual([
+      { rule: 'head-tail', stored: result.elisions.length, retrieved: 0 },
+    ]);
+  });
+
+  it('counts every hash inside a batch as its own retrieval', async () => {
+    // A batch changes what N retrievals *cost* — one round trip — and must change
+    // nothing about what they *mean*. If the batch path bypassed the counted read,
+    // a model could pull every blob back in one call while expansionRate sat at a
+    // flattering zero: the same silence the single-hash guards above refuse.
+    const store = makeStore();
+    const smelter = createSmelter({ store });
+    const text = Array.from({ length: 300 }, (_, i) => `line ${String(i)} padding padding`).join(
+      '\n',
+    );
+    const result = await smelter.smelt(text, { budgetBytes: 700 });
+    const hashes = result.elisions.map((elision) => elision.hash);
+    expect(hashes.length).toBeGreaterThan(0);
+
+    const blocks = createRetrieveBatchTool(store).invoke({
+      hashes: [...hashes, 'deadbeefdeadbeef'],
+    });
+    expect(blocks).toHaveLength(hashes.length + 1);
+    expect(store.stats()).toMatchObject({
+      retrieveCalls: hashes.length + 1,
+      uniqueRetrieved: hashes.length,
+      misses: 1,
+      allElisionsRetrieved: true,
+    });
   });
 
   /**
@@ -324,6 +388,34 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    expansionRate: raw.elisionsStored === 0 ? 0 : raw.uniqueRetrieved / raw.elisionsStored,',
     replace: '    expansionRate: 0,',
     why: 'the one shared derivation of the honest signal wired flat — every store now reports a flattering zero at once, and no per-store copy of the arithmetic exists to disagree',
+  },
+  {
+    id: 'ledger-rule-never-reaches-the-store',
+    file: 'apply.ts',
+    find: '    const hash = store.put(removedText, reason);',
+    replace: '    const hash = store.put(removedText);',
+    why: 'the one byte-remover stops attributing cuts to their rule — every ledger reads empty, and "which rule does not pay" is derivable from no artefact again',
+  },
+  {
+    id: 'ledger-put-not-journalled',
+    file: 'store-dir.ts',
+    find: "    if (reason !== undefined) this.#appendLogCounting('put', hash, reason.rule);",
+    replace: '',
+    why: 'the persistent store drops the put-time journal line — the ledger is honest in memory and empty on disk, so the one store a session actually runs on reports no rule at all',
+  },
+  {
+    id: 'ledger-retrieved-wired-flat',
+    file: 'stats.ts',
+    find: '      retrieved: [...hashes].filter((hash) => retrieved.has(hash)).length,',
+    replace: '      retrieved: 0,',
+    why: 'the shared ledger derivation reports every rule as never asked back — the flattering zero, per rule this time',
+  },
+  {
+    id: 'batch-retrieve-not-counted',
+    file: 'retrieve.ts',
+    find: '      return { hash, text: store.retrieve(hash) };',
+    replace: "      return { hash, text: store.peek(hash) ?? '' };",
+    why: 'the batch path reverted to the uncounted peek() — a model could expand every marker in one call while expansionRate sat at a flattering zero, the exact silence the single-hash guard refuses',
   },
   {
     id: 'cli-retrieve-not-counted',

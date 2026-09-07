@@ -38,6 +38,8 @@ export interface SmeltInvocation {
    */
   readonly budgetBytes?: number;
   readonly focus: readonly string[];
+  /** The command whose output the blob is, for focus derivation. See `--producer`. */
+  readonly producer?: string;
   readonly language?: DetectedLanguage;
   /** `undefined` means the flag was not given — the config default may apply. */
   readonly strategy?: Strategy;
@@ -68,6 +70,7 @@ export interface ResolvedRun {
   /** Path to read. `undefined` means stdin. Flags only; the config has no say. */
   readonly file?: string;
   readonly focus: readonly string[];
+  readonly producer?: string;
   readonly language?: DetectedLanguage;
   readonly json: boolean;
 }
@@ -109,7 +112,7 @@ export interface CliJsonEnvelope {
 
 export const smeltCommand: Subcommand<SmeltInvocation, ResolvedSmeltCommand> = {
   name: 'smelt',
-  flags: ['budget', 'focus', 'language', 'strategy', 'json', 'reconstruct'],
+  flags: ['budget', 'focus', 'producer', 'language', 'strategy', 'json', 'reconstruct'],
   refusal:
     `A single-blob run reads one file or stdin; there is no tree to walk, ` +
     `nothing to cache, and no harness to install into.`,
@@ -147,6 +150,7 @@ export const smeltCommand: Subcommand<SmeltInvocation, ResolvedSmeltCommand> = {
       ...(file === undefined ? {} : { file }),
       ...(budgetBytes === undefined ? {} : { budgetBytes }),
       focus: values.focus ?? [],
+      ...(values.producer === undefined ? {} : { producer: values.producer }),
       ...(values.language === undefined ? {} : { language: parseLanguage(values.language) }),
       ...(chosenStrategy === undefined ? {} : { strategy: chosenStrategy }),
       json: values.json === true,
@@ -192,6 +196,7 @@ const RECONSTRUCT_REFUSALS = {
   focus:
     `Focus decides what survives a cut, and the cut has already been made — ` +
     `the envelope names every elision it took.`,
+  producer: `A producer only derives a focus, and there is no cut left to focus.`,
   language:
     `Nothing is detected or parsed on the way back: the envelope carries the ` +
     `bytes and the ranges the cut recorded.`,
@@ -263,6 +268,7 @@ export function resolveRun(
     store: configuredStore(config),
     ...(invocation.file === undefined ? {} : { file: invocation.file }),
     focus: invocation.focus,
+    ...(invocation.producer === undefined ? {} : { producer: invocation.producer }),
     ...(invocation.language === undefined ? {} : { language: invocation.language }),
     json: invocation.json,
   };
@@ -290,6 +296,7 @@ async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
     ...(run.file === undefined ? {} : { path: run.file }),
     ...(run.language === undefined ? {} : { language: run.language }),
     focus: run.focus,
+    ...(run.producer === undefined ? {} : { producer: run.producer }),
   });
 
   if (run.json) {

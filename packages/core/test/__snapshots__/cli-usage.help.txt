@@ -50,8 +50,10 @@ RETRIEVE & STATS
 
   smelt stats prints the same store's counters, one `name value` per line —
   elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved, expansionRate,
-  allElisionsRetrieved — and reading them is NOT counted as a retrieval. --json
-  emits the RetrieveStats verbatim in its own versioned envelope.
+  allElisionsRetrieved — then the ledger, one rule.<id>.stored and
+  rule.<id>.retrieved per rule that cut anything: which rule's cuts get asked
+  for back. Reading them is NOT counted as a retrieval. --json emits the
+  RetrieveStats and the ledger verbatim in their own versioned envelope.
 
   Both need somewhere for elisions to outlive the run that made them: a
   smelt.config.json with a directory store (`smelt init` writes one). With a
@@ -141,13 +143,20 @@ OPTIONS
                        their context survive; the runs between them collapse. For
                        map: symbols matching a term (by name or path) are promoted
                        to the front of the fill order, ranks unchanged.
+  --producer <cmd>     The command whose output this is, e.g. "grep -C 3 foo src". When
+                       no --focus is given, the focus is derived from it exactly as the
+                       hooks guard derives it: a search pattern, only when the output
+                       also holds non-matching lines (context flags). cat, diffs and
+                       logs name no term; the head and tail are kept instead.
   --language <id>      Override detection. One of: typescript, tsx, javascript, rust, python, go, java, c, cpp, c_sharp, ruby, php, kotlin, swift, bash, unknown.
-  --strategy <id>      lexical, structural, auto. Defaults to lexical, unless
+  --strategy <id>      lexical, structural, auto, json, diff. Defaults to lexical, unless
                        smelt.config.json says otherwise. structural parses
                        typescript, tsx, javascript, rust, python, go, java, c, cpp, c_sharp, ruby, php, kotlin, swift, bash;
-                       any other language is refused, never approximated. auto picks
-                       structural for those languages and lexical for the rest, and
-                       the report names whichever one actually ran.
+                       any other language is refused, never approximated. json cuts
+                       members and elements; diff cuts files and hunks; each refuses
+                       any other content. auto picks by content kind first (json,
+                       diff), then structural for those languages and lexical for the
+                       rest, and the report names whichever one actually ran.
   --ignore <entry>     map only. Repeatable. Replaces the default ignore list
                        (.git, node_modules, dist, build, out, coverage): a bare name matches any path segment,
                        an entry containing / is a root-relative prefix.

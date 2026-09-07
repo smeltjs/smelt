@@ -57,7 +57,7 @@ From now on: read big files through \`smelt <file> --budget ${budget} --focus <w
 3. Add the server — Claude Code shown; setup writes this file for you when run with --harness claude-code, and Codex and Grok TOML snippets are in packages/mcp/README.md:
    \`${mcpRegister}\`
 4. Teach the agent the CLI without touching any config files: \`${skillInstall}\`.
-5. Use the four tools: \`smelt_file\` to shrink a file under a byte budget with a focus, \`repo_map\` for orientation in an unfamiliar tree, \`smelt_retrieve\` to get elided bytes back, \`smelt_stats\` to watch the expansion rate.
+5. Use the five tools: \`smelt_file\` to shrink a file under a byte budget with a focus (its report lists the names behind each marker), \`repo_map\` for orientation in an unfamiliar tree, \`smelt_retrieve\` to get elided bytes back, \`smelt_retrieve_batch\` when several markers matter at once (one call, every call re-bills the conversation), \`smelt_stats\` to watch the expansion rate and the per-rule ledger.
 6. Verify: \`smelt_file\` on a large file, then \`smelt_retrieve\` with a hash from a marker — the exact original bytes come back, and \`smelt_stats\` counts the round trip.`,
 };
 

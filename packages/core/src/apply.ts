@@ -211,14 +211,16 @@ export function applyPlan(
   let cursor = 0;
   let outputBytes = 0;
 
-  for (const { range, reason } of ordered) {
+  for (const { range, reason, names } of ordered) {
     const kept = input.subarray(cursor, range.start);
     pieces.push(kept);
     outputBytes += kept.length;
 
     const removed = input.subarray(range.start, range.end);
     const removedText = removed.toString('utf8');
-    const hash = store.put(removedText);
+    // Attributed to its rule: this is the one place bytes leave the text, so it is the
+    // one place the store learns which rule cut them — the ledger's only source.
+    const hash = store.put(removedText, reason);
     const marker = buildMarker({
       hash,
       bytes: removed.length,
@@ -235,6 +237,10 @@ export function applyPlan(
       bytes: removed.length,
       reason,
       marker,
+      // The outline rides beside the marker, never inside it: `buildMarker` above was
+      // handed the reason and nothing else, so the wire surface and its priced cost
+      // are the same with or without names.
+      ...(names === undefined ? {} : { names }),
     });
     outputBytes += markerBuffer.length;
     cursor = range.end;

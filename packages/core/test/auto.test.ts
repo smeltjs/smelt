@@ -4,6 +4,8 @@ import { markerPricing } from '../src/apply.ts';
 import { GrammarUnavailableError } from '../src/errors.ts';
 import { createSmelter } from '../src/index.ts';
 import { AUTO_PLANNER_ID, AutoPlanner, planAuto } from '../src/plan/auto.ts';
+import { DIFF_PLANNER_ID } from '../src/plan/diff.ts';
+import { JSON_PLANNER_ID } from '../src/plan/json.ts';
 import { LEXICAL_PLANNER_ID } from '../src/plan/lexical.ts';
 import { PLANNERS, STRATEGIES } from '../src/plan/planners.ts';
 import { STRUCTURAL_LANGUAGES, STRUCTURAL_PLANNER_ID } from '../src/plan/structural.ts';
@@ -40,6 +42,24 @@ describe('the auto strategy picks a planner and says which one ran', () => {
     expect(plan.planner).toBe(LEXICAL_PLANNER_ID);
     expect(plan.elisions.length).toBeGreaterThan(0);
     expect(plan.elisions[0]!.reason.rule).toBe('focus-window');
+  });
+
+  it('routes by content kind before language: a diff and a JSON blob reach their planners', async () => {
+    const diff =
+      'diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n' +
+      `@@ -1,3 +1,3 @@\n-a\n+b\n${' filler\n'.repeat(30)}@@ -50,3 +50,3 @@\n-c\n+TypeError\n${' filler\n'.repeat(30)}`;
+    const diffPlan = await planAuto(inputFor(diff, 'unknown', ['TypeError']));
+    expect(diffPlan.planner).toBe(DIFF_PLANNER_ID);
+    expect(diffPlan.elisions.length).toBeGreaterThan(0);
+
+    const json = JSON.stringify(
+      { a: 'x'.repeat(200), b: 'y'.repeat(200), c: { TypeError: 'here' } },
+      null,
+      2,
+    );
+    const jsonPlan = await planAuto(inputFor(json, 'unknown', ['TypeError']));
+    expect(jsonPlan.planner).toBe(JSON_PLANNER_ID);
+    expect(jsonPlan.elisions.length).toBeGreaterThan(0);
   });
 
   it('covers every structural language: each one routes to the structural planner', async () => {

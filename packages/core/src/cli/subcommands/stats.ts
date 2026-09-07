@@ -1,7 +1,7 @@
 import { CliUsageError } from '../../errors.ts';
 import { openStore } from '../../ops/inputs.ts';
-import { readCounters } from '../../ops/verbs.ts';
-import type { RetrieveStats } from '../../types.ts';
+import { readCounters, readLedger } from '../../ops/verbs.ts';
+import type { RetrieveStats, RuleLedgerEntry } from '../../types.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
@@ -44,13 +44,18 @@ export interface ResolvedStatsRun {
  * `smelt map` has one: the two envelopes carry different structures and must move
  * independently.
  */
-export const CLI_STATS_JSON_FORMAT = 'smelt-stats-cli/v1';
+export const CLI_STATS_JSON_FORMAT = 'smelt-stats-cli/v2';
 
-/** What `smelt stats --json` prints: the {@link RetrieveStats} verbatim, versioned. */
+/**
+ * What `smelt stats --json` prints: the {@link RetrieveStats} verbatim, and the
+ * ledger beside them, versioned. v2 added `ledger`; v1 carried `stats` alone.
+ */
 export interface CliStatsJsonEnvelope {
   readonly format: string;
   /** The {@link RetrieveStats} exactly as the store's `stats()` returned them. */
   readonly stats: RetrieveStats;
+  /** The store's per-rule ledger, exactly as `ledger()` returned it. */
+  readonly ledger: readonly RuleLedgerEntry[];
 }
 
 export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
@@ -64,8 +69,10 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
       body:
         `  ${CLI_NAME} stats prints the same store's counters, one \`name value\` per line —\n` +
         `  elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved, expansionRate,\n` +
-        `  allElisionsRetrieved — and reading them is NOT counted as a retrieval. --json\n` +
-        `  emits the RetrieveStats verbatim in its own versioned envelope.\n` +
+        `  allElisionsRetrieved — then the ledger, one rule.<id>.stored and\n` +
+        `  rule.<id>.retrieved per rule that cut anything: which rule's cuts get asked\n` +
+        `  for back. Reading them is NOT counted as a retrieval. --json emits the\n` +
+        `  RetrieveStats and the ledger verbatim in their own versioned envelope.\n` +
         `\n` +
         `  Both need somewhere for elisions to outlive the run that made them: a\n` +
         `  smelt.config.json with a directory store (\`${CLI_NAME} init\` writes one). With a\n` +
@@ -92,9 +99,12 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
   run(resolved: ResolvedStatsRun, io: CliIo): number {
     const store = openStore({ kind: 'directory', path: resolved.store.storePath });
     const stats = readCounters({ store });
+    // The directory store always keeps a ledger; the `?? []` is the type's escape
+    // hatch for a custom store, never a case this verb reaches.
+    const ledger = readLedger({ store }) ?? [];
 
     if (resolved.json) {
-      const statsEnvelope: CliStatsJsonEnvelope = { format: CLI_STATS_JSON_FORMAT, stats };
+      const statsEnvelope: CliStatsJsonEnvelope = { format: CLI_STATS_JSON_FORMAT, stats, ledger };
       io.stdout(`${JSON.stringify(statsEnvelope, null, 2)}\n`);
       return EXIT.ok;
     }
@@ -107,6 +117,11 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
         `uniqueRetrieved ${String(stats.uniqueRetrieved)}`,
         `expansionRate ${String(stats.expansionRate)}`,
         `allElisionsRetrieved ${String(stats.allElisionsRetrieved)}`,
+        // The ledger, in the same `name value` shape: greppable, one fact per line.
+        ...ledger.flatMap((entry) => [
+          `rule.${entry.rule}.stored ${String(entry.stored)}`,
+          `rule.${entry.rule}.retrieved ${String(entry.retrieved)}`,
+        ]),
         '',
       ].join('\n'),
     );

@@ -28,6 +28,28 @@ codebase-design glossary.
   over-pruning. Measured, never thresholded. The marker's `retrieve("hash")` is a real
   command — `smelt retrieve <hash>` — so the rate moves (and is measurable, via
   `smelt stats`) from pure shell, not only through the `smelt_retrieve` tool.
+- **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
+  how many distinct cuts it made in a store and how many of them were retrieved
+  (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by
+  the one byte-remover, derived once by `ruleLedger()` in `stats.ts`, read by
+  `store.ledger()`, `smelt stats` and `smelt_stats`, and handed to planners as opt-in
+  `PlanInput.ruleHistory`. `retrieved === stored` for a rule is a fact, never a
+  threshold: the rule's every cut was asked for back. _Avoid_: score, penalty.
+- **Outline**: the names of the declarations one structural elision collapsed
+  (`PlannedElision.names`, carried onto `AppliedElision.names`), rendered beneath the
+  elision's report row and in the `--json` envelope — never in the marker, whose bytes
+  and price do not move. What is behind a marker, by name, so a model can decide
+  whether to retrieve without retrieving.
+- **Producer**: the command whose output a blob is (`grep -C 3 foo src`). `focusTermsFor`
+  in `src/hooks/focus-terms.ts` derives from it the terms that distinguish output lines
+  the task is about — nothing for a plain grep, whose every line matches — and the
+  guard's rewrite wrap, `smelt --producer` and `smelt_file`'s `producer` all resolve
+  through it. A caller's own focus always wins; the report attributes whose focus cut.
+- **Batched retrieve**: `smelt_retrieve_batch` / `retrieveMany` — N hashes, one round
+  trip, one `RetrievedBlock` per hash. Changes what an expansion _costs_ (every tool
+  call re-bills the transcript), never what the expansion rate _means_: each hit inside
+  a batch journals exactly as a single call would. Additive beside the frozen
+  `smelt_retrieve`.
 - **Guard**: a test that pins a law or guarantee, proven non-vacuous by mutations.
 - **Mutation**: a deliberate minimal break that its guard must catch (`pnpm mutate`).
 - **Guard tally**: `guards.json` at the repository root — how many guards, how many

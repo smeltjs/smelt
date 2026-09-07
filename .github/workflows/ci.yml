@@ -201,7 +201,7 @@ jobs:
               .find((message) => message.id === 2)
               .result.tools.map((tool) => tool.name)
               .sort();
-            assert.deepStrictEqual(tools, ['repo_map', 'smelt_file', 'smelt_retrieve', 'smelt_stats']);
+            assert.deepStrictEqual(tools, ['repo_map', 'smelt_file', 'smelt_retrieve', 'smelt_retrieve_batch', 'smelt_stats']);
             console.log(`mcp handshake ok: ${tools.join(', ')}`);
           });
           const frames = [

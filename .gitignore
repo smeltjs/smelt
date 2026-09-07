@@ -9,6 +9,7 @@ coverage/
 # bench corpus entries materialized at run time from a committed `<name>.json`
 # reference (sha256-pinned) — see packages/core/bench/run.mjs
 packages/core/bench/corpus/structural.ts
+packages/core/bench/corpus/judge-log
 
 .DS_Store
 

@@ -22,9 +22,9 @@ import {
   UnknownHashError,
 } from './errors.ts';
 import { contentHash } from './hash.ts';
-import { retrieveStats } from './stats.ts';
+import { retrieveStats, ruleLedger } from './stats.ts';
 import type { RawRetrieveCounters } from './stats.ts';
-import type { ElisionStore, RetrieveStats } from './types.ts';
+import type { ElisionReason, ElisionStore, RetrieveStats, RuleLedgerEntry } from './types.ts';
 
 /**
  * The format marker every store directory carries, and the one version this code
@@ -41,8 +41,17 @@ export const DIRECTORY_STORE_VERSION = 1;
  */
 const KEY_PATTERN = /^[0-9a-f]{4,128}$/;
 
-/** One journal line: a kind, a space, and the hash as a JSON string literal. */
+/** One counter line: a kind, a space, and the hash as a JSON string literal. */
 const LOG_LINE = /^(hit|miss|corrupt) ("(?:[^"\\]|\\.)*")$/;
+
+/**
+ * One ledger line: `put`, the hash, and the rule id — both JSON string literals. A
+ * separate pattern from {@link LOG_LINE} on purpose: the counter fold matches only
+ * counter lines and skips these, exactly as a reader that predates the ledger skips a
+ * line it does not know, so a directory written by this version reads as the same
+ * counters under the previous one (`test/ledger.test.ts` pins that).
+ */
+const PUT_LINE = /^put ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/;
 
 /** See {@link MemoryElisionStoreOptions} in `store.ts` — same escape hatch, same reason. */
 export interface DirectoryElisionStoreOptions {
@@ -66,6 +75,7 @@ export interface DirectoryElisionStoreOptions {
  *   blobs/<hash>     one file per elision: the exact UTF-8 bytes, named by their content hash
  *   tmp/             staging for atomic writes; never read, safe to sweep
  *   retrievals.log   append-only journal: `hit "<hash>"` | `miss "<hash>"` | `corrupt "<hash>"`
+ *                    | `put "<hash>" "<rule>"` (the ledger: which rule cut what)
  * ```
  *
  * **Nothing lives in memory.** Every read — `stats()` included — comes off the disk, so
@@ -163,7 +173,16 @@ export class DirectoryElisionStore implements ElisionStore {
     this.#claimFormat(markerPath);
   }
 
-  put(content: string): string {
+  put(content: string, reason?: ElisionReason): string {
+    const hash = this.#putBlob(content);
+    // The ledger line, after the bytes are safe: attribution is bookkeeping, and a
+    // failure to write it is surfaced as a warning rather than a failed put.
+    if (reason !== undefined) this.#appendLogCounting('put', hash, reason.rule);
+    return hash;
+  }
+
+  /** The publish itself: verify or write the blob, return its hash. */
+  #putBlob(content: string): string {
     const hash = this.#hash(content);
     if (!KEY_PATTERN.test(hash)) {
       throw new SmeltError(
@@ -277,6 +296,26 @@ export class DirectoryElisionStore implements ElisionStore {
     return retrieveStats(this.rawCounters());
   }
 
+  /**
+   * The per-rule ledger: a fold over the journal's `put` lines against its `hit`
+   * lines, derived by the shared `ruleLedger()`. Uncounted, and read off the disk
+   * like everything else here, so two processes agree.
+   */
+  ledger(): readonly RuleLedgerEntry[] {
+    const puts: { hash: string; rule: string }[] = [];
+    const hits = new Set<string>();
+    for (const line of this.#readLog().split('\n')) {
+      const put = PUT_LINE.exec(line);
+      if (put !== null) {
+        puts.push({ hash: JSON.parse(put[1]!) as string, rule: JSON.parse(put[2]!) as string });
+        continue;
+      }
+      const counter = LOG_LINE.exec(line);
+      if (counter !== null && counter[1] === 'hit') hits.add(JSON.parse(counter[2]!) as string);
+    }
+    return ruleLedger(puts, hits);
+  }
+
   /** The blob's exact content, or `undefined` when no such blob is stored. */
   #readBlob(hash: string): string | undefined {
     if (!KEY_PATTERN.test(hash)) return undefined; // never a path component
@@ -313,9 +352,9 @@ export class DirectoryElisionStore implements ElisionStore {
    * so it is caught and surfaced as a distinct `process.emitWarning` — see the class
    * doc, and the read-only-journal case in `test/store-dir.test.ts`.
    */
-  #appendLogCounting(kind: 'hit' | 'miss' | 'corrupt', hash: string): void {
+  #appendLogCounting(kind: 'hit' | 'miss' | 'corrupt' | 'put', hash: string, rule?: string): void {
     try {
-      this.#appendLog(kind, hash);
+      this.#appendLog(kind, hash, rule);
     } catch (error) {
       process.emitWarning(
         `smelt: could not journal a "${kind}" for hash "${hash}" in ${this.#logPath} ` +
@@ -334,10 +373,14 @@ export class DirectoryElisionStore implements ElisionStore {
    * partial record with no trailing newline — can never bleed into this one: the tear
    * stays on its own line and is skipped by `stats()`, as blank lines are.
    */
-  #appendLog(kind: 'hit' | 'miss' | 'corrupt', hash: string): void {
+  #appendLog(kind: 'hit' | 'miss' | 'corrupt' | 'put', hash: string, rule?: string): void {
     const fd = openSync(this.#logPath, 'a');
     try {
-      const record = Buffer.from(`\n${kind} ${JSON.stringify(hash)}\n`, 'utf8');
+      const fields =
+        rule === undefined
+          ? [kind, JSON.stringify(hash)]
+          : [kind, JSON.stringify(hash), JSON.stringify(rule)];
+      const record = Buffer.from(`\n${fields.join(' ')}\n`, 'utf8');
       let written = 0;
       while (written < record.length) {
         written += writeSync(fd, record, written);

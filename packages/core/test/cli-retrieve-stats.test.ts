@@ -106,6 +106,12 @@ describe('smelt retrieve closes the marker loop from a shell', () => {
     expect(Number(fields['expansionRate'])).toBeGreaterThan(0);
     // The CLI reports the same numbers the library reads off the same directory.
     expect(new DirectoryElisionStore(storePath).stats().retrieveCalls).toBe(1);
+    // And the ledger beside them: the rule every elision was cut by, and how many of
+    // that rule's cuts were asked for back — one `rule.<id>.<count>` line each.
+    expect(fields['rule.head-tail.stored']).toBe(
+      String(new DirectoryElisionStore(storePath).stats().elisionsStored),
+    );
+    expect(fields['rule.head-tail.retrieved']).toBe('1');
   });
 
   it('is byte-exact for content with no trailing newline — fidelity, not convention', async () => {
@@ -182,6 +188,9 @@ describe('smelt stats reads the counters without touching them', () => {
       'uniqueRetrieved',
       'expansionRate',
       'allElisionsRetrieved',
+      // Then the ledger, one rule at a time (sorted by rule id), two facts per rule.
+      'rule.head-tail.stored',
+      'rule.head-tail.retrieved',
     ]);
     const fields = parseStatsLines(stdout);
     expect(Number(fields['elisionsStored'])).toBeGreaterThan(0);
@@ -216,6 +225,10 @@ describe('smelt stats reads the counters without touching them', () => {
     // CLI reshapes, renames and derives nothing.
     const expected: RetrieveStats = new DirectoryElisionStore(storePath).stats();
     expect(envelope.stats).toEqual(JSON.parse(JSON.stringify(expected)));
+    // The ledger rides beside the stats, verbatim too, under its own key.
+    expect(envelope.format).toBe('smelt-stats-cli/v2');
+    expect(envelope.ledger).toEqual(new DirectoryElisionStore(storePath).ledger());
+    expect(envelope.ledger.length).toBeGreaterThan(0);
   });
 
   it('takes only --json, and no positionals', async () => {

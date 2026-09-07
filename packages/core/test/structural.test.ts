@@ -142,6 +142,41 @@ const budgetInput = (budgetBytes: number): PlanInput => ({
  * found prices a 106-byte marker against a 105-byte cut. Three of that run's four
  * siblings are worth 92 bytes against an 82-byte marker, and nobody was offered them.
  */
+describe('the elision outline — names ride beside the marker, never inside it', () => {
+  it('lists the collapsed declarations by name, in source order', async () => {
+    const plan = await planStructural(inputFor(TS_FIXTURE));
+    const outlines = plan.elisions.map((elision) => elision.names);
+    expect(outlines).toEqual([
+      ['parseConfig', 'normalisePath'],
+      ['renderResponse', 'logLine'],
+    ]);
+  });
+
+  it('names only what the elided bytes actually hold, in every structural language', async () => {
+    for (const fixture of FIXTURES) {
+      const plan = await planStructural(inputFor(fixture));
+      const bytes = Buffer.from(fixture.text, 'utf8');
+      let named = 0;
+      for (const elision of plan.elisions) {
+        if (elision.names === undefined) continue;
+        expect(
+          elision.names.length,
+          `${fixture.name}: an empty names list is an absent one`,
+        ).toBeGreaterThan(0);
+        named += 1;
+        const slice = bytes.subarray(elision.range.start, elision.range.end).toString('utf8');
+        for (const name of elision.names) {
+          expect(
+            slice,
+            `${fixture.name}: "${name}" is not inside the bytes it claims to outline`,
+          ).toContain(name);
+        }
+      }
+      expect(named, `${fixture.name}: no elision carried an outline`).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe("the structural planner's budget rung", () => {
   it("the fixture is the review's case: 158 bytes, over a budget of 120", () => {
     expect(Buffer.byteLength(BUDGET_RUNG_PY, 'utf8')).toBe(158);

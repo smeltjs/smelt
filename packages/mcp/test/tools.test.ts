@@ -10,13 +10,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSmeltMcpServer,
   REPO_MAP_TOOL_NAME,
+  RETRIEVE_BATCH_TOOL_NAME,
   RETRIEVE_TOOL_NAME,
   SMELT_FILE_TOOL_NAME,
   SMELT_STATS_TOOL_NAME,
 } from '../src/index.ts';
 
 /**
- * In-process tests for the four tools as **adapters**, driven through a real SDK
+ * In-process tests for the five tools as **adapters**, driven through a real SDK
  * client over a linked in-memory transport pair — the same protocol layer the stdio
  * binary serves, minus the process boundary (`test/protocol.test.ts` owns that half).
  *
@@ -90,13 +91,14 @@ function fixtureText(lines = 300): string {
 }
 
 describe('tools/list', () => {
-  it('serves exactly the four ruled tools, budgetBytes required where it exists', async () => {
+  it('serves exactly the five ruled tools, budgetBytes required where it exists', async () => {
     const client = await connect(tempDir());
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).toSorted()).toEqual(
       [
         SMELT_FILE_TOOL_NAME,
         RETRIEVE_TOOL_NAME,
+        RETRIEVE_BATCH_TOOL_NAME,
         REPO_MAP_TOOL_NAME,
         SMELT_STATS_TOOL_NAME,
       ].toSorted(),
@@ -105,6 +107,8 @@ describe('tools/list', () => {
     expect(byName.get(SMELT_FILE_TOOL_NAME)?.inputSchema['required']).toEqual(['budgetBytes']);
     expect(byName.get(REPO_MAP_TOOL_NAME)?.inputSchema['required']).toEqual(['dir', 'budgetBytes']);
     expect(byName.get(RETRIEVE_TOOL_NAME)?.inputSchema['required']).toEqual(['hash']);
+    expect(byName.get(RETRIEVE_BATCH_TOOL_NAME)?.inputSchema['required']).toEqual(['hashes']);
+    expect(byName.get(RETRIEVE_BATCH_TOOL_NAME)?.inputSchema['additionalProperties']).toBe(false);
     // Strict-mode shaped, end to end: the schema a client actually receives closes the
     // object, so a consumer registering it under OpenAI structured outputs in strict
     // mode is not refused at registration. It is the core's own `RetrieveTool`
@@ -267,6 +271,149 @@ describe('smelt_file', () => {
       strategy: 'lexical',
     });
     expect(explicit.isError).toBe(false);
+  });
+});
+
+function contextGrep(): string {
+  const lines: string[] = [];
+  for (let file = 0; file < 12; file += 1) {
+    for (let i = 0; i < 20; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+    lines.push(`src/f${String(file)}.ts:21:  return handleRequest(path);`);
+    for (let i = 22; i < 40; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+describe('smelt_stats — the ledger beside the counters', () => {
+  it('returns the RetrieveStats verbatim first, then the per-rule ledger as its own block', async () => {
+    const client = await connect(tempDir());
+    await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 600,
+      focus: ['handleRequest'],
+    });
+    const result = await call(client, SMELT_STATS_TOOL_NAME, {});
+    expect(result.isError).toBe(false);
+    expect(result.texts).toHaveLength(2);
+    const stats = JSON.parse(result.texts[0]!) as Record<string, unknown>;
+    expect(Object.keys(stats)).not.toContain('ledger');
+    const ledger = JSON.parse(result.texts[1]!) as {
+      rule: string;
+      stored: number;
+      retrieved: number;
+    }[];
+    expect(ledger).toEqual([
+      { rule: 'focus-window', stored: stats['elisionsStored'], retrieved: 0 },
+    ]);
+  });
+});
+
+describe('smelt_file — the producer hint', () => {
+  it('derives the focus from "producer" the same way the CLI and the guard do', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: contextGrep(),
+      budgetBytes: 1500,
+      producer: 'grep -C 2 handleRequest src',
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[0]).toContain('handleRequest(path)');
+    expect(result.texts[1]).toContain('focus  handleRequest');
+    expect(result.texts[1]).toContain('from producer');
+  });
+
+  it('refuses a non-string producer as an argument', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: 'x',
+      budgetBytes: 100,
+      producer: 7,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('"producer" must be a string');
+  });
+});
+
+describe('smelt_retrieve_batch', () => {
+  async function smeltedHashes(client: Client): Promise<{ input: string; hashes: string[] }> {
+    const input = fixtureText(900);
+    const smelted = (
+      await call(client, SMELT_FILE_TOOL_NAME, {
+        text: input,
+        budgetBytes: 600,
+        focus: ['handleRequest'],
+      })
+    ).texts[0]!;
+    const hashes = [...smelted.matchAll(/retrieve\("([0-9a-f]+)"\)/g)].map((m) => m[1]!);
+    expect(hashes.length, 'the fixture must leave at least two markers').toBeGreaterThan(1);
+    return { input, hashes };
+  }
+
+  it('returns one labelled block per hash, in the order asked, in one response', async () => {
+    const client = await connect(tempDir());
+    const { input, hashes } = await smeltedHashes(client);
+
+    const result = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes });
+    expect(result.isError).toBe(false);
+    expect(result.texts).toHaveLength(hashes.length);
+    for (const [index, block] of result.texts.entries()) {
+      // The block names its hash on its first line — a batch has to say which bytes
+      // belong to which marker — and everything after that line is the exact bytes.
+      const newline = block.indexOf('\n');
+      const header = block.slice(0, newline);
+      const bytes = block.slice(newline + 1);
+      expect(header).toContain(hashes[index]!);
+      expect(bytes.length).toBeGreaterThan(0);
+      expect(input).toContain(bytes);
+    }
+
+    const stats = JSON.parse((await call(client, SMELT_STATS_TOOL_NAME, {})).texts[0]!) as {
+      retrieveCalls: number;
+      uniqueRetrieved: number;
+    };
+    expect(stats.retrieveCalls).toBe(hashes.length);
+    expect(stats.uniqueRetrieved).toBe(hashes.length);
+  });
+
+  it('keeps a refusal inside its own block and does not fail the batch', async () => {
+    const client = await connect(tempDir());
+    const { hashes } = await smeltedHashes(client);
+    const asked = [hashes[0]!, 'deadbeefdeadbeef', hashes[1]!];
+
+    const result = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes: asked });
+    expect(result.isError).toBe(false);
+    expect(result.texts).toHaveLength(3);
+    expect(result.texts[1]).toContain('deadbeefdeadbeef');
+    expect(result.texts[1]).toContain('UnknownHashError');
+    expect(result.texts[1]).toContain('no stored content for hash "deadbeefdeadbeef"');
+  });
+
+  it('is a tool error only when every hash was refused, and then says how to persist', async () => {
+    const client = await connect(tempDir()); // no config → memory store
+    const result = await call(client, RETRIEVE_BATCH_TOOL_NAME, {
+      hashes: ['deadbeefdeadbeef', 'cafebabecafebabe'],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts).toHaveLength(2);
+    expect(result.texts[0]).toContain('UnknownHashError');
+    expect(result.texts[1]).toContain('cafebabecafebabe');
+    expect(result.texts.join('\n')).toContain('memory store dies with the process that made it');
+  });
+
+  it('refuses an empty array and a non-string entry as arguments, not as retrievals', async () => {
+    const client = await connect(tempDir());
+    const empty = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes: [] });
+    expect(empty.isError).toBe(true);
+    expect(empty.texts[0]).toContain('"hashes" must be a non-empty array of strings');
+
+    const mixed = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes: ['abcd', 7] });
+    expect(mixed.isError).toBe(true);
+    expect(mixed.texts[0]).toContain('"hashes" must be a non-empty array of strings');
+
+    const stats = JSON.parse((await call(client, SMELT_STATS_TOOL_NAME, {})).texts[0]!) as {
+      retrieveCalls: number;
+    };
+    expect(stats.retrieveCalls, 'an argument refusal is not a retrieval').toBe(0);
   });
 });
 

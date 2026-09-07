@@ -1,0 +1,135 @@
+{
+  "format": "smelt-bench-tier4-log/v1",
+  "case": "tsx-component",
+  "model": "claude-opus-5",
+  "maxRounds": 16,
+  "smeltedFirst": true,
+  "raw": {
+    "transcript": [
+      {
+        "role": "user",
+        "content": "Answer the question below from the content that follows it. Question: What props does the Toolbar component accept, and what does it render for its default alignment?\n\nimport { render } from 'preact';\n\n/** Props for the badge: a label and an optional emphasis flag. */\ninterface BadgeProps {\n  label: string;\n  strong?: boolean;\n}\n\n/** A pill-shaped badge used all over the place in this imaginary app. */\nfunction Badge(props: BadgeProps) {\n  return <span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>;\n}\n\n/** The align choices the toolbar supports, spelled out as a type alias. */\ntype Align = 'left' | 'center' | 'right';\n\n/** Keeps track of how often each toolbar button has been pressed. */\nclass PressCounter {\n  counts = new Map<string, number>();\n  press(id: string): void {\n    this.counts.set(id, (this.counts.get(id) ?? 0) + 1);\n  }\n}\n\n/** The toolbar — the component this file is really about. */\nexport function Toolbar({ align }: { align: Align }) {\n  return (\n    <div className={`toolbar ${align}`}>\n      <Badge label=\"saved\" />\n    </div>\n  );\n}\n\n/** A footer nobody looks at, present to give the toolbar a sibling below. */\nfunction Footer() {\n  return <footer className=\"footer\">fin — © nobody</footer>;\n}\n"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "",
+            "signature": "CAISvQcKjgEIERgCKkC67n6CqFwDDSXSXahVgsPHhBktXZbOVl5hwlqBw532wSo26ot4J/4nrG+szrAwV2Os9SFfd+BtQbVahhOPrOGeMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAajk+dQGEgytiayycs7bWbtf2lkaDIR0Eg+EljENmntymCIw7D1lGeKJeF9tjFruG+O9wjEQvElNPci+L774xv1mdMBBxIQWV6iJmITJXz1Vn6i8KtsF6kSjZwLAWULjBGwzmexseFIbKihU5ThFjNA5Z3/Pzi91NgHs6ahSrHmXZJqYy7FDV6RufmTxInA35sF2cQdXy1QK5ByVjwzGlolKkwXGaxrI14v73506wOfmjbqQMDVqSP3l+wP+HUaVLe6aatuFLDBf9AlJYNLjJISLAQuvTTxKMX4SWqOpoCGp5CYEzKE92OL0aSCTxj24REK5/g38ojnhKl75/LmHLYrcw4Yee2ZbIr3Z+hwnGAEJb5ZwnKzBqnAsI77yjF0A9fdUeW5IubTVzbp+pTJQMN14yllsGEr+QZfBMPAp2Z4y/Iz+H/HC38S2D5eiGREhE7Gq31UBW3jxQjFKZeO+pDjfuz/utJ5HZJ6O8H21lVY5Ifj+YQb5FgHOXgNXnMRiO7+t34G1+vWVpwnQq04fe/zZrUWfmTU7NzdhAWO71YPvqMt96PQt99LOSDHuPVIfJCbGdEp9CHtSS7PHfMKeAcLqXdiBcClSbJTdSkzbZpQmXSbiO6CWxAtO/d9QycQ+QUf4UU/U4p3eOvu537T2RRKDVGEQ9616KT6GNcfQGJHBrkgHg97RCqC3FALi5LemuTKVg53pl8sWC+rqxRsc8YLK0odnSbGcsCu5u+0fug+Or6/WRkIYg9Y19+EQ9c7iMbsj0+d7XrDKiH7EJvhnZ+TvG0ijx/YyMOtkq6O8BuCaoIBipFqjiU3dT6YeYpOfhQJGpmGAgWkpOYrulfd0z2Tylzyt87rCyl/VY/17duh3xw3lzvLxp0nVvsmjyAHCImgM++cxgUBGsM+7oDhvkQGTV9ulk5LhaM48a+ITzXw9X4QEokvnntDp+Fj56//UGKssfGdSjZpsgBVW2ODeAiO1Ie89YNC3XvD9yjo3MyHUdlTf39ZcQFpXerOh4Ivs81QrXYTV/VDMxAXXnn9eXzfZzJjmnI+H3teBDkdNKmOhNXPNzS/n4KHEZOmqnsAeC6AYAQ=="
+          },
+          {
+            "type": "text",
+            "text": "**Props**\n\n`Toolbar` is declared as:\n\n```tsx\nexport function Toolbar({ align }: { align: Align })\n```\n\nSo it accepts exactly one prop:\n\n- `align: Align`, where `Align` is the type alias `'left' | 'center' | 'right'`. It is **required** — there's no `?` and no destructuring default value.\n\n**About the \"default alignment\"**\n\nThere isn't one. The question assumes `Toolbar` has a default alignment, but nothing in the code supplies a fallback: no default parameter (`align = 'left'`), no `defaultProps`, and no internal branching on `align`. TypeScript would flag `<Toolbar />` as an error for the missing prop, and if it were rendered without `align` at runtime anyway, the class name would interpolate to `\"toolbar undefined\"`.\n\n**What it renders (for any `align` value)**\n\nThe markup is identical regardless of alignment; `align` only affects the class string:\n\n```tsx\n<div className={`toolbar ${align}`}>\n  <Badge label=\"saved\" />\n</div>\n```\n\nSince `Badge` is given only `label` (no `strong`), it renders `<span className=\"badge\">saved</span>`. So, e.g., `<Toolbar align=\"center\" />` produces:\n\n```html\n<div class=\"toolbar center\"><span class=\"badge\">saved</span></div>\n```\n\n(The `PressCounter` class and the `Footer` component in the file are not referenced by `Toolbar` at all.)"
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 472,
+      "output_tokens": 701
+    }
+  },
+  "smelted": {
+    "transcript": [
+      {
+        "role": "user",
+        "content": "Answer the question below from the content that follows it. The content below was shrunk by smelt; elided regions are markers you can expand with the smelt_retrieve tool if — and only if — the question needs them.\n\nQuestion: What props does the Toolbar component accept, and what does it render for its default alignment?\n\n// <<smelt/v1: collapsed 3 sibling declarations (1 import statement, 1 interface, 1 function) (364B) — retrieve(\"fe1a5e2054b9cb57\")>>\n\n/** The align choices the toolbar supports, spelled out as a type alias. */\ntype Align = 'left' | 'center' | 'right';\n\n/** Keeps track of how often each toolbar button has been pressed. */\nclass PressCounter {\n  counts = new Map<string, number>();\n  press(id: string): void {\n    this.counts.set(id, (this.counts.get(id) ?? 0) + 1);\n  }\n}\n\n/** The toolbar — the component this file is really about. */\nexport function Toolbar({ align }: { align: Align }) {\n  return (\n    <div className={`toolbar ${align}`}>\n      <Badge label=\"saved\" />\n    </div>\n  );\n}\n\n/** A footer nobody looks at, present to give the toolbar a sibling below. */\nfunction Footer() {\n  return <footer className=\"footer\">fin — © nobody</footer>;\n}\n"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "",
+            "signature": "CAIS7AQKjgEIERgCKkACayeerD+7fLRsF2rPTydGv2P12JQHxXak9UsqUiEc/kg/2uNhYwwhRbSYz+T3YExTVSDNlS+fhAcgAcDes923Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAbDk+dQGEgzQhNop1FEbjQ4nQVIaDNC/CE9mEdtIrayxqiIwdqr8lriQ+PMXRvvu3lpAQWyKCDDdqGKwRVgiBrj0U3UwUFT53ppTEYJBbp569z+NKooDzLgKBXG/WCJseRFPM5rC1AwVd1MiOGiRJBSBQDFg2LQxJhDu8njaN10tHHIltpmNqEuqt6dS2Ghg41JRVyL0GjIGE8NzOU8kIS8N+8Ggujdyp8QWNLZE+1/1R+ycdFl+A7nTiUFYHb0pjsyd8WTkjJC+b3pEYZCNB6FnedzR3O3EVx2M9Gv6BLxCzfaztudReABZs1S2fiyDO2IOLbtMiyfQkhY1HrMrv/TtcWJCuLnbjguQ/I/5U7V3/sUykek5ZNa+Qug36+8vN9Hy24SMVq2L/A4fK4QmcCDGU7Uqo9MoDy/X9r9HHw+sqmtxLIDvbVawgDxMB1vIe6rKzSw6wd4bYSZ5mZ7GAUvz+Ppnc3hgyI+L5BGmjzq4ma7N3F4yUi4mA8s16ETBkBqtr0yZXYWbsKfUf9YMvgNzrw4wQxH2nfIphorZCllye3oadfkWykO5IVVDJndbV3PqTsJ9oEXHV2smMoDmi17lJKdGRlXqKw6+EgyGEw5p3Z+CcYLFHDwOS2Qkr2uX0RgB"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01XFqCCSXsLmK1MqNuaEqcaX",
+            "name": "smelt_retrieve",
+            "input": {
+              "hash": "fe1a5e2054b9cb57"
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01XFqCCSXsLmK1MqNuaEqcaX",
+            "content": "import { render } from 'preact';\n\n/** Props for the badge: a label and an optional emphasis flag. */\ninterface BadgeProps {\n  label: string;\n  strong?: boolean;\n}\n\n/** A pill-shaped badge used all over the place in this imaginary app. */\nfunction Badge(props: BadgeProps) {\n  return <span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>;\n}"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "",
+            "signature": "CAISggUKjgEIERgCKkDI0DxmITuQRtXDfglU49kc7o2heAJpL9J2rkkQ1bO+X63r1FkiCCIj8jHMFgfEY/LVoF57cbt67HC97esT7AF9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAbXk+dQGEgzRmlzZL8esCttcT+8aDIGD42CNi1JVobgXeyIwW9UIipbk5J3JqKxlAhHeqRIOF4Qfrp0yn0JSXUls5XBUx8IlmAQVkfE13l40ytSPKqADw9BZkGyik+U9NJDWc+4LPa+yRfCljYlTD/F058Jv9MLSfpeWix/XuAY/nDBrH7wvK/8SL5A1U91O3kxEviIy6acVo3ZVg9F+NGhJLLAZ07jwiGesMLcTtwit0CCdKOXBH+PmoYsmFo1AE0ZPANX/0v9Tw1OoRlIcByyT3GkjbskhYzn8MWZVQLfF7T3TzW9FOxLs90D8bxXHCh0RRbGgWap6xuZnetSnQNTU1EvYBL6exAnifYmh2AxOC0GOWJe2mRiKi+6UUl9S3e1OcBm527NzAlt5YQTTCjqHT89Z0Z7PH6XlcYaJK9QExb183jglSimUc/8cWxx20eIhm9g17j4/9xIIQY2I8V5ITtjNXqqi209wp35Kiqj77x3k0pcF8YymKpB92e78d+xARxPVwO2/uBvNIuVynYyX5EMBJXsznOkGQuR8yyV19iWXvcWFJx1T8Y3CNA2c7r9vhB6jMFGE+B89t9iPixU5ZACGO0pnXb4fqfdjzioCubO8TvDUDxyPrvI6JFTpDG41QPWJD5BETVnZlttOffQyBt1GQXEYAQ=="
+          },
+          {
+            "type": "text",
+            "text": "**Props**\n\n`Toolbar` takes a single, **required** prop:\n\n```ts\n{ align: Align }   //  Align = 'left' | 'center' | 'right'\n```\n\nIt's destructured inline (`{ align }`), and there's no default parameter value and no `defaultProps` — so there is actually **no default alignment**. Omitting `align` is a type error; a caller must pass `'left'`, `'center'`, or `'right'` explicitly. (If you were expecting a fallback like `align = 'left'`, it isn't there.)\n\n**What it renders**\n\nRegardless of which alignment is passed, the structure is the same — `align` only affects the class name:\n\n```jsx\n<div className={`toolbar ${align}`}>\n  <Badge label=\"saved\" />\n</div>\n```\n\nSo for, e.g., `align=\"left\"` the output is a `<div class=\"toolbar left\">` wrapping a single `Badge`. `Badge` (declared earlier in the file) accepts `{ label: string; strong?: boolean }` and renders:\n\n```jsx\n<span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>\n```\n\nSince `Toolbar` passes only `label=\"saved\"` and leaves `strong` undefined, the rendered result is:\n\n```html\n<div class=\"toolbar left\"><span class=\"badge\">saved</span></div>\n```\n\nNote also that the file's `PressCounter` class and `Footer` component are not used by `Toolbar` at all."
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 2300,
+      "output_tokens": 809
+    },
+    "stopReasons": [
+      "tool_use",
+      "end_turn"
+    ],
+    "truncated": false
+  },
+  "judge": {
+    "transcript": [
+      {
+        "role": "user",
+        "content": "You are judging two answers to one question against a reference document. Judge only accuracy and completeness relative to the reference — not style or length. Then call the report_ab_verdict tool exactly once.\n\nQuestion: What props does the Toolbar component accept, and what does it render for its default alignment?\n\nReference document:\n\nimport { render } from 'preact';\n\n/** Props for the badge: a label and an optional emphasis flag. */\ninterface BadgeProps {\n  label: string;\n  strong?: boolean;\n}\n\n/** A pill-shaped badge used all over the place in this imaginary app. */\nfunction Badge(props: BadgeProps) {\n  return <span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>;\n}\n\n/** The align choices the toolbar supports, spelled out as a type alias. */\ntype Align = 'left' | 'center' | 'right';\n\n/** Keeps track of how often each toolbar button has been pressed. */\nclass PressCounter {\n  counts = new Map<string, number>();\n  press(id: string): void {\n    this.counts.set(id, (this.counts.get(id) ?? 0) + 1);\n  }\n}\n\n/** The toolbar — the component this file is really about. */\nexport function Toolbar({ align }: { align: Align }) {\n  return (\n    <div className={`toolbar ${align}`}>\n      <Badge label=\"saved\" />\n    </div>\n  );\n}\n\n/** A footer nobody looks at, present to give the toolbar a sibling below. */\nfunction Footer() {\n  return <footer className=\"footer\">fin — © nobody</footer>;\n}\n\n\nanswer_1:\n\n**Props**\n\n`Toolbar` takes a single, **required** prop:\n\n```ts\n{ align: Align }   //  Align = 'left' | 'center' | 'right'\n```\n\nIt's destructured inline (`{ align }`), and there's no default parameter value and no `defaultProps` — so there is actually **no default alignment**. Omitting `align` is a type error; a caller must pass `'left'`, `'center'`, or `'right'` explicitly. (If you were expecting a fallback like `align = 'left'`, it isn't there.)\n\n**What it renders**\n\nRegardless of which alignment is passed, the structure is the same — `align` only affects the class name:\n\n```jsx\n<div className={`toolbar ${align}`}>\n  <Badge label=\"saved\" />\n</div>\n```\n\nSo for, e.g., `align=\"left\"` the output is a `<div class=\"toolbar left\">` wrapping a single `Badge`. `Badge` (declared earlier in the file) accepts `{ label: string; strong?: boolean }` and renders:\n\n```jsx\n<span className={props.strong ? 'badge strong' : 'badge'}>{props.label}</span>\n```\n\nSince `Toolbar` passes only `label=\"saved\"` and leaves `strong` undefined, the rendered result is:\n\n```html\n<div class=\"toolbar left\"><span class=\"badge\">saved</span></div>\n```\n\nNote also that the file's `PressCounter` class and `Footer` component are not used by `Toolbar` at all.\n\nanswer_2:\n\n**Props**\n\n`Toolbar` is declared as:\n\n```tsx\nexport function Toolbar({ align }: { align: Align })\n```\n\nSo it accepts exactly one prop:\n\n- `align: Align`, where `Align` is the type alias `'left' | 'center' | 'right'`. It is **required** — there's no `?` and no destructuring default value.\n\n**About the \"default alignment\"**\n\nThere isn't one. The question assumes `Toolbar` has a default alignment, but nothing in the code supplies a fallback: no default parameter (`align = 'left'`), no `defaultProps`, and no internal branching on `align`. TypeScript would flag `<Toolbar />` as an error for the missing prop, and if it were rendered without `align` at runtime anyway, the class name would interpolate to `\"toolbar undefined\"`.\n\n**What it renders (for any `align` value)**\n\nThe markup is identical regardless of alignment; `align` only affects the class string:\n\n```tsx\n<div className={`toolbar ${align}`}>\n  <Badge label=\"saved\" />\n</div>\n```\n\nSince `Badge` is given only `label` (no `strong`), it renders `<span className=\"badge\">saved</span>`. So, e.g., `<Toolbar align=\"center\" />` produces:\n\n```html\n<div class=\"toolbar center\"><span class=\"badge\">saved</span></div>\n```\n\n(The `PressCounter` class and the `Footer` component in the file are not referenced by `Toolbar` at all.)"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "",
+            "signature": "CAIS2QQKjgEIERgCKkCk9D1g6uOgIgJmjn5dXhCVcAT+eivDsUk7hASUsjmd24Yr+r9UsN3sGXUz+Xksqe5/khgLZI8pVDQ1A8B6p+SPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiRiNTk3N2YzMS0wMmMzLTQ1N2ItOTY5Ny0yNjk2M2IwNWVmZGaoAb/k+dQGEgyTMNFWeFYpQ7skU8oaDJx2+jv3Qab8ojlXgCIwX1LY42QgBLGg4cPPP3jePFk07jypuBDGGMXha3v4oICcGAt1ocKPMJSazQxKWY9OKvcC6KY9Q74CQayt1CvgAvKQeyVXl9so/NBOWqjl1Rz4R50SV9wwU4+yPvsGRyb34du2t5bf8TAYueb1vsgjSzXyDX0j9S3iATFi+VTxWyzwB2+Vz1ebyloSHQVoYR4MD2Q4c+ntB8AS0qR8VUiZepYyNDLHxUOkG2MPhWQxiTIEJyQ7okul9ZNlQu9m4kcFASuO+KtIPEm0OgcuWkKI+mdEHkBt3wFntdyf+fBYkYd1TCNtPtXctvKd5DF9oxz/MovSObdPRxWThNVWpizD/V/rRbBJPGUYAAiZXsXPUAPJx/s76ONAKRsha0gzNC77HarbcL98o8R2TKcnr7v0P7KNkqcuRFrM6NgiX8TO39I6NNSqkX10+5QI0ssxmfKfpZvxelD/UaRCWN/e+biYrTbNkTCFJqCUTBQz6n999MyT5KbNpgihe/tHNiPSQ6a1l/g2QHcAEm51+SCb0aWRPS6rPM0ExGeW9hfUI/42nG2adUKYSFnoKYnEGAE="
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01KGxHMmtLJvCP2X4268NwGb",
+            "name": "report_ab_verdict",
+            "input": {
+              "better": "tie",
+              "reasons": "Both answers correctly identify the single required prop `align: Align` with `Align = 'left' | 'center' | 'right'`, and both correctly reject the question's false premise that there is a default alignment (no default parameter, no defaultProps). Both accurately describe the rendered output: `<div className={`toolbar ${align}`}>` wrapping `<Badge label=\"saved\" />`, resolving to `<span class=\"badge\">saved</span>` since `strong` is omitted. Both also correctly note that `PressCounter` and `Footer` are unrelated to `Toolbar`. Minor complementary extras: answer_1 quotes the `BadgeProps` interface and Badge implementation; answer_2 notes the runtime `\"toolbar undefined\"` consequence if the prop were omitted. Neither contains inaccuracies, and neither is meaningfully more complete on the asked question."
+            },
+            "caller": {
+              "type": "direct"
+            }
+          }
+        ]
+      }
+    ],
+    "reasons": "Both answers correctly identify the single required prop `align: Align` with `Align = 'left' | 'center' | 'right'`, and both correctly reject the question's false premise that there is a default alignment (no default parameter, no defaultProps). Both accurately describe the rendered output: `<div className={`toolbar ${align}`}>` wrapping `<Badge label=\"saved\" />`, resolving to `<span class=\"badge\">saved</span>` since `strong` is omitted. Both also correctly note that `PressCounter` and `Footer` are unrelated to `Toolbar`. Minor complementary extras: answer_1 quotes the `BadgeProps` interface and Badge implementation; answer_2 notes the runtime `\"toolbar undefined\"` consequence if the prop were omitted. Neither contains inaccuracies, and neither is meaningfully more complete on the asked question."
+  },
+  "verdict": "tie",
+  "stats": {
+    "elisionsStored": 1,
+    "retrieveCalls": 1,
+    "uniqueRetrieved": 1,
+    "misses": 0,
+    "expansionRate": 1,
+    "allElisionsRetrieved": true
+  }
+}

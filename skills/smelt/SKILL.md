@@ -59,11 +59,13 @@ what is behind and what to run; `smelt hooks remove` takes the wiring back out.
 
 ## MCP
 
-If the project registers smelt over MCP, four tools exist: `smelt_file` (shrink a
+If the project registers smelt over MCP, five tools exist: `smelt_file` (shrink a
 file under a byte budget with a focus), `repo_map` (a ranked whole-tree symbol map),
-`smelt_retrieve` (elided bytes back by hash) and `smelt_stats` (retrieval
-counters). The config's store is shared with the CLI, so a hash a marker gave you is
-the same hash either surface retrieves.
+`smelt_retrieve` (elided bytes back by hash), `smelt_retrieve_batch` (several
+hashes back in one call — prefer it when more than one marker matters, because every
+call re-bills the conversation) and `smelt_stats` (retrieval counters). The
+config's store is shared with the CLI, so a hash a marker gave you is the same hash
+either surface retrieves.
 
 ## Notes
 

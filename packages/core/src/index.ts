@@ -46,7 +46,12 @@ export {
   StructuralPlanner,
 } from './plan/structural.ts';
 export type { StructuralLanguage, StructuralPlannerOptions } from './plan/structural.ts';
-export { createRetrieveTool, RETRIEVE_TOOL_NAME } from './retrieve.ts';
+export {
+  createRetrieveBatchTool,
+  createRetrieveTool,
+  RETRIEVE_BATCH_TOOL_NAME,
+  RETRIEVE_TOOL_NAME,
+} from './retrieve.ts';
 export { unconfiguredDistillStage, unconfiguredRerankStage } from './stages.ts';
 export { MemoryElisionStore } from './store.ts';
 export {
@@ -140,7 +145,7 @@ export type {
   DoctorOptions,
   DoctorReceipt,
 } from './cli/doctor.ts';
-export { retrieveStats } from './stats.ts';
+export { retrieveStats, ruleLedger } from './stats.ts';
 export type { RawRetrieveCounters } from './stats.ts';
 
 /**
@@ -190,18 +195,24 @@ export {
   openStore,
   readBlob,
   readCounters,
+  readLedger,
   readTree,
   resolveStrategy,
   retrieveBytes,
+  retrieveMany,
   smeltBlob,
 } from './ops/index.ts';
 export type {
   BudgetFault,
   BudgetNaming,
+  FocusSource,
   MapTreeOp,
   ReadCountersOp,
+  ReadLedgerOp,
+  ResolvedFocus,
   ResolvedStrategy,
   RetrieveBytesOp,
+  RetrieveManyOp,
   Ruling,
   SmeltBlobOp,
   SmeltBlobOutcome,

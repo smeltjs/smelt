@@ -1,6 +1,10 @@
 import type { Planner } from '../types.ts';
 
 import { AutoPlanner } from './auto.ts';
+import { DiffPlanner } from './diff.ts';
+import type { DiffPlannerOptions } from './diff.ts';
+import { JsonPlanner } from './json.ts';
+import type { JsonPlannerOptions } from './json.ts';
 import { LexicalPlanner } from './lexical.ts';
 import type { LexicalPlannerOptions } from './lexical.ts';
 import { StructuralPlanner } from './structural.ts';
@@ -14,6 +18,8 @@ import type { StructuralPlannerOptions } from './structural.ts';
 export interface PlannerFactoryOptions {
   readonly lexical?: LexicalPlannerOptions;
   readonly structural?: StructuralPlannerOptions;
+  readonly json?: JsonPlannerOptions;
+  readonly diff?: DiffPlannerOptions;
 }
 
 /**
@@ -30,11 +36,15 @@ export interface PlannerFactoryOptions {
  * bundled grammar and throws {@link GrammarUnavailableError} for anything else — never
  * a silent lexical fallback. See {@link StructuralPlanner}.
  *
- * `'auto'` picks between the two on the language and **labels what ran**: its plans
- * come back as `lexical/v1` or `structural/v1`, never as `auto`. It is a selector, not
- * a fallback — an explicit `'structural'` on an unsupported language still refuses,
- * because a caller who named the planner asked for its guarantees. See
- * {@link AutoPlanner}, whose doc comment carries the reasoning.
+ * `'json'` and `'diff'` plan by content kind — members and elements, files and hunks —
+ * and refuse anything that is not that kind with {@link ContentKindError}, for the
+ * structural planner's reason. See {@link JsonPlanner} and {@link DiffPlanner}.
+ *
+ * `'auto'` picks among them — content kind first, then language — and **labels what
+ * ran**: its plans come back as `json/v1`, `diff/v1`, `lexical/v1` or `structural/v1`,
+ * never as `auto`. It is a selector, not a fallback — an explicit `'structural'` on an
+ * unsupported language still refuses, because a caller who named the planner asked for
+ * its guarantees. See {@link AutoPlanner}, whose doc comment carries the reasoning.
  *
  * Key order is the order every rendered list uses, so append rather than reorder.
  */
@@ -43,6 +53,8 @@ export const PLANNERS = {
   structural: (options: PlannerFactoryOptions): Planner =>
     new StructuralPlanner(options.structural ?? {}),
   auto: (options: PlannerFactoryOptions): Planner => new AutoPlanner(options),
+  json: (options: PlannerFactoryOptions): Planner => new JsonPlanner(options.json ?? {}),
+  diff: (options: PlannerFactoryOptions): Planner => new DiffPlanner(options.diff ?? {}),
 } as const satisfies Record<string, (options: PlannerFactoryOptions) => Planner>;
 
 /** Which planner a smelter uses, named by string. Exactly the keys of {@link PLANNERS}. */

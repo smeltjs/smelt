@@ -5,7 +5,7 @@
 # @smeltjs/mcp
 
 **The [smelt](https://github.com/smeltjs/smelt) MCP server** — structure-aware,
-reversible, offline context optimization as four tools over stdio. A resident process
+reversible, offline context optimization as five tools over stdio. A resident process
 wrapping [`@smeltjs/core`](https://www.npmjs.com/package/@smeltjs/core), so the
 tree-sitter grammar cache is paid once per session instead of once per command.
 
@@ -15,14 +15,23 @@ never enter this package's import graph, and a guard
 (`test/guards/no-network.test.ts`) pins the exact SDK subpaths the source may touch —
 mutation-tested like every other guarantee in this repository.
 
-## The four tools
+## The five tools
 
-| Tool             | In                                                       | Out                                                                                                       |
-| ---------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `smelt_file`     | `path` _or_ `text`, `budgetBytes`, `focus?`, `strategy?` | The smelted text, then a report of every elision (rule, lines, bytes, hash, explanation)                  |
-| `smelt_retrieve` | `hash` (from a marker's `retrieve("hash")`)              | The exact original bytes, verbatim. **Counted** — this is the expansion rate moving                       |
-| `repo_map`       | `dir`, `budgetBytes`, `focus?`                           | A ranked symbol map of the tree, fitted to the budget by construction (modelled on Aider's repo map)      |
-| `smelt_stats`    | —                                                        | The store's `RetrieveStats`, verbatim JSON. An **uncounted** read: watching the counters never moves them |
+| Tool                   | In                                                       | Out                                                                                                                                                               |
+| ---------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smelt_file`           | `path` _or_ `text`, `budgetBytes`, `focus?`, `strategy?` | The smelted text, then a report of every elision (rule, lines, bytes, hash, explanation, and for structural cuts the names of the declarations behind the marker) |
+| `smelt_retrieve`       | `hash` (from a marker's `retrieve("hash")`)              | The exact original bytes, verbatim. **Counted** — this is the expansion rate moving                                                                               |
+| `smelt_retrieve_batch` | `hashes` (several, in one call)                          | One text block per hash, in order: a first line naming the hash and its size, then the exact bytes. Each hit **counted** exactly as a single call would count it  |
+| `repo_map`             | `dir`, `budgetBytes`, `focus?`                           | A ranked symbol map of the tree, fitted to the budget by construction (modelled on Aider's repo map)                                                              |
+| `smelt_stats`          | —                                                        | The store's `RetrieveStats`, verbatim JSON. An **uncounted** read: watching the counters never moves them                                                         |
+
+`smelt_retrieve_batch` exists because of a measured cost, not a convenience: every tool
+call is a new request and input tokens are billed per request, so a model expanding
+eighteen markers one call at a time re-bills its whole transcript eighteen times (tier 4
+of the bench saw the smelted arm's summed input exceed the raw arm's on five of nine
+cases for exactly this reason). One request for eighteen blocks changes what that costs
+and nothing about what the expansion rate means — `smelt_retrieve` is the frozen wire
+surface and stays byte-identical beside it.
 
 Every elided region leaves a one-line marker in band:
 

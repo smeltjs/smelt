@@ -32,6 +32,7 @@ import { CLI_NAME } from '../shell.ts';
 export const CLI_FLAGS = {
   budget: { type: 'string' },
   focus: { type: 'string', multiple: true },
+  producer: { type: 'string' },
   language: { type: 'string' },
   strategy: { type: 'string' },
   ignore: { type: 'string', multiple: true },
@@ -163,6 +164,16 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'to the front of the fill order, ranks unchanged.',
     ],
   },
+  producer: {
+    label: '--producer <cmd>',
+    body: () => [
+      'The command whose output this is, e.g. "grep -C 3 foo src". When',
+      'no --focus is given, the focus is derived from it exactly as the',
+      'hooks guard derives it: a search pattern, only when the output',
+      'also holds non-matching lines (context flags). cat, diffs and',
+      'logs name no term; the head and tail are kept instead.',
+    ],
+  },
   language: {
     label: '--language <id>',
     body: () => [`Override detection. One of: ${[...SUPPORTED_LANGUAGES, 'unknown'].join(', ')}.`],
@@ -173,9 +184,11 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       `${STRATEGIES.join(', ')}. Defaults to ${DEFAULT_STRATEGY}, unless`,
       'smelt.config.json says otherwise. structural parses',
       `${STRUCTURAL_LANGUAGES.join(', ')};`,
-      'any other language is refused, never approximated. auto picks',
-      'structural for those languages and lexical for the rest, and',
-      'the report names whichever one actually ran.',
+      'any other language is refused, never approximated. json cuts',
+      'members and elements; diff cuts files and hunks; each refuses',
+      'any other content. auto picks by content kind first (json,',
+      'diff), then structural for those languages and lexical for the',
+      'rest, and the report names whichever one actually ran.',
     ],
   },
   ignore: {

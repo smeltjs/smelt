@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { cliUsage, parseSmeltArgs } from '@guard/cli/args';
 import { parseConfig } from '@guard/cli/config';
 import { AUTO_PLANNER_ID } from '@guard/plan/auto';
+import { DIFF_PLANNER_ID } from '@guard/plan/diff';
+import { JSON_PLANNER_ID } from '@guard/plan/json';
 import { LEXICAL_PLANNER_ID } from '@guard/plan/lexical';
 import { isStrategy, PLANNERS, STRATEGIES } from '@guard/plan/planners';
 import { STRUCTURAL_PLANNER_ID } from '@guard/plan/structural';
@@ -25,6 +27,8 @@ const SHIPPED: Record<string, string> = {
   lexical: LEXICAL_PLANNER_ID,
   structural: STRUCTURAL_PLANNER_ID,
   auto: AUTO_PLANNER_ID,
+  json: JSON_PLANNER_ID,
+  diff: DIFF_PLANNER_ID,
 };
 const SHIPPED_NAMES = Object.keys(SHIPPED).toSorted();
 

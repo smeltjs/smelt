@@ -1,6 +1,6 @@
 {
   "guards": 33,
-  "mutations": 150,
+  "mutations": 161,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -8,11 +8,11 @@
     },
     {
       "guard": "packages/core/test/guards/auto-strategy.test.ts",
-      "count": 2
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/bench-results.test.ts",
-      "count": 5
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/cache-hygiene.test.ts",
@@ -28,7 +28,7 @@
     },
     {
       "guard": "packages/core/test/guards/expansion-counter.test.ts",
-      "count": 7
+      "count": 11
     },
     {
       "guard": "packages/core/test/guards/guards-manifest.test.ts",
@@ -40,7 +40,7 @@
     },
     {
       "guard": "packages/core/test/guards/hooks-preset.test.ts",
-      "count": 2
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/init-wizard.test.ts",
@@ -56,7 +56,7 @@
     },
     {
       "guard": "packages/core/test/guards/marker-format.test.ts",
-      "count": 2
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/mcp-registration.test.ts",
@@ -72,7 +72,7 @@
     },
     {
       "guard": "packages/core/test/guards/packaging.test.ts",
-      "count": 5
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/persistent-store.test.ts",

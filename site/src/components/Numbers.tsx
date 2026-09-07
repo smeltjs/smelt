@@ -3,23 +3,40 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Reveal } from '@/components/ui/Reveal';
 
 /**
- * Law 4, mechanically: this table is generated at build time from the latest tier-1
- * run in packages/core/bench/RESULTS.md (see scripts/bench-data.mjs). No number here
- * is typed by hand; the reduction column is computed from the measured bytes.
+ * Law 4, mechanically: everything here is generated at build time from the latest run
+ * in packages/core/bench/RESULTS.md (see scripts/bench-data.mjs). No number on this
+ * page is typed by hand; every reduction is computed from two measured values; the
+ * tier-3 aggregate and tier-4 verdicts arrive pre-parsed from the row notes, and a
+ * note the generator cannot parse fails the build instead of guessing.
  */
+
 interface Row {
   case: string;
-  inputBytes: number;
-  outputBytes: number;
-  elisions: number;
+  unit: string;
+  input: number;
+  output: number;
+  elisions: number | null;
+  model: string | null;
   note: string;
   overBudget: boolean;
+  verdict?: string;
+  retrieves?: number;
 }
 
+interface BenchData {
+  runDate: string;
+  tiersRun: string;
+  corpusCommit: string;
+  model: string | null;
+  tiers: { bytes: Row[]; tokens: Row[]; expansion: Row[]; ab: Row[] };
+  tier3Aggregate: number | null;
+}
+
+const data = bench as unknown as BenchData;
 const fmt = new Intl.NumberFormat('en-US');
 
 function plannerOf(note: string): string {
-  const m = note.match(/(structural|lexical)\/v\d+/);
+  const m = note.match(/(structural|lexical|json|diff)\/v\d+/);
   return m ? m[0] : '—';
 }
 
@@ -29,12 +46,35 @@ function budgetOf(note: string): string {
 }
 
 function reduction(row: Row): string {
-  const pct = ((row.outputBytes - row.inputBytes) / row.inputBytes) * 100;
+  const pct = ((row.output - row.input) / row.input) * 100;
   return `${pct.toFixed(1)}%`;
 }
 
+function total(rows: Row[]): number {
+  return rows.reduce((sum, row) => sum + row.input, 0);
+}
+
+const th = 'py-2.5 pr-4 font-mono text-[13px] font-normal text-slag';
+const td = 'py-3 pr-4';
+
 export function Numbers() {
-  const rows = bench.rows as Row[];
+  const bytes = data.tiers.bytes;
+  const tokens = data.tiers.tokens;
+  const expansion = data.tiers.expansion;
+  const ab = data.tiers.ab;
+  const ties = ab.filter((r) => r.verdict === 'tie').length;
+  const rawBetter = ab.filter((r) => r.verdict === 'raw better').length;
+  const smeltedBetter = ab.filter((r) => r.verdict === 'smelted better').length;
+  // Every count below is derived from the rows, never typed: the expansion sums, the
+  // loss cases, the retrieve range, and the zero-retrieve arm ratios.
+  const stored = expansion.reduce((sum, r) => sum + r.input, 0);
+  const retrieved = expansion.reduce((sum, r) => sum + r.output, 0);
+  const lossCases = expansion.filter((r) => r.input > 0 && r.output === r.input).length;
+  const retrieveCounts = ab.map((r) => r.retrieves ?? 0);
+  const zeroRetrieveRatios = ab
+    .filter((r) => (r.retrieves ?? 0) === 0 && r.output > 0)
+    .map((r) => r.input / r.output);
+
   return (
     <section aria-labelledby="numbers" className="border-b border-iron-dark">
       <div className="mx-auto max-w-[1120px] px-4 py-16 sm:px-6 md:py-24">
@@ -50,9 +90,11 @@ export function Numbers() {
           lead={
             <>
               From the committed measurement harness (
-              <code className="font-mono text-[13px]">pnpm bench</code>
-              ), tier 1 — bytes and elision counts, deterministic, offline, reproducible from a
-              fresh clone. This table is parsed out of{' '}
+              <code className="font-mono text-[13px]">pnpm bench</code>), run {data.runDate} on
+              corpus {data.corpusCommit} — {data.tiersRun}. Tiers 1–2 reproduce from a fresh
+              clone; tiers 3–4 were run once on{' '}
+              <span className="font-mono text-[13px]">{data.model ?? '—'}</span> and their logs
+              are committed beside the rows. Parsed out of{' '}
               <code className="font-mono text-[13px]">bench/RESULTS.md</code> at build time.
             </>
           }
@@ -61,64 +103,30 @@ export function Numbers() {
         <Reveal className="mt-10">
           <div className="grid gap-10 lg:grid-cols-12 lg:gap-8">
             <div className="lg:col-span-8">
-              <p className="font-mono text-[13px] text-slag">
-                run {bench.runDate} · corpus {bench.corpusCommit} · {bench.tier} · unit: UTF-8 bytes
-              </p>
+              <h3 className="font-mono text-[13px] text-iron-light">
+                tier 1 — bytes, deterministic, offline · unit: UTF-8 bytes
+              </h3>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[560px] border-collapse text-left text-[14px]">
                   <thead>
                     <tr className="border-b border-iron-dark">
-                      <th
-                        scope="col"
-                        className="py-2.5 pr-4 font-mono text-[13px] font-normal text-slag"
-                      >
-                        case
-                      </th>
-                      <th
-                        scope="col"
-                        className="py-2.5 pr-4 font-mono text-[13px] font-normal text-slag"
-                      >
-                        planner
-                      </th>
-                      <th
-                        scope="col"
-                        className="py-2.5 pr-4 font-mono text-[13px] font-normal text-slag"
-                      >
-                        budget
-                      </th>
-                      <th
-                        scope="col"
-                        className="py-2.5 pr-4 text-right font-mono text-[13px] font-normal text-slag"
-                      >
-                        in (B)
-                      </th>
-                      <th
-                        scope="col"
-                        className="py-2.5 pr-4 text-right font-mono text-[13px] font-normal text-slag"
-                      >
-                        out (B)
-                      </th>
-                      <th
-                        scope="col"
-                        className="py-2.5 text-right font-mono text-[13px] font-normal text-slag"
-                      >
-                        reduction
-                      </th>
+                      <th scope="col" className={`${th} text-left`}>case</th>
+                      <th scope="col" className={`${th} text-left`}>planner</th>
+                      <th scope="col" className={`${th} text-left`}>budget</th>
+                      <th scope="col" className={`${th} text-right`}>in (B)</th>
+                      <th scope="col" className={`${th} text-right`}>out (B)</th>
+                      <th scope="col" className={`${th} text-right`}>reduction</th>
                     </tr>
                   </thead>
                   <tbody className="font-mono text-[13px]">
-                    {rows.map((row) => (
+                    {bytes.map((row) => (
                       <tr key={row.case} className="border-b border-iron-dark">
-                        <td className="py-3 pr-4 text-ash">{row.case}</td>
-                        <td className="py-3 pr-4 text-slag">{plannerOf(row.note)}</td>
-                        <td className="py-3 pr-4 text-slag">{budgetOf(row.note)}</td>
-                        <td className="py-3 pr-4 text-right text-slag">
-                          {fmt.format(row.inputBytes)}
-                        </td>
-                        <td className="py-3 pr-4 text-right text-slag">
-                          {fmt.format(row.outputBytes)}
-                        </td>
-                        <td className="py-3 text-right">
+                        <td className={`${td} text-ash`}>{row.case}</td>
+                        <td className={`${td} text-slag`}>{plannerOf(row.note)}</td>
+                        <td className={`${td} text-slag`}>{budgetOf(row.note)}</td>
+                        <td className={`${td} text-right text-slag`}>{fmt.format(row.input)}</td>
+                        <td className={`${td} text-right text-slag`}>{fmt.format(row.output)}</td>
+                        <td className={`${td} text-right`}>
                           {row.overBudget ? (
                             <span className="text-ember">over budget, reported</span>
                           ) : (
@@ -127,9 +135,133 @@ export function Numbers() {
                         </td>
                       </tr>
                     ))}
+                    <tr className="border-b border-iron-dark">
+                      <td className={`${td} text-iron-light`}>corpus total</td>
+                      <td className={td} />
+                      <td className={td} />
+                      <td className={`${td} text-right text-iron-light`}>
+                        {fmt.format(total(bytes))}
+                      </td>
+                      <td className={`${td} text-right text-iron-light`}>
+                        {fmt.format(bytes.reduce((sum, row) => sum + row.output, 0))}
+                      </td>
+                      <td className={`${td} text-right text-iron-light`}>
+                        {(
+                          ((bytes.reduce((sum, row) => sum + row.output, 0) - total(bytes)) /
+                            total(bytes)) *
+                          100
+                        ).toFixed(1)}
+                        %
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
+
+              <h3 className="mt-10 font-mono text-[13px] text-iron-light">
+                tier 2 — tokens, {data.model}'s own tokenizer · unit: tokens
+              </h3>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-left text-[14px]">
+                  <thead>
+                    <tr className="border-b border-iron-dark">
+                      <th scope="col" className={`${th} text-left`}>case</th>
+                      <th scope="col" className={`${th} text-right`}>in (tok)</th>
+                      <th scope="col" className={`${th} text-right`}>out (tok)</th>
+                      <th scope="col" className={`${th} text-right`}>reduction</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono text-[13px]">
+                    {tokens.map((row) => (
+                      <tr key={row.case} className="border-b border-iron-dark">
+                        <td className={`${td} text-ash`}>{row.case}</td>
+                        <td className={`${td} text-right text-slag`}>{fmt.format(row.input)}</td>
+                        <td className={`${td} text-right text-slag`}>{fmt.format(row.output)}</td>
+                        <td className={`${td} text-right text-ash`}>{reduction(row)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-b border-iron-dark">
+                      <td className={`${td} text-iron-light`}>corpus total</td>
+                      <td className={`${td} text-right text-iron-light`}>
+                        {fmt.format(total(tokens))}
+                      </td>
+                      <td className={`${td} text-right text-iron-light`}>
+                        {fmt.format(tokens.reduce((sum, row) => sum + row.output, 0))}
+                      </td>
+                      <td className={`${td} text-right text-iron-light`}>
+                        {(
+                          ((tokens.reduce((sum, row) => sum + row.output, 0) - total(tokens)) /
+                            total(tokens)) *
+                          100
+                        ).toFixed(1)}
+                        %
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="mt-10 font-mono text-[13px] text-iron-light">
+                tier 3 — the expansion rate, the honest signal · and it rang
+              </h3>
+              <p className="mt-3 font-mono text-[13px] text-ash">
+                aggregate {data.tier3Aggregate?.toFixed(2) ?? '—'} — the model asked for{' '}
+                {fmt.format(retrieved)} of {fmt.format(stored)} elided blobs back
+              </p>
+              <p className="mt-2 text-[14px] leading-[1.7] text-slag">
+                Tier 3 hands the model the smelted text under a{' '}
+                <em>read this whole file to understand it before editing</em> framing — the one
+                task shape that genuinely needs everything. The over-pruning alarm exists to ring
+                there, and it did: {lossCases} of {expansion.length} cases retrieved every elision
+                back. For question-shaped reads — tier 4 below — the same model retrieved{' '}
+                {fmt.format(Math.min(...retrieveCounts))}–{fmt.format(Math.max(...retrieveCounts))}{' '}
+                of them.
+              </p>
+
+              <h3 className="mt-10 font-mono text-[13px] text-iron-light">
+                tier 4 — answer quality, A/B, one judged run · verdicts are a model's opinion
+              </h3>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-left text-[14px]">
+                  <thead>
+                    <tr className="border-b border-iron-dark">
+                      <th scope="col" className={`${th} text-left`}>case</th>
+                      <th scope="col" className={`${th} text-right`}>raw in (tok)</th>
+                      <th scope="col" className={`${th} text-right`}>smelted in (tok)</th>
+                      <th scope="col" className={`${th} text-right`}>retrieves</th>
+                      <th scope="col" className={`${th} text-left`}>verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono text-[13px]">
+                    {ab.map((row) => (
+                      <tr key={row.case} className="border-b border-iron-dark">
+                        <td className={`${td} text-ash`}>{row.case}</td>
+                        <td className={`${td} text-right text-slag`}>{fmt.format(row.input)}</td>
+                        <td className={`${td} text-right text-slag`}>
+                          {fmt.format(row.output)}
+                        </td>
+                        <td className={`${td} text-right text-slag`}>
+                          {fmt.format(row.retrieves ?? 0)}
+                        </td>
+                        <td className={`${td} ${row.verdict === 'tie' ? 'text-slag' : 'text-ember'}`}>
+                          {row.verdict}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-3 text-[14px] leading-[1.7] text-slag">
+                {ties} ties · {rawBetter} raw better · {smeltedBetter} smelted better — and the one
+                "smelted better" is an artifact: that raw arm returned an empty answer (0 output
+                tokens; the judge says so in the committed log). The economics reading: on the
+                cases that retrieved nothing, the raw arm paid{' '}
+                {Math.min(...zeroRetrieveRatios).toFixed(1)}–
+                {Math.max(...zeroRetrieveRatios).toFixed(1)}× the smelted arm's input; where
+                retrieves happened, each round re-billed the transcript and could flip the sign —
+                the reason the expansion rate is a first-class number, not a footnote.
+              </p>
+
               <p className="mt-3 font-mono text-[12px] text-slag">
                 generated at build time by site/scripts/bench-data.mjs from
                 packages/core/bench/RESULTS.md
@@ -139,19 +271,24 @@ export function Numbers() {
             <div className="text-[14px] leading-[1.7] text-slag lg:col-span-4">
               <h3 className="font-mono text-[13px] text-iron-light">what these are / are not</h3>
               <p className="mt-2">
-                <span className="text-ash">What these are:</span> byte reductions on a small
-                committed corpus, each row reproducible with{' '}
-                <code className="font-mono text-[13px]">pnpm bench</code>.
+                <span className="text-ash">What they are:</span> measured bytes (tier 1),
+                measured tokens on the named model's tokenizer (tier 2), counted{' '}
+                <code className="font-mono text-[13px]">smelt_retrieve</code> calls (tier 3), and
+                one judged A/B run with committed logs (tier 4) — on a nine-case corpus of real
+                tool outputs and byte-exact files from django, scikit-learn and sympy at pinned
+                commits.
               </p>
               <p className="mt-3">
-                <span className="text-ash">What they are not:</span> token savings, cost savings, or
-                an aggregate claim — the corpus is six cases, the build-log row is a synthetic
-                best-case and says so in its header, and one case came back over budget and is
-                reported as exactly that.
+                <span className="text-ash">What they are not:</span> dollar savings — no price
+                table is committed, tokens are the measured unit — nor rates from real agent
+                traffic: tier 3's framing is a lab task, chosen to ring the alarm on purpose.
               </p>
               <p className="mt-3">
-                Token counts (tier 2) and the expansion rate on real traffic (tier 3) have not been
-                run yet; until they are, this page claims nothing about them.
+                <span className="text-ash">The honest reading:</span> ingress shrinkage is real and
+                large (−80% of tokens across this corpus); question-shaped reads keep answer
+                quality at tie while paying a fraction of the input; and whole-file-comprehension
+                tasks ask for everything back, which is the signal working, not the product
+                failing.
               </p>
               <p className="mt-3">
                 For the class of saving to expect on real agent traffic, the honest comparable

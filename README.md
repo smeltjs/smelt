@@ -30,6 +30,14 @@ The removed bytes are kept locally, content-addressed. The model gets a `smelt_r
 tool. **Every retrieval is counted**, so cutting too much shows up as a rising number
 rather than as a model that is quietly wrong about your code.
 
+This is also the shape the vendors have arrived at from their side: Anthropic's
+context-engineering guidance is to "maintain lightweight identifiers (file paths, stored
+queries, web links, etc.) and use these references to dynamically load data into context
+at runtime using tools"
+([essay](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)).
+The marker plus `smelt_retrieve` is that pattern — with every reference explained,
+reversible, and counted.
+
 | What your agent does today                         | What smelt does instead                                                           |
 | -------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Sends the whole 40 kB file, or its first 200 lines | Keeps the declarations your focus matched, with their signatures and doc comments |
@@ -37,6 +45,11 @@ rather than as a model that is quietly wrong about your code.
 | Truncated content is gone                          | Stored locally, keyed by hash, one tool call away                                 |
 | No idea whether the cut hurt                       | An expansion rate you can watch move                                              |
 | Asks a hosted model which lines matter             | Never leaves the machine                                                          |
+
+> **Measured:** the nine-case corpus smelts to **20% of its tokens** on Claude Opus 5's own
+> tokenizer — 109,348 → 21,696 tokens, run 2026-09-07,
+> [logs committed](packages/core/bench/RESULTS.md) — with the expansion rate (0.94) and the
+> answer-quality A/B that qualify it, measured beside. **[The numbers →](#measured-numbers)**
 
 ## Install
 
@@ -72,9 +85,16 @@ in 7,297 B → out 985 B   (-86.5%, 3 elisions)
 
 - `--strategy structural` parses the file and collapses whole sibling declarations,
   keeping every signature and doc comment. `--strategy lexical` (the default) uses focus
-  windows — right for logs, traces, and anything that is not code. `--strategy auto`
-  picks between them on the language and labels what it ran, for a stream that is
-  sometimes code and sometimes a build log.
+  windows — right for logs, traces, and anything that is not code. `--strategy json`
+  cuts a JSON document by members and elements, `--strategy diff` cuts a unified diff by
+  files and hunks, and each refuses any other content. `--strategy auto` picks by content
+  kind first (json, diff), then by language (structural where a grammar is bundled,
+  lexical otherwise), and labels what it ran — for a stream that is sometimes code,
+  sometimes a build log, sometimes a diff.
+- Every structural cut's report row carries an **outline** — the names of the
+  declarations behind the marker — so you (or a model) can decide what to retrieve
+  without retrieving it. `--producer '<cmd>'` names the command whose output you are
+  piping, and derives the focus from it exactly as the hooks guard does.
 - `--json` prints a versioned envelope; `--reconstruct` reads it back and prints the
   original, byte for byte. Reversibility you can run from a shell.
 - `smelt map <dir> --budget 4000` prints a ranked symbol map of a whole repository —
@@ -254,8 +274,10 @@ bytes back, run `smelt retrieve <hash>`.
 
 The marker's `retrieve("hash")` **is** that command, and it is counted like any other
 retrieval — so at the end of a session, `smelt stats` prints the same honest numbers
-(`expansionRate`, `allElisionsRetrieved`, one `name value` per line; `--json` for the
-envelope) that `smelter.stats()` gives a harness. The instruction pattern above works
+(`expansionRate`, `allElisionsRetrieved`, one `name value` per line, then the ledger:
+`rule.<id>.stored` and `rule.<id>.retrieved` per elision rule, so you can see which
+rule's cuts keep getting asked for back; `--json` for the envelope) that
+`smelter.stats()` and `smelter.store.ledger()` give a harness. The instruction pattern above works
 with any agent that can run a command; the hooks preset below wires it in with real
 enforcement.
 
@@ -299,6 +321,14 @@ where the harness's rewrite schema carries one (Claude Code, Codex), on stderr w
 it does not (Gemini, Cursor, Hermes, opencode), and falls back to deny where rewrite
 is impossible.
 
+The preset is **cache-safe by construction**. smelt transforms a tool result before that
+result first reaches the model and never rewrites a prefix a provider has already cached —
+the geometry both Anthropic and OpenAI document as the trap (retroactive clearing
+invalidates a warm prefix, and must save enough to pay for the re-write). And caching
+discounts a re-read; it never frees what those bytes still occupy — the context window,
+the rate limit, the plan quota. The economics worked on list prices:
+[`docs/research/2026-09-06-platform-context-landscape.md`](docs/research/2026-09-06-platform-context-landscape.md).
+
 One guard core, thin per-harness shims, three honesty tiers
 (survey: [`docs/research/2026-09-02-harness-capability-matrix.md`](docs/research/2026-09-02-harness-capability-matrix.md)):
 
@@ -321,8 +351,9 @@ that teaches `smelt retrieve` after a deny.
 
 ### As an MCP server
 
-[`@smeltjs/mcp`](packages/mcp/) serves the same library as a stdio MCP server — four
-tools (`smelt_file`, `smelt_retrieve`, `repo_map`, `smelt_stats`) over the same
+[`@smeltjs/mcp`](packages/mcp/) serves the same library as a stdio MCP server — five
+tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
+`smelt_stats`) over the same
 `smelt.config.json`-discovered store the CLI uses, so `smelt retrieve <hash>` from a
 shell and the model's `smelt_retrieve` hit one store and move one set of counters:
 
@@ -457,30 +488,83 @@ Three things that look like bugs and are not:
 
 ## Measured numbers
 
-From the committed measurement harness (`pnpm bench`), tier 1 — bytes and elision counts,
-deterministic, offline, reproducible by anyone from a fresh clone. Corpus commit
-`1f65ab089364`, run 2026-09-02, `@smeltjs/core` at the same commit:
+From the committed measurement harness (`pnpm bench`), run 2026-09-07 on corpus commit
+`10462aa46b8e` — nine cases: this repo's own planner source, real tool outputs, and
+byte-exact files from django, scikit-learn and sympy at pinned upstream commits. Tiers 1–2
+are reproducible by anyone from a fresh clone; tiers 3–4 were run once on `claude-opus-5`,
+and their logs are committed beside the rows ([`bench/RESULTS.md`](packages/core/bench/RESULTS.md),
+append-only; [`tier3-log/`](packages/core/bench/tier3-log/), [`ab-log/`](packages/core/bench/ab-log/)).
 
-| case                            | planner       | in (B) | out (B) |             reduction |
-| ------------------------------- | ------------- | -----: | ------: | --------------------: |
-| large TS file (this repo's own) | structural/v1 | 22,462 |   3,680 |                −83.6% |
-| multi-file grep result          | lexical/v1    |  6,451 |     986 |                −84.7% |
-| java classes                    | structural/v1 |    689 |     366 |                −46.9% |
-| stack trace                     | lexical/v1    |    542 |     389 |                −28.2% |
-| build log (synthetic, labelled) | lexical/v1    |  6,984 |     108 |                −98.5% |
-| TSX component (budget 700 B)    | structural/v1 |  1,090 |     861 | over budget, reported |
+### Tier 1 — bytes · deterministic, offline
 
-What these are: byte reductions on [a small committed corpus](packages/core/bench/), each
-row reproducible with `pnpm bench`. What they are **not**: token savings, cost savings, or
-an aggregate claim — the corpus is six cases, the build-log row is a synthetic
-best-case and says so in its header, and one case came back over budget and is reported
-as exactly that. Token counts (tier 2) and the **expansion rate** — the fraction of
-hidden bytes the model asks back for, counted from real `smelt_retrieve` calls (tier 3) —
-have not been run yet; when they are, the rows land in
-[`bench/RESULTS.md`](packages/core/bench/RESULTS.md) with the date, corpus commit, and
-model named, append-only. Until then this README claims nothing about them.
+| case                           | planner       |      in (B) |    out (B) | reduction           |
+| ------------------------------ | ------------- | ----------: | ---------: | ------------------- |
+| large TS file                  | structural/v1 |      31,229 |     10,866 | −65.2%, over budget |
+| TSX component                  | structural/v1 |       1,090 |        861 | −21.0%, over budget |
+| java classes                   | structural/v1 |         689 |        366 | −46.9%              |
+| multi-file grep                | lexical/v1    |       6,451 |        986 | −84.7%              |
+| stack trace                    | lexical/v1    |         452 |        344 | −23.9%              |
+| build log (labelled synthetic) | lexical/v1    |      16,354 |        109 | −99.3%              |
+| django query_utils             | structural/v1 |      13,389 |      1,697 | −87.3%              |
+| sklearn _ridge                 | structural/v1 |      91,082 |     31,951 | −64.9%              |
+| sympy boolalg                  | structural/v1 |     114,180 |      8,151 | −92.9%              |
+| **corpus total**               |               | **274,916** | **55,331** | **−79.9%**          |
 
-For the class of saving to expect on real agent traffic, the honest comparable remains
+### Tier 2 — tokens · `count_tokens` on `claude-opus-5`
+
+| case               |    in (tok) |  out (tok) |  reduction |
+| ------------------ | ----------: | ---------: | ---------: |
+| large TS file      |      11,768 |      4,036 |     −65.7% |
+| TSX component      |         429 |        353 |     −17.7% |
+| java classes       |         256 |        172 |     −32.8% |
+| multi-file grep    |       2,835 |        426 |     −85.0% |
+| stack trace        |         196 |        148 |     −24.5% |
+| build log          |       9,090 |         58 |     −99.4% |
+| django query_utils |       4,534 |        577 |     −87.3% |
+| sklearn _ridge     |      34,962 |     12,365 |     −64.6% |
+| sympy boolalg      |      45,278 |      3,561 |     −92.1% |
+| **corpus total**   | **109,348** | **21,696** | **−80.2%** |
+
+### Tier 3 — the expansion rate · the honest signal, and it rang
+
+Aggregate **0.94**: asked to _"read this file to understand X before editing it"_, the model
+retrieved **17 of 18** elided blobs back — a LOSS on 8 of 9 cases (the stack trace retrieved
+none). That is the alarm working, not the product failing: whole-file comprehension is the one
+task shape that genuinely needs everything, and smelt exists to make that visible instead of
+silent. On the question-shaped reads of tier 4, the same model retrieved 0–2.
+
+### Tier 4 — answer quality · A/B, one judged run, verdicts are a model's opinion
+
+| case               | raw in (tok) | smelted in (tok) | retrieves | verdict          |
+| ------------------ | -----------: | ---------------: | --------: | ---------------- |
+| large TS file      |       11,820 |            4,671 |         0 | tie              |
+| TSX component      |          472 |            2,300 |         1 | tie              |
+| java classes       |          296 |            2,050 |         2 | smelted better\* |
+| multi-file grep    |        2,886 |            5,091 |         2 | raw better       |
+| stack trace        |          232 |            1,748 |         1 | tie              |
+| build log          |        9,138 |           10,597 |         1 | raw better       |
+| django query_utils |        4,584 |            1,210 |         0 | tie              |
+| sklearn _ridge     |       35,024 |           49,082 |         2 | tie              |
+| sympy boolalg      |       45,322 |           15,024 |         2 | tie              |
+
+Six ties, two raw-better, one smelted-better. Three honest readings:
+
+- **Quality held.** On answerable questions, the smelted blob tied the raw one in 6 of 9 cases
+  at a fraction of the input — and on the zero-retrieve cases the raw arm paid 2.5–3.8× the
+  smelted arm's tokens.
+- **Round trips re-bill.** Where retrieves happened, each tool round re-sent the transcript, and
+  on 5 of 9 cases the smelted arm's summed input exceeded the raw arm's. Retrieval is the cost
+  lever — which is exactly why smelt counts it, surfaces it as `expansionRate`, and refuses to
+  threshold it for you.
+- \* The one "smelted better" is an artifact: that raw arm returned an empty answer (0 output
+  tokens; the judge's reasons in the committed log say so outright). Reported as measured, with
+  the caveat here.
+
+What these are: measured bytes, measured tokens on a named model's tokenizer, counted
+`smelt_retrieve` calls, and one judged A/B run — every row reproducible or committed. What they
+are **not**: dollar savings (no price table is committed; tokens are the measured unit), rates
+from real agent traffic (tier 3's framing is a lab task, chosen to ring the alarm on purpose),
+or an aggregate claim beyond this corpus. The nearest real-traffic comparable remains
 **Headroom's stated 21–57% across its four proof scenarios** (their README, 2026-09) — their
 numbers, on their corpus, cited as exactly that.
 
@@ -569,9 +653,14 @@ engines floor sits where it does.
 smelt's architecture is **close to Headroom's**, and it would be dishonest to imply
 otherwise.
 
-- **[Headroom](https://github.com/headroomlabs-ai/headroom)** — Python, same core shape:
-  local store, a retrieve tool, BM25. Its CacheAligner's detect-don't-rewrite decision is
-  copied here outright. If you need this today, in Python, use Headroom.
+- **[Headroom](https://github.com/headroomlabs-ai/headroom)** — the closest peer, and it
+  has grown: a Rust core behind Python and TS SDKs, a proxy wrapping sixteen-odd agents,
+  JSON statistical crushing, image shaping — and a trained model in the prose cut path,
+  retrieval that expires with a TTL, and telemetry beacons on by default. smelt's shape
+  (a local store plus a retrieve tool) started from its early Python form, and its
+  CacheAligner's detect-don't-rewrite decision is copied here outright. If you want a
+  proxy today, use Headroom. Surveyed against its live docs, 2026-09:
+  [`docs/research/2026-09-06-peer-tools-survey.md`](docs/research/2026-09-06-peer-tools-survey.md).
 - **[Aider's repo-map](https://aider.chat/2023/10/22/repomap.html)** — the proven prior
   art the repo-map planner is modelled on: tree-sitter tags + PageRank + a budget + a
   cache.
@@ -583,10 +672,15 @@ otherwise.
   localization; a v2 conversation, because each puts a model in the retrieval path.
 - **[Tree-sitter](https://tree-sitter.github.io/)** — the parsers under all of it.
 
-**What smelt actually adds** — the whole list: the **zero-network guarantee**, the
-requirement that **every elision explains itself in named-rule terms**, and the
-**mutation-tested honesty machinery** that makes both claims checkable instead of
-aspirational.
+**What smelt actually adds**, re-checked against the live field 2026-09
+([survey](docs/research/2026-09-06-peer-tools-survey.md)): the **zero-network guarantee**,
+guard-enforced and claimed by no peer; the requirement that **every elision explains
+itself in named-rule terms**; retrieval that is **reversible without eviction and
+counted** — the expansion rate, which no peer and no platform reports at all; and the
+**mutation-tested honesty machinery** that makes these claims checkable instead of
+aspirational. The nearest peers match the honesty _culture_ (llmtrim's disclosed
+regressions, Headroom's no-artifact-no-number rule) — not the machinery, and not the
+counting.
 
 ## Documentation
 
@@ -595,6 +689,7 @@ aspirational.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)                 | The deep dive: the four laws and their reasoning, the architecture file by file, the consumer contract, decisions |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md)                           | Dev setup, the guard/mutation convention, the recorded transcript of the zero-network guard going red             |
 | [`packages/core/bench/`](packages/core/bench/)                 | The measurement harness: corpus, tiers, and the append-only results table                                         |
+| [`docs/research/`](docs/research/)                             | Dated primary-source surveys: harness capability, peer tools, platform context economics, positioning             |
 | [`packages/core/THIRD-PARTY.md`](packages/core/THIRD-PARTY.md) | Generated attribution for the bundled grammars. Never hand-edited; a stale copy fails `pnpm test`.                |
 | [`assets/PALETTE.md`](assets/PALETTE.md)                       | The palette, the marks, and how to regenerate the rasters                                                         |
 

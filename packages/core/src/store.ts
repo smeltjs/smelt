@@ -1,8 +1,8 @@
 import { HashCollisionError, UnknownHashError } from './errors.ts';
 import { contentHash } from './hash.ts';
-import { retrieveStats } from './stats.ts';
+import { retrieveStats, ruleLedger } from './stats.ts';
 import type { RawRetrieveCounters } from './stats.ts';
-import type { ElisionStore, RetrieveStats } from './types.ts';
+import type { ElisionReason, ElisionStore, RetrieveStats, RuleLedgerEntry } from './types.ts';
 
 /**
  * The default store: in-process, content-addressed, no eviction.
@@ -34,20 +34,24 @@ export class MemoryElisionStore implements ElisionStore {
   #retrieveCalls = 0;
   #misses = 0;
   readonly #retrievedHashes = new Set<string>();
+  /** Every attributed put, in order — the ledger's facts. */
+  readonly #puts: { readonly hash: string; readonly rule: string }[] = [];
 
   constructor(options: MemoryElisionStoreOptions = {}) {
     this.#hash = options.hash ?? contentHash;
   }
 
-  put(content: string): string {
+  put(content: string, reason?: ElisionReason): string {
     const hash = this.#hash(content);
     const existing = this.#blobs.get(hash);
     if (existing !== undefined) {
       if (existing !== content) throw new HashCollisionError(hash);
+      if (reason !== undefined) this.#puts.push({ hash, rule: reason.rule });
       return hash;
     }
     this.#blobs.set(hash, content);
     this.#bytesStored += Buffer.byteLength(content, 'utf8');
+    if (reason !== undefined) this.#puts.push({ hash, rule: reason.rule });
     return hash;
   }
 
@@ -89,5 +93,10 @@ export class MemoryElisionStore implements ElisionStore {
 
   stats(): RetrieveStats {
     return retrieveStats(this.rawCounters());
+  }
+
+  /** The per-rule ledger, derived by the shared `ruleLedger()` — see {@link RuleLedgerEntry}. */
+  ledger(): readonly RuleLedgerEntry[] {
+    return ruleLedger(this.#puts, this.#retrievedHashes);
   }
 }

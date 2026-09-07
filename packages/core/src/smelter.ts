@@ -2,6 +2,8 @@ import { applyPlan, markerForLanguage, markerPricing, reconstruct } from './appl
 import type { ApplyOptions, MarkerBuilder } from './apply.ts';
 import { detectLanguage } from './detect.ts';
 import { SmeltError } from './errors.ts';
+import type { DiffPlannerOptions } from './plan/diff.ts';
+import type { JsonPlannerOptions } from './plan/json.ts';
 import type { LexicalPlannerOptions } from './plan/lexical.ts';
 import { DEFAULT_STRATEGY, PLANNERS } from './plan/planners.ts';
 import type { Strategy } from './plan/planners.ts';
@@ -50,6 +52,8 @@ export interface SmelterConfig {
   readonly measure?: Measure;
   readonly lexical?: LexicalPlannerOptions;
   readonly structural?: StructuralPlannerOptions;
+  readonly json?: JsonPlannerOptions;
+  readonly diff?: DiffPlannerOptions;
 }
 
 /** Options for one `smelt()` call. `budgetBytes` may come from the smelter instead. */
@@ -131,6 +135,10 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
         // see that), otherwise the language's leader-wrapped default.
         pricing: markerPricing(language, config.marker),
         ...(options.focus === undefined ? {} : { focus: options.focus }),
+        // The ledger, the same way: read off the store this smelter cuts into, here and
+        // nowhere else, when the store keeps one. Opt-in data for a planner that wants
+        // the feedback loop; the shipped planners leave it unread (Decision 4).
+        ...(store.ledger === undefined ? {} : { ruleHistory: store.ledger() }),
       };
       const plan = await planner.plan(input);
       // The marker follows the *result's* language: it lands behind the language's

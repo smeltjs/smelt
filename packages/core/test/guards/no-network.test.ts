@@ -142,16 +142,16 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'law1-global-fetch',
     file: 'store.ts',
-    find: '  put(content: string): string {',
-    replace: '  put(content: string): string {\n    void fetch;',
+    find: '  put(content: string, reason?: ElisionReason): string {',
+    replace: '  put(content: string, reason?: ElisionReason): string {\n    void fetch;',
     why: 'a network-capable global referenced without any import at all',
   },
   {
     id: 'law1-unclassified-package',
     file: 'retrieve.ts',
-    find: "import type { ElisionStore, RetrieveTool } from './types.ts';",
+    find: "import type { ElisionStore, RetrieveBatchTool, RetrievedBlock, RetrieveTool } from './types.ts';",
     replace:
-      "import 'some-package-nobody-vetted';\nimport type { ElisionStore, RetrieveTool } from './types.ts';",
+      "import 'some-package-nobody-vetted';\nimport type { ElisionStore, RetrieveBatchTool, RetrievedBlock, RetrieveTool } from './types.ts';",
     why: 'a dependency that matches no list — the case a forbidden-list alone misses',
   },
   {

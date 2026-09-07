@@ -41,6 +41,20 @@ export interface ElisionReason {
 export interface PlannedElision {
   readonly range: ByteRange;
   readonly reason: ElisionReason;
+  /**
+   * The **outline**: the names of the declarations this elision collapses, in source
+   * order — `['parseConfig', 'normalisePath']` — when the planner can read them off a
+   * parse tree. Absent, never empty, when it cannot (a lexical planner sees lines, not
+   * declarations; a run of comments has nothing to name).
+   *
+   * Out of band by design. The names ride on the plan, the applied elision and the
+   * report — never in the marker, whose bytes and priced cost do not move by one byte
+   * (`test/guards/marker-format.test.ts` pins that). It exists because the planner
+   * held the cheapest possible index of what it hid and threw it away at explanation
+   * time, leaving a model on a whole-file task to retrieve hash by hash just to learn
+   * what was behind each marker.
+   */
+  readonly names?: readonly string[];
 }
 
 /**
@@ -99,6 +113,18 @@ export interface PlanInput {
    * `markerPricing()` in `apply.ts` from the exact builder `applyPlan` will use.
    */
   readonly pricing: MarkerPricing;
+  /**
+   * The store's per-rule ledger — how many cuts each rule has made in this store and
+   * how many of them were asked for back — when the store can supply one. Filled
+   * centrally by `createSmelter`, like {@link MarkerPricing}; never guessed.
+   *
+   * **Opt-in data, not a lever.** The shipped planners do not read it: smelt measures
+   * the expansion rate and never thresholds it (`docs/ARCHITECTURE.md` § Decision 4),
+   * so a rule that "does not pay" is a fact a *caller's* planner may weigh, and never
+   * a warning smelt authors. This is the deterministic form of "revert a cut that got
+   * asked back": the loop is closed as data a planner can read, in one place.
+   */
+  readonly ruleHistory?: readonly RuleLedgerEntry[];
 }
 
 /**
@@ -129,6 +155,8 @@ export interface AppliedElision {
   readonly reason: ElisionReason;
   /** The exact marker text substituted into the output. */
   readonly marker: string;
+  /** The planner's outline, carried verbatim from {@link PlannedElision.names}. */
+  readonly names?: readonly string[];
 }
 
 /**
@@ -240,12 +268,37 @@ export interface RetrieveStats {
 }
 
 /**
+ * One row of a store's **ledger**: a rule, the distinct hashes it put, and how many
+ * of those were retrieved at least once. Rows are sorted by rule, so two reads of one
+ * store — or of one directory from two processes — render identically.
+ *
+ * `retrieved === stored` for a rule is the per-rule form of `allElisionsRetrieved`:
+ * every cut that rule made was asked for back, an arithmetic fact and never a
+ * threshold. What to do about it is the caller's call.
+ */
+export interface RuleLedgerEntry {
+  /** The {@link ElisionReason.rule} id, e.g. `'sibling-collapse'`. */
+  readonly rule: string;
+  /** Distinct hashes put under this rule. */
+  readonly stored: number;
+  /** Of those, distinct hashes retrieved at least once. */
+  readonly retrieved: number;
+}
+
+/**
  * Local, content-addressed storage for elided bytes. No network, no eviction in v1 —
  * evicting is how "reversible" quietly becomes "reversible for a while".
  */
 export interface ElisionStore {
-  /** Store content, returning its hash. Idempotent for identical content. */
-  put(content: string): string;
+  /**
+   * Store content, returning its hash. Idempotent for identical content.
+   *
+   * `reason` is the rule the content was cut by, when the caller is the applier — it
+   * feeds the store's {@link ledger}. Optional, so a store written before ledgers and
+   * a caller storing bytes for its own reasons both keep working; a put with no
+   * reason is stored and never attributed.
+   */
+  put(content: string, reason?: ElisionReason): string;
   /** The stored content, or `undefined` if this store never held that hash. */
   peek(hash: string): string | undefined;
   /**
@@ -275,6 +328,13 @@ export interface ElisionStore {
   has(hash: string): boolean;
   /** A snapshot of the counters. See {@link RetrieveStats}. */
   stats(): RetrieveStats;
+  /**
+   * The per-rule ledger, when this store keeps one — both shipped stores do. Optional
+   * so a custom store need not; a consumer that wants the feedback loop implements it
+   * with the shared `ruleLedger()` derivation from `stats.ts`. Uncounted, like
+   * `stats()`: reading the ledger never moves it.
+   */
+  ledger?(): readonly RuleLedgerEntry[];
 }
 
 /**
@@ -309,6 +369,55 @@ export interface RetrieveTool {
    *   verbatim. Surface either to the model as a tool error, never as empty text.
    */
   invoke(input: { readonly hash: string }): string;
+}
+
+/**
+ * One answer inside a batched retrieval: the exact bytes for a hash, or the store's
+ * own refusal for it. A batch never fails as a whole — a model that asked for
+ * eighteen blobs and typo'd one must still get the seventeen, and the one refusal
+ * must still be the store's distinct error (`UnknownHashError` vs
+ * `StoreCorruptionError`), never an empty string standing in for either.
+ */
+export type RetrievedBlock =
+  | { readonly hash: string; readonly text: string }
+  | { readonly hash: string; readonly error: Error };
+
+/**
+ * The batched sibling of {@link RetrieveTool}: N hashes in, one {@link RetrievedBlock}
+ * per hash out, in the order asked. Additive — `smelt_retrieve` is the frozen wire
+ * surface and stays byte-identical beside this.
+ *
+ * Why it exists is a measured fact, not a convenience: every tool call is a new
+ * request, and input tokens are billed per request, so a model expanding eighteen
+ * markers one call at a time re-bills its whole transcript eighteen times. One
+ * request for eighteen blocks changes what that costs without changing what the
+ * expansion rate *means* — each hit inside the batch is journalled exactly as a
+ * single call would journal it.
+ */
+export interface RetrieveBatchTool {
+  /** `'smelt_retrieve_batch'`. Stable — consumers hard-code it in prompts. */
+  readonly name: string;
+  /** Prose the consumer can put straight into a tool description. */
+  readonly description: string;
+  /** Strict-mode shaped, like {@link RetrieveTool.inputSchema}. */
+  readonly inputSchema: {
+    readonly type: 'object';
+    readonly properties: {
+      readonly hashes: {
+        readonly type: 'array';
+        readonly items: { readonly type: 'string' };
+        readonly description: string;
+      };
+    };
+    readonly required: readonly ['hashes'];
+    readonly additionalProperties: false;
+  };
+  /**
+   * One block per hash, in order. Never throws for a hash the store refuses — that
+   * refusal rides inside its block — but anything that is not the store's own
+   * refusal (an I/O failure, a bug) still propagates.
+   */
+  invoke(input: { readonly hashes: readonly string[] }): readonly RetrievedBlock[];
 }
 
 // ---------------------------------------------------------------------------

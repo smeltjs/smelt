@@ -14,15 +14,22 @@
  *   tier 3  expansion rate from real model calls counting `smelt_retrieve`
  *           invocations. Paid, so it additionally requires the explicit `--tier3`
  *           flag; the retrieval log is written to `bench/tier3-log/` to be committed.
+ *   tier 4  answer-quality A/B: the same question against the raw blob and the
+ *           smelted one (retrieve tool wired), judged against the raw blob as
+ *           reference, both arms' token usage recorded. Paid; additionally requires
+ *           the explicit `--tier4` flag; the A/B log is written to `bench/ab-log/`
+ *           to be committed.
  *
  * Results are appended to `bench/RESULTS.md`. Rows are append-only — a re-run on a
  * newer model is a new row, never an edit.
  *
- * Network access lives only in `tier2.mjs` and `tier3.mjs`, which are imported
- * dynamically and only on their tiers — a tier-1 run never loads a module that can
- * reach the wire. The library under `src/` cannot reach any of this; bench/ sits
- * outside the zero-network guard's walk and outside the published tarball, and must
- * stay there.
+ * Network access lives only in the tier modules (`tier2.mjs`, `tier3.mjs`,
+ * `tier4.mjs`) and their shared retrying transport (`net.mjs`), imported dynamically
+ * and only on their tiers — a tier-1 run never loads a module that can reach the
+ * wire. Transient failures (dropped connections, 429/5xx) are retried with backoff
+ * there, because a paid run must not die after its earlier calls were billed. The
+ * library under `src/` cannot reach any of this; bench/ sits outside the
+ * zero-network guard's walk and outside the published tarball, and must stay there.
  *
  * Zero dependencies: `node:` builtins plus the built `dist/` of this package.
  */
@@ -34,11 +41,14 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
+  abRowNote,
   appendResults,
   CORPUS_REF_FORMAT,
   corpusRefMismatch,
+  parseBenchArgs,
   renderTable,
   resultRow,
+  shownToModel,
   tier3Aggregate,
   tier3RowNote,
   tier3Verdict,
@@ -62,17 +72,21 @@ Units mean exactly what they say: \`bytes\` is UTF-8 bytes of the input and the
 smelted output; \`tokens\` is Anthropic's \`/v1/messages/count_tokens\` for the text
 as a single user message on the named model (tier 2); \`elisions retrieved\` is
 distinct elisions the named model asked back via \`smelt_retrieve\` out of the
-distinct elisions stored (tier 3), where retrieving everything is a LOSS. Nothing
-here is extrapolated, rounded up, or converted between units.`;
+distinct elisions stored (tier 3), where retrieving everything is a LOSS; \`A/B
+judged\` is tier 4, whose input column is the raw arm's summed input tokens and
+output column the smelted arm's, with the verdict — a named model's opinion, logged
+in \`bench/ab-log/\` — in the note. Nothing here is extrapolated, rounded up, or
+converted between units.`;
 
 function fail(message) {
   process.stderr.write(`bench: ${message}\n`);
   process.exit(1);
 }
 
-const args = new Set(process.argv.slice(2));
-const wantTier3 = args.delete('--tier3');
-if (args.size > 0) fail(`unknown arguments: ${[...args].join(' ')} (only --tier3 is accepted)`);
+const { wantTier3, wantTier4, unknown } = parseBenchArgs(process.argv.slice(2));
+if (unknown.length > 0) {
+  fail(`unknown arguments: ${unknown.join(' ')} (only --tier3 and --tier4 are accepted)`);
+}
 
 if (!existsSync(distEntry)) {
   fail('dist/ is missing — run `pnpm build` first. The harness measures the built library.');
@@ -182,7 +196,7 @@ for (const benchCase of Array.isArray(manifest?.cases) ? manifest.cases : []) {
 const problems = validateCases(manifest, (file) => existsSync(join(benchDir, file)));
 if (problems.length > 0) fail(`cases.json is invalid:\n  ${problems.join('\n  ')}`);
 
-const { createSmelter } = await import(distEntry);
+const { createSmelter, formatReport } = await import(distEntry);
 const date = new Date().toISOString().slice(0, 10);
 const rows = [];
 const tiersRun = [];
@@ -196,7 +210,19 @@ async function smeltCase(benchCase) {
     focus: benchCase.focus,
     budgetBytes: benchCase.budgetBytes,
   });
-  return { smelter, text, result };
+  // What a model actually receives from `smelt_file`: the text, then the report —
+  // the elision index (rule, lines, bytes, hash, explanation, and the collapsed
+  // declarations' names) the product has always returned beside the payload.
+  const shown = shownToModel({
+    smeltedText: result.text,
+    report: formatReport({
+      result,
+      source: benchCase.path,
+      budgetBytes: benchCase.budgetBytes,
+      inputText: text,
+    }),
+  });
+  return { smelter, text, result, shown };
 }
 
 const fingerprint = (result) =>
@@ -276,13 +302,13 @@ if (wantTier3) {
   const completed = [];
   let truncatedCount = 0;
   for (const benchCase of manifest.cases) {
-    const { smelter, result } = await smeltCase(benchCase);
+    const { smelter, shown } = await smeltCase(benchCase);
     const log = await measureExpansion({
       apiKey,
       model,
       benchCase,
       smelter,
-      smeltedText: result.text,
+      smeltedText: shown,
     });
     writeFileSync(join(logDir, `${benchCase.id}.json`), `${JSON.stringify(log, null, 2)}\n`);
     const verdict = tier3Verdict(log.stats);
@@ -329,6 +355,51 @@ if (wantTier3) {
     }),
   );
   process.stderr.write(`bench: tier 3 retrieval logs written to ${logDir} — commit them.\n`);
+}
+
+// -- tier 4: answer-quality A/B, only with a key AND the explicit flag ------------
+
+if (wantTier4) {
+  if (apiKey === undefined || apiKey === '') fail('--tier4 needs ANTHROPIC_API_KEY.');
+  tiersRun.push('4');
+  const model = process.env.SMELT_BENCH_MODEL ?? 'claude-opus-5';
+  const { measureAb } = await import('./tier4.mjs');
+  const logDir = join(benchDir, 'ab-log');
+  mkdirSync(logDir, { recursive: true });
+  for (const [index, benchCase] of manifest.cases.entries()) {
+    if (typeof benchCase.abQuestion !== 'string' || benchCase.abQuestion.length === 0) {
+      fail(
+        `${benchCase.id}: tier 4 needs an abQuestion — a case without an answerable ` +
+          'question cannot be measured for answer quality. Add one to cases.json.',
+      );
+    }
+    const { smelter, text, shown } = await smeltCase(benchCase);
+    const { log, verdict, rawUsage, smeltedUsage, retrieves, truncated } = await measureAb({
+      apiKey,
+      model,
+      benchCase,
+      rawText: text,
+      smeltedText: shown,
+      smelter,
+      index,
+    });
+    writeFileSync(join(logDir, `${benchCase.id}.json`), `${JSON.stringify(log, null, 2)}\n`);
+    rows.push(
+      resultRow({
+        caseId: benchCase.id,
+        tier: 4,
+        date,
+        corpusCommit,
+        model,
+        unit: 'A/B judged',
+        input: rawUsage.input_tokens,
+        output: smeltedUsage.input_tokens,
+        elisions: result.elisions.length,
+        note: abRowNote({ verdict, rawUsage, smeltedUsage, retrieves, truncated }),
+      }),
+    );
+  }
+  process.stderr.write(`bench: tier 4 A/B logs written to ${logDir} — commit them.\n`);
 }
 
 // -- append to RESULTS.md -----------------------------------------------------

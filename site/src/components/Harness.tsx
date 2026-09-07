@@ -201,9 +201,10 @@ export function Harness() {
             <code className="rounded-[2px] bg-lift px-1 font-mono text-[13px] text-ash">
               @smeltjs/mcp
             </code>{' '}
-            serves the same library over stdio — four tools (
+            serves the same library over stdio — five tools (
             <span className="font-mono text-[13px]">smelt_file</span>,{' '}
             <span className="font-mono text-[13px]">smelt_retrieve</span>,{' '}
+            <span className="font-mono text-[13px]">smelt_retrieve_batch</span>,{' '}
             <span className="font-mono text-[13px]">repo_map</span>,{' '}
             <span className="font-mono text-[13px]">smelt_stats</span>) against the same
             config-discovered store the CLI uses, so shell retrievals and tool retrievals move one

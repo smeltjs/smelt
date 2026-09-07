@@ -418,8 +418,10 @@ const STRATEGY_BLURB: Readonly<Record<Strategy, string>> = {
     `(${STRUCTURAL_LANGUAGES.join(', ')}) and collapses siblings by name; refuses ` +
     `other languages rather than approximating`,
   auto:
-    'structural for those languages and lexical for everything else; the result ' +
-    'names whichever one actually ran',
+    'content kind first (json, diff), then structural for those languages and ' +
+    'lexical for everything else; the result names whichever one actually ran',
+  json: 'members and elements as units, for JSON tool results; refuses non-JSON',
+  diff: 'files and hunks as units, for unified diffs; refuses anything else',
 };
 
 async function stepStrategy(io: InitIo, ask: Asker, choices: WizardChoices): Promise<StepOutcome> {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { defaultMarker, MARKER_FORMAT_VERSION } from '@guard/apply';
+import { applyPlan, defaultMarker, MARKER_FORMAT_VERSION, markerPricing } from '@guard/apply';
 import { createRetrieveTool } from '@guard/retrieve';
 import { MemoryElisionStore } from '@guard/store';
+import type { ElisionPlan } from '@guard/types';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -135,7 +136,54 @@ describe('the marker format is frozen, and versioned in band', () => {
  * The breaks this guard must catch. `pnpm mutate` applies each one to a scratch copy
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
+describe('the elision outline stays out of band', () => {
+  // `PlannedElision.names` is the cheapest index the planner holds — the collapsed
+  // declarations' names — and it rides in the *report*, never in the marker: a marker
+  // that grew with every name would change the wire surface and its priced cost at
+  // once, and the pricing seam would then under-count every planned cut.
+  const text = 'line one\nline two\nline three\nline four\nline five\nline six\n';
+  const bare: ElisionPlan = {
+    planner: 'test/v1',
+    language: 'unknown',
+    elisions: [
+      { range: { start: 0, end: 27 }, reason: { rule: 'r', explanation: 'collapsed 3 lines' } },
+    ],
+  };
+  const outlined: ElisionPlan = {
+    ...bare,
+    elisions: [{ ...bare.elisions[0]!, names: ['alpha', 'beta', 'gamma'] }],
+  };
+
+  it('renders the same marker bytes with and without names', () => {
+    const without = applyPlan(text, bare, new MemoryElisionStore());
+    const withNames = applyPlan(text, outlined, new MemoryElisionStore());
+    expect(withNames.text).toBe(without.text);
+    expect(withNames.elisions[0]!.marker).toBe(without.elisions[0]!.marker);
+    expect(withNames.elisions[0]!.marker).not.toContain('alpha');
+  });
+
+  it('prices the same marker with and without names', () => {
+    const pricing = markerPricing('unknown');
+    const cost = pricing.costBytes(bare.elisions[0]!.reason, 27);
+    expect(cost).toBe(
+      Buffer.byteLength(
+        applyPlan(text, outlined, new MemoryElisionStore()).elisions[0]!.marker,
+        'utf8',
+      ),
+    );
+  });
+});
+
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'outline-leaks-into-the-marker',
+    file: 'apply.ts',
+    find: "    const removedText = removed.toString('utf8');",
+    replace:
+      "    const removedText = removed.toString('utf8');\n" +
+      "    reason = names === undefined ? reason : { ...reason, explanation: `${reason.explanation}: ${names.join(', ')}` };",
+    why: 'the outline spliced into the marker text — the wire surface grows with every name and its priced cost no longer matches what the planner was told, so a cut can pass profitability and grow the output',
+  },
   {
     id: 'marker-format-silent-change',
     file: 'apply.ts',

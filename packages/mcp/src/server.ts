@@ -14,37 +14,52 @@ import {
   budgetFault,
   budgetMalformed,
   budgetRequired,
+  createRetrieveBatchTool,
   createRetrieveTool,
   formatReport,
   isStrategy,
   mapTree,
   readBlob,
   readCounters,
+  readLedger,
   readTree,
   resolveStrategy,
   retrieveBytes,
+  retrieveMany,
+  RETRIEVE_BATCH_TOOL_NAME,
   RETRIEVE_TOOL_NAME,
   smeltBlob,
   SmeltError,
   STRATEGIES,
   UnknownHashError,
 } from '@smeltjs/core';
-import type { RetrieveTool, Ruling, Strategy } from '@smeltjs/core';
+import type {
+  RetrieveBatchTool,
+  RetrievedBlock,
+  RetrieveTool,
+  Ruling,
+  Strategy,
+} from '@smeltjs/core';
 
 import { resolveMcpStore } from './store.ts';
 import type { ResolvedMcpStore } from './store.ts';
 
 /**
- * The smelt MCP server: the same library the `smelt` CLI fronts, as four stdio tools.
+ * The smelt MCP server: the same library the `smelt` CLI fronts, as five stdio tools.
  *
- * The tool surface is deliberately minimal: `smelt_file`,
- * `smelt_retrieve`, `repo_map`, `smelt_stats` — the smallest set that covers cut,
- * un-cut, orient, and audit. Everything else the library offers stays a library
- * concern; a tool a model never needed is context every call pays for.
+ * The tool surface is deliberately minimal: `smelt_file`, `smelt_retrieve`,
+ * `smelt_retrieve_batch`, `repo_map`, `smelt_stats` — the smallest set that covers
+ * cut, un-cut (one hash, or several in one round trip), orient, and audit. Everything
+ * else the library offers stays a library concern; a tool a model never needed is
+ * context every call pays for. The batch tool earned its slot by measurement: tier 4
+ * of the bench showed the smelted arm's summed input exceeding the raw arm's on five
+ * of nine cases, because every one-hash retrieval is a new request that re-bills the
+ * transcript. `smelt_retrieve` is the frozen wire surface and stays byte-identical
+ * beside it.
  *
  * **Each tool is an adapter, and nothing more: validate the JSON Schema, call the op,
- * wrap the answer.** The verbs themselves are `smeltBlob`, `mapTree`, `retrieveBytes`
- * and `readCounters` in `@smeltjs/core`'s ops seam, which sits below this server and
+ * wrap the answer.** The verbs themselves are `smeltBlob`, `mapTree`, `retrieveBytes`,
+ * `retrieveMany` and `readCounters` in `@smeltjs/core`'s ops seam, which sits below this server and
  * below the `smelt` binary alike — so the two front doors cannot drift on what a verb
  * does. The laws their inputs must satisfy come from the same place (a budget is a
  * positive integer with no default; an explicit strategy beats a configured one and
@@ -82,11 +97,14 @@ export const SERVER_VERSION = (
   }
 ).version;
 
-/** Tool names. `smelt_retrieve` is the core's frozen wire-surface name, re-exported. */
+/**
+ * Tool names. `smelt_retrieve` is the core's frozen wire-surface name, re-exported;
+ * `smelt_retrieve_batch` is its additive sibling, named once in the core beside it.
+ */
 export const SMELT_FILE_TOOL_NAME = 'smelt_file';
 export const REPO_MAP_TOOL_NAME = 'repo_map';
 export const SMELT_STATS_TOOL_NAME = 'smelt_stats';
-export { RETRIEVE_TOOL_NAME } from '@smeltjs/core';
+export { RETRIEVE_BATCH_TOOL_NAME, RETRIEVE_TOOL_NAME } from '@smeltjs/core';
 
 /**
  * The `instructions` field of the initialize result. A hint, not a lever (clients MAY
@@ -102,7 +120,8 @@ export const SERVER_INSTRUCTIONS =
   '`<<smelt/v1: collapsed 3 sibling functions (2224B) — retrieve("84998967370f38bc")>>`. ' +
   'A marker\'s retrieve("hash") maps to the smelt_retrieve tool: call it with the hash to ' +
   'get the exact original bytes back — nothing is deleted, and guessing at what a marker ' +
-  'hid is never correct. repo_map renders a ranked symbol map of a directory tree inside a ' +
+  'hid is never correct; when several markers matter, smelt_retrieve_batch takes every ' +
+  'hash in one call and returns one block per hash. repo_map renders a ranked symbol map of a directory tree inside a ' +
   'byte budget, for orienting in an unfamiliar repository. Retrievals are counted; ' +
   'smelt_stats reads the counters (including the expansion rate — the fraction of hidden ' +
   'content asked for back) without changing them.';
@@ -217,6 +236,23 @@ function optionalFocus(args: Record<string, unknown>): readonly string[] | undef
   return value as readonly string[];
 }
 
+/**
+ * `hashes` for the batch tool: a non-empty array of strings, or an argument error.
+ * Non-empty is an argument law rather than an empty answer: a model that sent `[]`
+ * meant to send something, and a silent `[]` back would teach it nothing.
+ */
+function requireHashes(args: Record<string, unknown>): readonly string[] {
+  const value = args['hashes'];
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((item) => typeof item !== 'string' || item === '')
+  ) {
+    throw new ToolArgumentError('"hashes" must be a non-empty array of strings.');
+  }
+  return value as readonly string[];
+}
+
 function optionalStrategy(args: Record<string, unknown>): Strategy | undefined {
   const value = optionalString(args, 'strategy');
   if (value === undefined) return undefined;
@@ -258,7 +294,7 @@ const FOCUS_SCHEMA = {
     'Matching regions survive; everything else is first to go.',
 } as const;
 
-function buildToolList(retrieveTool: RetrieveTool): Tool[] {
+function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool): Tool[] {
   return [
     {
       name: SMELT_FILE_TOOL_NAME,
@@ -269,7 +305,9 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
         'hash that smelt_retrieve turns back into the exact original bytes. Use it ' +
         'instead of reading a large file raw; for a small file, reading raw is cheaper ' +
         'than a round trip. Returns two text blocks: the smelted text, then a report of ' +
-        'every elision (rule, lines, bytes, hash, explanation).',
+        'every elision (rule, lines, bytes, hash, explanation, and — for structural cuts — ' +
+        'the names of the declarations behind the marker, so you can decide what to ' +
+        'retrieve without retrieving it).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -287,6 +325,14 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
           },
           budgetBytes: BUDGET_SCHEMA,
           focus: FOCUS_SCHEMA,
+          producer: {
+            type: 'string',
+            description:
+              'The command whose output "text" is, e.g. "grep -C 3 foo src". When "focus" ' +
+              'is absent, the focus is derived from it exactly as the smelt hooks guard ' +
+              'derives it: a search pattern, only when the output also holds non-matching ' +
+              'lines (context flags). cat, diffs and logs name no term.',
+          },
           strategy: {
             type: 'string',
             enum: [...STRATEGIES],
@@ -294,9 +340,12 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
               '"structural" parses the file and collapses whole sibling declarations ' +
               '(refused, never approximated, for languages without a bundled grammar); ' +
               '"lexical" uses focus windows — right for logs, traces, and anything that ' +
-              'is not code; "auto" picks structural for a language smelt has a grammar ' +
-              'for and lexical for everything else, and the report names whichever one ' +
-              'ran. Defaults to the smelt.config.json strategy, else "lexical".',
+              'is not code; "json" cuts members and elements of a JSON document and ' +
+              '"diff" cuts files and hunks of a unified diff, each refusing any other ' +
+              'content; "auto" picks by content kind first (json, diff), then structural ' +
+              'for a language smelt has a grammar for and lexical for everything else, ' +
+              'and the report names whichever one ran. Defaults to the smelt.config.json ' +
+              'strategy, else "lexical".',
           },
         },
         required: ['budgetBytes'],
@@ -320,6 +369,24 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
       inputSchema: {
         ...retrieveTool.inputSchema,
         required: [...retrieveTool.inputSchema.required],
+      },
+    },
+    {
+      name: RETRIEVE_BATCH_TOOL_NAME,
+      // The core's description and schema again, for the same reason: one contract,
+      // one document. The batch tool is the single tool's additive sibling — an array
+      // where the other takes one string — and its result here is one text block per
+      // hash, each block's first line naming the hash it answers, because a batch
+      // must say which bytes belong to which marker; everything after that first line
+      // is the exact original bytes.
+      description:
+        `${batchTool.description} Returns one text block per hash, in the order asked: ` +
+        'the first line names the hash and its byte count, and everything after it is ' +
+        'the exact original bytes. A hash the store does not hold gets a block carrying ' +
+        'the refusal instead, and the other hashes still come back.',
+      inputSchema: {
+        ...batchTool.inputSchema,
+        required: [...batchTool.inputSchema.required],
       },
     },
     {
@@ -350,8 +417,9 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
         "The store's retrieval counters, verbatim: elisionsStored, bytesStored, " +
         'retrieveCalls, uniqueRetrieved, misses, expansionRate (the fraction of hidden ' +
         'blobs asked for back — the honest signal of over-pruning) and ' +
-        'allElisionsRetrieved. Reading stats is not a retrieval and never moves the ' +
-        'counters.',
+        'allElisionsRetrieved — then, as a second block, the per-rule ledger: for each ' +
+        'elision rule, how many cuts it made and how many were asked for back. Reading ' +
+        'stats is not a retrieval and never moves the counters.',
       inputSchema: {
         type: 'object',
         properties: {},
@@ -369,7 +437,7 @@ function buildToolList(retrieveTool: RetrieveTool): Tool[] {
 }
 
 /**
- * Build the server: resolve the store once, register the four tools, and wire every
+ * Build the server: resolve the store once, register the five tools, and wire every
  * refusal to a tool-level error rather than a crash.
  *
  * @throws {CliUsageError} when a `smelt.config.json` exists and is malformed — the
@@ -379,7 +447,8 @@ export function createSmeltMcpServer(options: SmeltMcpServerOptions = {}): Smelt
   const cwd = options.cwd ?? process.cwd();
   const resolved = resolveMcpStore(cwd);
   const retrieveTool = createRetrieveTool(resolved.store);
-  const tools = buildToolList(retrieveTool);
+  const batchTool = createRetrieveBatchTool(resolved.store);
+  const tools = buildToolList(retrieveTool, batchTool);
 
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -397,6 +466,8 @@ export function createSmeltMcpServer(options: SmeltMcpServerOptions = {}): Smelt
           return await handleSmeltFile(args, resolved, cwd);
         case RETRIEVE_TOOL_NAME:
           return handleRetrieve(args, resolved);
+        case RETRIEVE_BATCH_TOOL_NAME:
+          return handleRetrieveBatch(args, resolved);
         case REPO_MAP_TOOL_NAME:
           return await handleRepoMap(args, cwd);
         case SMELT_STATS_TOOL_NAME:
@@ -422,9 +493,10 @@ async function handleSmeltFile(
   resolved: ResolvedMcpStore,
   cwd: string,
 ): Promise<CallToolResult> {
-  refuseUnknownKeys(args, ['path', 'text', 'budgetBytes', 'focus', 'strategy']);
+  refuseUnknownKeys(args, ['path', 'text', 'budgetBytes', 'focus', 'producer', 'strategy']);
   const path = optionalString(args, 'path');
   const inline = optionalString(args, 'text');
+  const producer = optionalString(args, 'producer');
   if ((path === undefined) === (inline === undefined)) {
     throw new ToolArgumentError(
       'pass exactly one of "path" (a file to read) or "text" (the blob itself).',
@@ -450,13 +522,19 @@ async function handleSmeltFile(
     store: resolved.store,
     ...(path === undefined ? {} : { path }),
     ...(focus === undefined ? {} : { focus }),
+    ...(producer === undefined ? {} : { producer }),
   });
 
   // Two blocks: the payload, then the same report the CLI prints to stderr — built
   // from the values the op returned, so no total is counted twice. Over budget is
   // reported in the report (the plan came back as it came back), not dressed up as an
-  // error.
-  return { content: [text(outcome.result.text), text(formatReport(outcome))] };
+  // error. The one word this surface supplies is how it spells the producer knob.
+  return {
+    content: [
+      text(outcome.result.text),
+      text(formatReport({ ...outcome, producerKnob: 'producer' })),
+    ],
+  };
 }
 
 function handleRetrieve(args: Record<string, unknown>, resolved: ResolvedMcpStore): CallToolResult {
@@ -476,6 +554,40 @@ function handleRetrieve(args: Record<string, unknown>, resolved: ResolvedMcpStor
     }
     throw error;
   }
+}
+
+/**
+ * One block per hash, in the order asked. Each block's first line names the hash and
+ * the byte count, then the exact bytes follow — a batch has to label its answers, and
+ * the label sits on its own line so the bytes after it are verbatim. A refused hash
+ * gets its refusal in the same slot, so the model can pair every answer with the
+ * marker it came from. The result is a tool error only when *every* hash was refused:
+ * a partial answer is an answer, and the counters moved for it.
+ */
+function handleRetrieveBatch(
+  args: Record<string, unknown>,
+  resolved: ResolvedMcpStore,
+): CallToolResult {
+  refuseUnknownKeys(args, ['hashes']);
+  const hashes = requireHashes(args);
+  const blocks = retrieveMany({ store: resolved.store, hashes });
+  const hint = resolved.persistenceHint;
+  const content = blocks.map((block) => text(renderBlock(block, hint)));
+  const allRefused = blocks.every((block) => 'error' in block);
+  return allRefused ? { isError: true, content } : { content };
+}
+
+function renderBlock(block: RetrievedBlock, persistenceHint: string | undefined): string {
+  if ('text' in block) {
+    return `hash ${block.hash} (${String(Buffer.byteLength(block.text, 'utf8'))} B):\n${block.text}`;
+  }
+  const refusal = `hash ${block.hash}: ${block.error.name}: ${block.error.message}`;
+  // The same divergence `smelt_retrieve` documents: on a memory store an unknown hash
+  // is very often a hash from an earlier session, and the moment it bites is the
+  // moment to say how to get persistence.
+  return block.error instanceof UnknownHashError && persistenceHint !== undefined
+    ? `${refusal}\n\n${persistenceHint}`
+    : refusal;
 }
 
 async function handleRepoMap(args: Record<string, unknown>, cwd: string): Promise<CallToolResult> {
@@ -514,7 +626,12 @@ function handleStats(args: Record<string, unknown>, resolved: ResolvedMcpStore):
   // The uncounted read — `stats()` journals nothing, because an observer that inflated
   // its own metric would make the honest signal dishonest. The RetrieveStats goes out
   // verbatim, as JSON.
+  // The ledger as its own block beside them — the first block stays the RetrieveStats
+  // verbatim, as it always was, so a reader of one is never handed a reshaped other.
   return {
-    content: [text(JSON.stringify(readCounters({ store: resolved.store }), null, 2))],
+    content: [
+      text(JSON.stringify(readCounters({ store: resolved.store }), null, 2)),
+      text(JSON.stringify(readLedger({ store: resolved.store }) ?? [], null, 2)),
+    ],
   };
 }

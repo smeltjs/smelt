@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { markerPricing } from '@guard/apply';
 import { GrammarUnavailableError } from '@guard/errors';
 import { AUTO_PLANNER_ID, planAuto } from '@guard/plan/auto';
+import { DIFF_PLANNER_ID } from '@guard/plan/diff';
+import { JSON_PLANNER_ID } from '@guard/plan/json';
 import { LEXICAL_PLANNER_ID } from '@guard/plan/lexical';
 import { PLANNERS } from '@guard/plan/planners';
 import { STRUCTURAL_LANGUAGES, STRUCTURAL_PLANNER_ID } from '@guard/plan/structural';
@@ -61,6 +63,27 @@ describe('auto labels the planner that actually ran', () => {
     expect(plan.planner).toBe(LEXICAL_PLANNER_ID);
     expect(plan.planner).not.toBe(AUTO_PLANNER_ID);
     expect(plan.elisions.length, 'no elisions — the label check is vacuous').toBeGreaterThan(0);
+  });
+
+  it('decides on the content kind first — a diff or JSON blob never reaches lexical', async () => {
+    // A piped diff is path-less and detects `unknown`; before the kind probe it could
+    // only ever reach the lexical planner, which sees lines and not hunks. The probe
+    // is a fact (a parse, a header shape) and the plan says which planner ran.
+    const diff =
+      'diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n' +
+      `@@ -1,3 +1,3 @@\n-a\n+b\n${' filler\n'.repeat(30)}@@ -50,3 +50,3 @@\n-c\n+TypeError\n${' filler\n'.repeat(30)}`;
+    const diffPlan = await planAuto(inputFor(diff, 'unknown', ['TypeError']));
+    expect(diffPlan.planner).toBe(DIFF_PLANNER_ID);
+    expect(diffPlan.elisions.length, 'no elisions — the label check is vacuous').toBeGreaterThan(0);
+
+    const json = JSON.stringify(
+      { a: 'x'.repeat(200), b: 'y'.repeat(200), c: { TypeError: 1 } },
+      null,
+      2,
+    );
+    const jsonPlan = await planAuto(inputFor(json, 'unknown', ['TypeError']));
+    expect(jsonPlan.planner).toBe(JSON_PLANNER_ID);
+    expect(jsonPlan.elisions.length, 'no elisions — the label check is vacuous').toBeGreaterThan(0);
   });
 
   it('never lets its own id reach a plan, on any structural language', async () => {
@@ -124,6 +147,13 @@ describe('auto is a selector, not a fallback', () => {
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'auto-ignores-the-content-kind',
+    file: 'plan/auto.ts',
+    find: '  const kind = probeKind(input.text);',
+    replace: '  const kind = undefined;',
+    why: 'the selector stops asking what the bytes are — a diff and a JSON blob fall back to line windows under a lexical label, the exact silent under-service the kind probe was measured to fix (bench rows git-diff and json-tool-result)',
+  },
   {
     id: 'auto-silent-grammar-fallback',
     file: 'plan/auto.ts',

@@ -144,6 +144,50 @@ describe('--budget is required, and its absence is an error', () => {
     if (invocation.mode !== 'smelt') throw new Error('unreachable');
     expect(invocation.budgetBytes).toBe(4000);
   });
+
+  it('parses --producer as the command whose output this is', () => {
+    const invocation = parseSmeltArgs(['--budget', '4000', '--producer', 'grep -C 2 foo src']);
+    if (invocation.mode !== 'smelt') throw new Error('unreachable');
+    expect(invocation.producer).toBe('grep -C 2 foo src');
+  });
+
+  it('refuses --producer with --reconstruct, like every other flag the round trip ignores', () => {
+    expect(() => parseSmeltArgs(['--reconstruct', '--producer', 'cat x'])).toThrow(
+      /makes no sense/,
+    );
+  });
+});
+
+function contextGrep(): string {
+  const lines: string[] = [];
+  for (let file = 0; file < 12; file += 1) {
+    for (let i = 0; i < 20; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+    lines.push(`src/f${String(file)}.ts:21:  return handleRequest(path);`);
+    for (let i = 22; i < 40; i += 1) lines.push(`src/f${String(file)}.ts-${String(i)}-padding`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+describe('--producer derives the focus the way the hooks guard does', () => {
+  it('focuses on the pattern of a context grep and says so in the report', async () => {
+    const { code, stdout, stderr } = await run(
+      ['--budget', '4000', '--producer', 'grep -C 2 handleRequest src'],
+      contextGrep(),
+    );
+    expect(code).toBe(EXIT.ok);
+    expect(stdout).toContain('handleRequest(path)');
+    expect(stderr).toContain('focus  handleRequest');
+    expect(stderr).toContain('from --producer');
+  });
+
+  it('an explicit --focus wins, and the report attributes it to the caller', async () => {
+    const { stderr } = await run(
+      ['--budget', '4000', '--focus', 'f3.ts', '--producer', 'grep -C 2 handleRequest src'],
+      contextGrep(),
+    );
+    expect(stderr).toContain('focus  f3.ts');
+    expect(stderr).not.toContain('from --producer');
+  });
 });
 
 /** The report's own grouping, restated independently so a change to either shows up. */
