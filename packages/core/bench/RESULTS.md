@@ -218,3 +218,19 @@ exercise it, and a case that does is worth adding.
 | sympy-boolalg | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 114180 | 8151 | 4 | budget 10000 B, structural/v1 |
 | git-diff | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 4132 | 1516 | 7 | budget 1200 B, lexical/v1 — OVER BUDGET |
 | json-tool-result | tier 1 | 2026-09-07 | 226c91db4f95 | — | bytes | 11447 | 2996 | 4 | budget 1500 B, lexical/v1 — OVER BUDGET |
+
+## run 2026-09-07 — tier 1 — corpus 19b11585126f
+
+| case | tier | date | corpus commit | model | unit | input | output | elisions | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| large-ts-file | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 35458 | 11324 | 3 | budget 4000 B, structural/v1 — OVER BUDGET |
+| tsx-component | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 1090 | 861 | 1 | budget 700 B, structural/v1 — OVER BUDGET |
+| java-classes | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 689 | 366 | 2 | budget 400 B, structural/v1 |
+| multi-file-grep | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 6451 | 986 | 2 | budget 1500 B, lexical/v1 |
+| stack-trace | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 452 | 344 | 1 | budget 400 B, lexical/v1 |
+| build-log | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 16354 | 109 | 1 | budget 800 B, lexical/v1 |
+| django-query-utils | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 13389 | 1697 | 2 | budget 4000 B, structural/v1 |
+| sklearn-ridge | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 91082 | 31951 | 2 | budget 40000 B, structural/v1 |
+| sympy-boolalg | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 114180 | 8151 | 4 | budget 10000 B, structural/v1 |
+| git-diff | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 4132 | 4132 | 0 | budget 1200 B, diff/v1 — OVER BUDGET |
+| json-tool-result | tier 1 | 2026-09-07 | 19b11585126f | — | bytes | 11447 | 3280 | 5 | budget 1500 B, json/v1 — OVER BUDGET |

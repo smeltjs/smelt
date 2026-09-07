@@ -1,14 +1,24 @@
 import { ContentKindError, MissingMarkerPricingError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
 
-import { savingBytes } from './budget.ts';
+import { predictOutputBytes, savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
 
 export const DIFF_PLANNER_ID = 'diff/v1';
 
-/** The two rules this planner has: whole files the focus never touches, and hunks inside a file it does. */
+/**
+ * The three rules, coarsest first: whole files the focus never touches; hunks inside a
+ * file it does; and, inside a hunk it does, the line runs no match sits near.
+ */
 export const FILE_COLLAPSE_RULE = 'file-collapse';
 export const HUNK_COLLAPSE_RULE = 'hunk-collapse';
+export const HUNK_WINDOW_RULE = 'hunk-window';
+
+/** Context lines kept either side of a match inside a matched hunk, tried in order. */
+const WINDOW_LADDER: readonly number[] = [4, 3, 2, 1, 0];
+
+/** Never collapse a run inside a hunk shorter than this. */
+const MIN_RUN_LINES = 3;
 
 export interface DiffPlannerOptions {
   /** Focus matching is substring, case-insensitive by default. */
@@ -21,11 +31,14 @@ export interface DiffPlannerOptions {
  * A unified diff has a structure a line planner cannot see: files, each with a header
  * and hunks. Under a focus, a file none of whose hunks carry a term collapses whole —
  * one marker per run of such files, the outline naming their paths — and inside a file
- * that does match, the hunks that do not collapse as a run while the header and the
- * matching hunks survive verbatim. With no focus every file header is kept and each
- * file's hunks collapse to one marker, so the survivor is the diff's table of contents.
- * The lexical planner on the same input paid a marker per gap between matching lines;
- * the bench measured it over budget (`git-diff`, corpus 226c91db4f95).
+ * that does match, the hunks that do not collapse as a run while the header survives
+ * verbatim — and inside a hunk that does match, the line runs no match sits near
+ * collapse as a window (the lexical planner's move, confined to the hunk, with the same
+ * context ladder under budget pressure), so the planner never keeps more of a hunk than
+ * a line planner would. With no focus every file header is kept and each file's hunks
+ * collapse to one marker, so the survivor is the diff's table of contents. Measured on
+ * the bench's real diff (`git-diff`): every hunk mentioned the focus term, and without
+ * the window rule this planner cut nothing where lexical cut to 1516 B.
  *
  * Refuses text without a unified-diff header shape ({@link ContentKindError}).
  */
@@ -55,6 +68,8 @@ interface Hunk {
   /** The `@@ … @@` header, without any trailing function context. */
   readonly header: string;
   readonly text: string;
+  /** The body lines after the header, for the window rule. */
+  readonly lines: readonly Line[];
 }
 
 interface FileDiff {
@@ -92,9 +107,12 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
     return needles.some((needle) => haystack.includes(needle));
   };
 
-  const elisions: PlannedElision[] = [];
+  /** The file and hunk collapses — the same at every rung of the window ladder. */
+  const fixed: PlannedElision[] = [];
+  /** The hunks the focus reached, where the window rule runs. */
+  const matched: { readonly file: FileDiff; readonly hunk: Hunk }[] = [];
   const push = (candidate: PlannedElision): void => {
-    if (savingBytes(candidate, pricing) > 0) elisions.push(candidate);
+    if (savingBytes(candidate, pricing) > 0) fixed.push(candidate);
   };
 
   const collapseFiles = (run: readonly FileDiff[]): void => {
@@ -141,6 +159,7 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
       if (needles.length > 0 && matches(hunk.text)) {
         collapseHunks(file, hunkRun);
         hunkRun = [];
+        matched.push({ file, hunk });
       } else {
         hunkRun.push(hunk);
       }
@@ -149,7 +168,65 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
   }
   collapseFiles(fileRun);
 
+  // The window rule inside every matched hunk, tried with less context at each rung
+  // until the plan fits — the lexical ladder, confined to hunks. The first rung that
+  // fits wins; if none does, the tightest is returned over budget, as it came back.
+  const inputBytes = Buffer.byteLength(input.text, 'utf8');
+  const attempts = WINDOW_LADDER.map((context) => [
+    ...fixed,
+    ...matched.flatMap(({ file, hunk }) => windowsIn(file, hunk, context, matches, pricing)),
+  ]);
+  const elisions =
+    attempts.find((plan) => predictOutputBytes(inputBytes, plan, pricing) <= input.budgetBytes) ??
+    attempts[attempts.length - 1]!;
+
   return { planner: DIFF_PLANNER_ID, language: input.language, elisions };
+}
+
+/**
+ * Inside one matched hunk: keep every line within `context` of a matching line, and
+ * collapse each run of the rest that is at least {@link MIN_RUN_LINES} long and pays
+ * for its marker. The header line is never part of a run — it is what makes the
+ * survivor still read as a hunk.
+ */
+function windowsIn(
+  file: FileDiff,
+  hunk: Hunk,
+  context: number,
+  matches: (text: string) => boolean,
+  pricing: MarkerPricing,
+): readonly PlannedElision[] {
+  const lines = hunk.lines;
+  const keep: boolean[] = lines.map(() => false);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!matches(lines[i]!.text)) continue;
+    for (let j = Math.max(0, i - context); j <= Math.min(lines.length - 1, i + context); j += 1) {
+      keep[j] = true;
+    }
+  }
+  const out: PlannedElision[] = [];
+  let runStart = -1;
+  const flush = (endExclusive: number): void => {
+    if (runStart < 0) return;
+    const count = endExclusive - runStart;
+    const range = { start: lines[runStart]!.start, end: lines[endExclusive - 1]!.end };
+    runStart = -1;
+    if (count < MIN_RUN_LINES) return;
+    const candidate: PlannedElision = {
+      range,
+      reason: {
+        rule: HUNK_WINDOW_RULE,
+        explanation: `collapsed ${String(count)} lines of a hunk of ${file.path}`,
+      },
+    };
+    if (savingBytes(candidate, pricing) > 0) out.push(candidate);
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    if (keep[i] === true) flush(i);
+    else if (runStart < 0) runStart = i;
+  }
+  flush(lines.length);
+  return out;
 }
 
 function requirePricing(input: PlanInput): MarkerPricing {
@@ -213,6 +290,7 @@ function parseFiles(lines: readonly Line[]): readonly FileDiff[] {
             end: body[body.length - 1]!.end,
             header: hunkHeader(body[0]!.text),
             text: body.map((line) => line.text).join('\n'),
+            lines: body.slice(1),
           });
           hunkStart = i;
         }

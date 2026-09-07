@@ -42,12 +42,47 @@ describe('the diff planner cuts files and hunks, not lines', () => {
     expect(result.text).toContain('+++ b/x.txt');
     expect(result.text).toContain('+beta two');
     expect(result.text).not.toContain('+alpha two');
-    expect(plan.elisions).toHaveLength(1);
-    expect(plan.elisions[0]!.reason).toEqual({
-      rule: 'hunk-collapse',
-      explanation: 'collapsed 1 hunk of x.txt',
-    });
-    expect(plan.elisions[0]!.names).toEqual(['@@ -1,3 +1,3 @@']);
+    const hunkCollapses = plan.elisions.filter((e) => e.reason.rule === 'hunk-collapse');
+    expect(hunkCollapses).toHaveLength(1);
+    expect(hunkCollapses[0]!.reason.explanation).toBe('collapsed 1 hunk of x.txt');
+    expect(hunkCollapses[0]!.names).toEqual(['@@ -1,3 +1,3 @@']);
+    // The matched hunk keeps its header and the match; its filler collapses as a window.
+    expect(plan.elisions.filter((e) => e.reason.rule === 'hunk-window')).toHaveLength(1);
+    expect(result.text).toContain('@@ -40,3 +40,3 @@');
+  });
+
+  it('inside a matched hunk, lines far from any match collapse as a window — header kept', () => {
+    const oneHunk =
+      'diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n' +
+      `@@ -1,40 +1,40 @@\n${' filler line\n'.repeat(14)}-beta one\n+beta two\n context\n${' filler line\n'.repeat(14)}`;
+    const plan = planDiff(inputFor(oneHunk, ['beta'], 600));
+    const result = applyPlan(oneHunk, plan, new MemoryElisionStore());
+    expect(result.text).toContain('@@ -1,40 +1,40 @@');
+    expect(result.text).toContain('+beta two');
+    expect(plan.elisions.length).toBe(2);
+    for (const elision of plan.elisions) {
+      expect(elision.reason.rule).toBe('hunk-window');
+      expect(elision.reason.explanation).toMatch(/^collapsed \d+ lines of a hunk of x\.txt$/);
+    }
+    expect(result.outputBytes).toBeLessThan(600);
+  });
+
+  it('never leaves a real diff uncut when every hunk matches — the window rule takes over', () => {
+    // Every file and every hunk of this diff mentions parseBenchArgs; before the window
+    // rule the planner kept all 4132 bytes and cut nothing, which lexical beat.
+    const plan = planDiff(inputFor(REAL_DIFF, ['parseBenchArgs']));
+    const result = applyPlan(REAL_DIFF, plan, new MemoryElisionStore());
+    expect(plan.elisions.length).toBeGreaterThan(0);
+    expect(plan.elisions.every((e) => e.reason.rule === 'hunk-window')).toBe(true);
+    // At least a third of the bytes go; what stays is the diff's structure — every file
+    // header and every hunk header — around the matches. The lexical planner cuts
+    // further on the same bytes (1516 B at the same budget on the bench) by cutting
+    // across those headers, which is the trade this planner makes on purpose.
+    expect(result.outputBytes).toBeLessThan(REAL_DIFF.length * 0.7);
+    for (const line of REAL_DIFF.split('\n').filter((l) => /^(diff --git|@@ )/.test(l))) {
+      expect(result.text).toContain(line);
+    }
+    expect(result.text).toContain('export function parseBenchArgs(argv)');
   });
 
   it('with no focus keeps every file header and collapses each file’s hunks to one marker', () => {

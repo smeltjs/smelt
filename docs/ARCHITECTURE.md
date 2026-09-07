@@ -544,8 +544,11 @@ content kind is a different fact). Two planners sit behind the same `Planner`
 interface: `json/v1` (`src/plan/json.ts`) takes members and elements as units, collapses
 runs of unmatched siblings, descends into matched containers, and with no focus keeps
 the root as a skeleton with each container's keys on the outline; `diff/v1`
-(`src/plan/diff.ts`) takes files and hunks, collapsing whole files a focus never touches
-and, inside a matching file, the hunks that do not match. Each refuses any other content
+(`src/plan/diff.ts`) takes files and hunks, collapsing whole files a focus never touches,
+inside a matching file the hunks that do not match, and inside a matching hunk the line
+runs no match sits near — the lexical window, confined to the hunk, so it never keeps
+more of a hunk than a line planner would (the bench's real diff mentions its focus term
+in every hunk; without that third rule the planner cut nothing). Each refuses any other content
 with `ContentKindError`, for the structural planner's reason, and each labels its plan.
 The rows after the lexical ones in `bench/RESULTS.md` measure them on the same bytes.
 
