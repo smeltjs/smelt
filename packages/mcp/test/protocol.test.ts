@@ -141,7 +141,7 @@ afterAll(() => {
 });
 
 describe('the built server over real stdio', () => {
-  it('initializes, lists the four tools, and answers a tools/call', async () => {
+  it('initializes, lists the five tools, and answers a tools/call', async () => {
     const run = await drive(
       [
         INITIALIZE,

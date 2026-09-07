@@ -2,7 +2,7 @@ import { CONFIG_FILE_NAME, configuredStore, loadNearestConfig, openStore } from 
 import type { ElisionStore, Strategy } from '@smeltjs/core';
 
 /**
- * The store this server serves its four tools from, decided once at startup.
+ * The store this server serves its five tools from, decided once at startup.
  *
  * The decision is the CLI's decision, made by the CLI's own exported machinery —
  * `loadNearestConfig` walks up from `cwd` exactly as `smelt` does, `configuredStore`

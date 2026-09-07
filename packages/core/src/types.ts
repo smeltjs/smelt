@@ -311,6 +311,55 @@ export interface RetrieveTool {
   invoke(input: { readonly hash: string }): string;
 }
 
+/**
+ * One answer inside a batched retrieval: the exact bytes for a hash, or the store's
+ * own refusal for it. A batch never fails as a whole — a model that asked for
+ * eighteen blobs and typo'd one must still get the seventeen, and the one refusal
+ * must still be the store's distinct error (`UnknownHashError` vs
+ * `StoreCorruptionError`), never an empty string standing in for either.
+ */
+export type RetrievedBlock =
+  | { readonly hash: string; readonly text: string }
+  | { readonly hash: string; readonly error: Error };
+
+/**
+ * The batched sibling of {@link RetrieveTool}: N hashes in, one {@link RetrievedBlock}
+ * per hash out, in the order asked. Additive — `smelt_retrieve` is the frozen wire
+ * surface and stays byte-identical beside this.
+ *
+ * Why it exists is a measured fact, not a convenience: every tool call is a new
+ * request, and input tokens are billed per request, so a model expanding eighteen
+ * markers one call at a time re-bills its whole transcript eighteen times. One
+ * request for eighteen blocks changes what that costs without changing what the
+ * expansion rate *means* — each hit inside the batch is journalled exactly as a
+ * single call would journal it.
+ */
+export interface RetrieveBatchTool {
+  /** `'smelt_retrieve_batch'`. Stable — consumers hard-code it in prompts. */
+  readonly name: string;
+  /** Prose the consumer can put straight into a tool description. */
+  readonly description: string;
+  /** Strict-mode shaped, like {@link RetrieveTool.inputSchema}. */
+  readonly inputSchema: {
+    readonly type: 'object';
+    readonly properties: {
+      readonly hashes: {
+        readonly type: 'array';
+        readonly items: { readonly type: 'string' };
+        readonly description: string;
+      };
+    };
+    readonly required: readonly ['hashes'];
+    readonly additionalProperties: false;
+  };
+  /**
+   * One block per hash, in order. Never throws for a hash the store refuses — that
+   * refusal rides inside its block — but anything that is not the store's own
+   * refusal (an I/O failure, a bug) still propagates.
+   */
+  invoke(input: { readonly hashes: readonly string[] }): readonly RetrievedBlock[];
+}
+
 // ---------------------------------------------------------------------------
 // Pluggable stages — interfaces in v1, nothing more
 // ---------------------------------------------------------------------------

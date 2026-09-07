@@ -15,7 +15,7 @@ import {
   readTree,
   resolveStrategy,
 } from '../src/ops/inputs.ts';
-import { mapTree, readCounters, retrieveBytes, smeltBlob } from '../src/ops/verbs.ts';
+import { mapTree, readCounters, retrieveBytes, retrieveMany, smeltBlob } from '../src/ops/verbs.ts';
 
 /**
  * The operations seam, tested where it lives.
@@ -344,5 +344,74 @@ describe('retrieveBytes and readCounters', () => {
     const store = openStore({ kind: 'memory' });
     expect(() => retrieveBytes({ store, hash: 'deadbeefdeadbeef' })).toThrow(UnknownHashError);
     expect(readCounters({ store }).misses).toBe(1);
+  });
+});
+
+describe('retrieveMany — N hashes, one call, every hit counted on its own', () => {
+  async function stored(): Promise<{
+    store: ReturnType<typeof openStore>;
+    hashes: readonly string[];
+    input: string;
+  }> {
+    const store = openStore({ kind: 'memory' });
+    const input = fixtureText(900);
+    const outcome = await smeltBlob({
+      text: input,
+      source: '<text>',
+      budgetBytes: 600,
+      strategy: 'lexical',
+      store,
+      focus: ['handleRequest'],
+    });
+    const hashes = outcome.result.elisions.map((elision) => elision.hash);
+    expect(hashes.length, 'the fixture must produce at least two elisions').toBeGreaterThan(1);
+    return { store, hashes, input };
+  }
+
+  it('returns one block per hash, in the order asked, each holding the exact bytes', async () => {
+    const { store, hashes, input } = await stored();
+    const blocks = retrieveMany({ store, hashes });
+    expect(blocks.map((block) => block.hash)).toEqual(hashes);
+    for (const block of blocks) {
+      expect('text' in block, `hash ${block.hash} should have been a hit`).toBe(true);
+      if ('text' in block) {
+        expect(block.text).toBe(store.peek(block.hash));
+        expect(input).toContain(block.text);
+      }
+    }
+  });
+
+  it('moves the expansion rate exactly as N single retrievals would', async () => {
+    const { store, hashes } = await stored();
+    retrieveMany({ store, hashes });
+    const stats = readCounters({ store });
+    expect(stats.retrieveCalls).toBe(hashes.length);
+    expect(stats.uniqueRetrieved).toBe(hashes.length);
+    expect(stats.allElisionsRetrieved).toBe(true);
+  });
+
+  it('carries a refusal per hash instead of failing the batch — and counts the miss', async () => {
+    const { store, hashes } = await stored();
+    const asked = [hashes[0]!, 'deadbeefdeadbeef', hashes[1]!];
+    const blocks = retrieveMany({ store, hashes: asked });
+    expect(blocks.map((block) => block.hash)).toEqual(asked);
+    expect('text' in blocks[0]!).toBe(true);
+    expect('text' in blocks[2]!).toBe(true);
+    const missed = blocks[1]!;
+    expect('error' in missed).toBe(true);
+    if ('error' in missed) {
+      expect(missed.error).toBeInstanceOf(UnknownHashError);
+      expect(missed.error.message).toContain('no stored content for hash "deadbeefdeadbeef"');
+    }
+    const stats = readCounters({ store });
+    expect(stats.retrieveCalls).toBe(3);
+    expect(stats.misses).toBe(1);
+    expect(stats.uniqueRetrieved).toBe(2);
+  });
+
+  it('answers an empty batch with an empty list and touches no counter', () => {
+    const store = openStore({ kind: 'memory' });
+    expect(retrieveMany({ store, hashes: [] })).toEqual([]);
+    expect(readCounters({ store }).retrieveCalls).toBe(0);
   });
 });

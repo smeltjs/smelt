@@ -1,7 +1,7 @@
 {
   "name": "@smeltjs/mcp",
   "version": "0.4.0",
-  "description": "The smelt MCP server: structure-aware, reversible context optimization as four stdio tools.",
+  "description": "The smelt MCP server: structure-aware, reversible context optimization as five stdio tools.",
   "license": "Apache-2.0",
   "author": "mong-x",
   "homepage": "https://github.com/smeltjs/smelt#readme",

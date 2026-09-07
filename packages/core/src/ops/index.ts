@@ -20,7 +20,7 @@
  * So this module is the seam, below both doors:
  *
  * - **`ops/verbs.ts`** — {@link smeltBlob}, {@link mapTree}, {@link retrieveBytes},
- *   {@link readCounters}. The verbs over already-resolved inputs, returning data.
+ *   {@link retrieveMany}, {@link readCounters}. The verbs over already-resolved inputs, returning data.
  * - **`ops/inputs.ts`** — the laws an input must satisfy to *be* resolved, each
  *   stating its rule once and taking the caller's naming as an argument.
  *
@@ -50,11 +50,12 @@ export type {
   StrategySource,
   TreeNaming,
 } from './inputs.ts';
-export { mapTree, readCounters, retrieveBytes, smeltBlob } from './verbs.ts';
+export { mapTree, readCounters, retrieveBytes, retrieveMany, smeltBlob } from './verbs.ts';
 export type {
   MapTreeOp,
   ReadCountersOp,
   RetrieveBytesOp,
+  RetrieveManyOp,
   SmeltBlobOp,
   SmeltBlobOutcome,
 } from './verbs.ts';

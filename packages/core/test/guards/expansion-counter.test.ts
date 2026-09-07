@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { EXIT, runCli } from '@guard/cli/run';
 import type { CliIo } from '@guard/cli/run';
 import { createSmelter } from '@guard/index';
+import { createRetrieveBatchTool } from '@guard/retrieve';
 import { retrieveStats } from '@guard/stats';
 import type { RawRetrieveCounters } from '@guard/stats';
 import { MemoryElisionStore } from '@guard/store';
@@ -133,6 +134,32 @@ describe.each(STORES)('the expansion rate is actually counted — %s', (_name, m
     expect(smelter.stats().retrieveCalls).toBe(1);
     expect(smelter.stats().expansionRate).toBeGreaterThan(0);
     expect(smelter.tool.name).toBe('smelt_retrieve');
+  });
+
+  it('counts every hash inside a batch as its own retrieval', async () => {
+    // A batch changes what N retrievals *cost* — one round trip — and must change
+    // nothing about what they *mean*. If the batch path bypassed the counted read,
+    // a model could pull every blob back in one call while expansionRate sat at a
+    // flattering zero: the same silence the single-hash guards above refuse.
+    const store = makeStore();
+    const smelter = createSmelter({ store });
+    const text = Array.from({ length: 300 }, (_, i) => `line ${String(i)} padding padding`).join(
+      '\n',
+    );
+    const result = await smelter.smelt(text, { budgetBytes: 700 });
+    const hashes = result.elisions.map((elision) => elision.hash);
+    expect(hashes.length).toBeGreaterThan(0);
+
+    const blocks = createRetrieveBatchTool(store).invoke({
+      hashes: [...hashes, 'deadbeefdeadbeef'],
+    });
+    expect(blocks).toHaveLength(hashes.length + 1);
+    expect(store.stats()).toMatchObject({
+      retrieveCalls: hashes.length + 1,
+      uniqueRetrieved: hashes.length,
+      misses: 1,
+      allElisionsRetrieved: true,
+    });
   });
 
   /**
@@ -324,6 +351,13 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    expansionRate: raw.elisionsStored === 0 ? 0 : raw.uniqueRetrieved / raw.elisionsStored,',
     replace: '    expansionRate: 0,',
     why: 'the one shared derivation of the honest signal wired flat — every store now reports a flattering zero at once, and no per-store copy of the arithmetic exists to disagree',
+  },
+  {
+    id: 'batch-retrieve-not-counted',
+    file: 'retrieve.ts',
+    find: '      return { hash, text: store.retrieve(hash) };',
+    replace: "      return { hash, text: store.peek(hash) ?? '' };",
+    why: 'the batch path reverted to the uncounted peek() — a model could expand every marker in one call while expansionRate sat at a flattering zero, the exact silence the single-hash guard refuses',
   },
   {
     id: 'cli-retrieve-not-counted',

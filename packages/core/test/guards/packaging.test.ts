@@ -3,7 +3,12 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createRetrieveTool, RETRIEVE_TOOL_NAME } from '@guard/retrieve';
+import {
+  createRetrieveBatchTool,
+  createRetrieveTool,
+  RETRIEVE_BATCH_TOOL_NAME,
+  RETRIEVE_TOOL_NAME,
+} from '@guard/retrieve';
 import { MemoryElisionStore } from '@guard/store';
 
 import {
@@ -219,7 +224,40 @@ describe(`the ${RETRIEVE_TOOL_NAME} schema is registrable under strict structure
   });
 });
 
+describe(`the ${RETRIEVE_BATCH_TOOL_NAME} schema is registrable under strict structured outputs`, () => {
+  const tool = createRetrieveBatchTool(new MemoryElisionStore());
+
+  it('states additionalProperties: false and requires every property', () => {
+    expect(strictModeViolations(tool.inputSchema, RETRIEVE_BATCH_TOOL_NAME).join('\n')).toBe('');
+  });
+
+  it('is a sibling of the frozen tool, not a rename of it', () => {
+    // The wire-surface promise covers `smelt_retrieve`'s name and behaviour. The batch
+    // tool is additive: a new name, an array where the other takes one string, and the
+    // frozen tool untouched beside it. A batch tool that *replaced* the single one
+    // would break every marker's `retrieve("hash")` at once.
+    expect(tool.name).toBe('smelt_retrieve_batch');
+    expect(createRetrieveTool(new MemoryElisionStore()).name).toBe('smelt_retrieve');
+    expect(Object.keys(tool.inputSchema.properties)).toEqual(['hashes']);
+    expect(tool.inputSchema.required).toEqual(['hashes']);
+  });
+});
+
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'retrieve-batch-schema-open-to-extra-keys',
+    file: 'retrieve.ts',
+    find: "      required: ['hashes'],\n      additionalProperties: false,",
+    replace: "      required: ['hashes'],",
+    why: 'the batch tool schema losing additionalProperties — the strict-mode registrability the single tool earned would be lost by its sibling, and nothing else reads the schema for it',
+  },
+  {
+    id: 'retrieve-batch-renames-the-frozen-tool',
+    file: 'retrieve.ts',
+    find: "export const RETRIEVE_TOOL_NAME = 'smelt_retrieve';",
+    replace: "export const RETRIEVE_TOOL_NAME = 'smelt_retrieve_batch';",
+    why: 'the frozen tool\'s name changed to the batch name — every marker\'s retrieve("hash") now points at a tool taking an array, and the wire-surface freeze is broken by an addition',
+  },
   {
     id: 'retrieve-schema-open-to-extra-keys',
     file: 'retrieve.ts',

@@ -974,8 +974,9 @@ and linted by the command it tests.
 
 ### The MCP server
 
-[`@smeltjs/mcp`](../packages/mcp/) serves the same library as a stdio MCP server — four
-tools (`smelt_file`, `smelt_retrieve`, `repo_map`, `smelt_stats`) over the same
+[`@smeltjs/mcp`](../packages/mcp/) serves the same library as a stdio MCP server — five
+tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
+`smelt_stats`) over the same
 `smelt.config.json`-discovered store the CLI uses, so a marker minted anywhere can be
 cashed in anywhere and one set of counters moves. Its stdio-local guarantee — the SDK's
 HTTP transports never enter the import graph — is guard-enforced in its own package.

@@ -46,7 +46,12 @@ export {
   StructuralPlanner,
 } from './plan/structural.ts';
 export type { StructuralLanguage, StructuralPlannerOptions } from './plan/structural.ts';
-export { createRetrieveTool, RETRIEVE_TOOL_NAME } from './retrieve.ts';
+export {
+  createRetrieveBatchTool,
+  createRetrieveTool,
+  RETRIEVE_BATCH_TOOL_NAME,
+  RETRIEVE_TOOL_NAME,
+} from './retrieve.ts';
 export { unconfiguredDistillStage, unconfiguredRerankStage } from './stages.ts';
 export { MemoryElisionStore } from './store.ts';
 export {
@@ -193,6 +198,7 @@ export {
   readTree,
   resolveStrategy,
   retrieveBytes,
+  retrieveMany,
   smeltBlob,
 } from './ops/index.ts';
 export type {
@@ -202,6 +208,7 @@ export type {
   ReadCountersOp,
   ResolvedStrategy,
   RetrieveBytesOp,
+  RetrieveManyOp,
   Ruling,
   SmeltBlobOp,
   SmeltBlobOutcome,

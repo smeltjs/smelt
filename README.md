@@ -342,8 +342,9 @@ that teaches `smelt retrieve` after a deny.
 
 ### As an MCP server
 
-[`@smeltjs/mcp`](packages/mcp/) serves the same library as a stdio MCP server — four
-tools (`smelt_file`, `smelt_retrieve`, `repo_map`, `smelt_stats`) over the same
+[`@smeltjs/mcp`](packages/mcp/) serves the same library as a stdio MCP server — five
+tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
+`smelt_stats`) over the same
 `smelt.config.json`-discovered store the CLI uses, so `smelt retrieve <hash>` from a
 shell and the model's `smelt_retrieve` hit one store and move one set of counters:
 
