@@ -36,6 +36,8 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
 const MAX_ROUNDS = 16;
 
+import { postJson } from './net.mjs';
+
 /**
  * Runs one case against a real model and returns its retrieval log.
  *
@@ -134,18 +136,13 @@ function invokeTool(tool, block) {
 }
 
 async function request({ apiKey, model, tools, messages }) {
-  const response = await fetch(API_URL, {
-    method: 'POST',
+  return postJson({
+    url: API_URL,
     headers: {
       'content-type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': API_VERSION,
     },
-    body: JSON.stringify({ model, max_tokens: 4096, tools, messages }),
+    body: { model, max_tokens: 4096, tools, messages },
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`messages: HTTP ${String(response.status)} — ${body}`);
-  }
-  return response.json();
 }

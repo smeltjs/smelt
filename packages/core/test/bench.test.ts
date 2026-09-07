@@ -730,6 +730,148 @@ describe('the runner argv (pure half)', () => {
   });
 });
 
+/** Zero backoff — the retry tests exercise policy, not patience. */
+const instant = () => 0;
+
+/** A failed HTTP response carrying `status` and a readable body. */
+function statusResponse(status: number) {
+  return {
+    ok: false,
+    status,
+    json: () => Promise.reject(new Error('unused')),
+    text: () => Promise.resolve(`body of ${String(status)}`),
+  };
+}
+
+/** A successful response resolving to `value`. */
+function okResponse(value: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(value),
+    text: () => Promise.resolve(''),
+  };
+}
+
+describe('the shared transport (net.mjs — retry policy, offline and instant)', () => {
+  interface NetModule {
+    postJson(input: {
+      url: string;
+      headers: Record<string, string>;
+      body: unknown;
+      fetchImpl?: (
+        url: unknown,
+        init: unknown,
+      ) => Promise<{
+        ok: boolean;
+        status: number;
+        json: () => Promise<unknown>;
+        text: () => Promise<string>;
+      }>;
+      attempts?: number;
+      backoffMs?: (attempt: number) => number;
+      onRetry?: (attempt: number, error: Error) => void;
+    }): Promise<unknown>;
+  }
+
+  let postJson: NetModule['postJson'];
+  beforeAll(async () => {
+    const net = (await import(
+      pathToFileURL(join(benchDir, 'net.mjs')).href
+    )) as unknown as NetModule;
+    postJson = net.postJson;
+  });
+
+  it('rides out transient transport failures — the dropped-TLS-record class', async () => {
+    const seen: string[] = [];
+    const retries: number[] = [];
+    const result = await postJson({
+      url: 'https://example.invalid',
+      headers: {},
+      body: { a: 1 },
+      fetchImpl: async () => {
+        seen.push('call');
+        if (seen.length < 3)
+          throw new TypeError('fetch failed', { cause: new Error('bad record mac') });
+        return okResponse({ input_tokens: 7 });
+      },
+      backoffMs: instant,
+      onRetry: (attempt, error) => {
+        retries.push(attempt);
+        void error;
+      },
+    });
+    expect(result).toEqual({ input_tokens: 7 });
+    expect(seen).toHaveLength(3);
+    expect(retries).toEqual([1, 2]);
+  });
+
+  it('retries the provider transient statuses (429, 5xx) and not the fatal ones', async () => {
+    for (const [statuses, shouldThrow, calls] of [
+      [[429, 500, 200], false, 3],
+      [[500, 503, 529, 200], false, 4],
+      [[400], true, 1],
+      [[404], true, 1],
+    ] as const) {
+      let call = 0;
+      const attempt = async () => {
+        void shouldThrow;
+        const status = statuses[Math.min(call, statuses.length - 1)]!;
+        call += 1;
+        return status === 200 ? okResponse({ ok: true }) : statusResponse(status);
+      };
+      const run = postJson({
+        url: 'u',
+        headers: {},
+        body: {},
+        fetchImpl: async () => attempt(),
+        backoffMs: instant,
+      });
+      if (shouldThrow) {
+        await expect(run).rejects.toThrow(/HTTP 4\d\d/);
+      } else {
+        await expect(run).resolves.toEqual({ ok: true });
+      }
+      expect(call, `statuses ${statuses.join(',')}`).toBe(calls);
+    }
+  });
+
+  it('gives up after the attempt budget and raises the last transient failure', async () => {
+    let call = 0;
+    await expect(
+      postJson({
+        url: 'u',
+        headers: {},
+        body: {},
+        fetchImpl: async () => {
+          call += 1;
+          return statusResponse(529);
+        },
+        attempts: 3,
+        backoffMs: instant,
+      }),
+    ).rejects.toThrow(/HTTP 529/);
+    expect(call).toBe(3);
+  });
+
+  it('a transport failure names its cause — the live run\u2019s SSL alert, readable', async () => {
+    await expect(
+      postJson({
+        url: 'u',
+        headers: {},
+        body: {},
+        fetchImpl: async () => {
+          throw new TypeError('fetch failed', {
+            cause: new Error('ssl3_read_bytes: bad record mac'),
+          });
+        },
+        attempts: 2,
+        backoffMs: instant,
+      }),
+    ).rejects.toThrow(/fetch failed.*bad record mac/);
+  });
+});
+
 describe('the harness stays out of the product', () => {
   it('package.json files excludes bench/', () => {
     const packageManifest = JSON.parse(

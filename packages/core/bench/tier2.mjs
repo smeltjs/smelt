@@ -18,23 +18,19 @@ const API_URL = 'https://api.anthropic.com/v1/messages/count_tokens';
 const API_VERSION = '2023-06-01';
 
 import { countTokensRequest } from './lib.mjs';
+import { postJson } from './net.mjs';
 
 /** Counts tokens for one string on one model. Throws on any non-2xx response. */
 export async function countTokens({ apiKey, model, text }) {
-  const response = await fetch(API_URL, {
-    method: 'POST',
+  const parsed = await postJson({
+    url: API_URL,
     headers: {
       'content-type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': API_VERSION,
     },
-    body: JSON.stringify(countTokensRequest(model, text)),
+    body: countTokensRequest(model, text),
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`count_tokens: HTTP ${String(response.status)} — ${body}`);
-  }
-  const parsed = await response.json();
   if (!Number.isInteger(parsed.input_tokens)) {
     throw new Error(
       `count_tokens: response has no integer input_tokens: ${JSON.stringify(parsed)}`,

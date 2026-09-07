@@ -26,9 +26,11 @@ import { guardRoot, importSpecifiers, packageRoot, stripStringsAndComments } fro
  *     And the file contains no extrapolation vocabulary: no "up to", and never a
  *     cache-hit-rate figure — the exact unsupported claims Law 4 was written
  *     against.
- *  3. The harness touches the network only in `tier2.mjs`, `tier3.mjs` and `tier4.mjs`.
- *     Every other bench module — the runner, the pure lib, the corpus generator — must
- *     be incapable of it, so a tier-1 run is offline by construction, not by flag.
+ *  3. The harness touches the network only in the tier modules (`tier2.mjs`,
+ *     `tier3.mjs`, `tier4.mjs`) and their shared transport `net.mjs`, which those
+ *     modules import and nothing else loads. Every other bench module — the runner,
+ *     the pure lib, the corpus generator — must be incapable of it, so a tier-1 run
+ *     is offline by construction, not by flag.
  *
  * Committed artefacts are read through `guardRoot()` (with a fallback to the real
  * package for files a mutation did not copy), so `pnpm mutate` can stale one file
@@ -111,9 +113,9 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     ).not.toContain('cache hit rate');
   });
 
-  it('only tier2.mjs, tier3.mjs and tier4.mjs can reach the network', () => {
+  it('only the tier modules and their shared transport can reach the network', () => {
     const NETWORK_SHAPES = [/\bfetch\s*\(/, /node:https?\b/, /\bWebSocket\b/, /\bXMLHttpRequest\b/];
-    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs']);
+    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs', 'net.mjs']);
     const benchFiles = readdirSync(join(packageRoot(), 'bench'))
       .filter((entry) => entry.endsWith('.mjs'))
       .toSorted();
@@ -124,6 +126,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     expect(benchFiles).toContain('tier2.mjs');
     expect(benchFiles).toContain('tier3.mjs');
     expect(benchFiles).toContain('tier4.mjs');
+    expect(benchFiles).toContain('net.mjs');
 
     for (const file of benchFiles) {
       if (ALLOWED.has(file)) continue;
@@ -133,7 +136,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
         expect(
           shape.test(source),
           `bench/${file} matches ${String(shape)} — network access belongs only in ` +
-            'tier2.mjs/tier3.mjs/tier4.mjs, so that a tier-1 run is offline by construction',
+            'the tier modules and net.mjs, so that a tier-1 run is offline by construction',
         ).toBe(false);
       }
       // The shape scan above runs on STRIPPED source, so a transport imported
@@ -148,7 +151,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
       expect(
         banned,
         `bench/${file} imports a network transport — network access belongs only in ` +
-          'tier2.mjs/tier3.mjs/tier4.mjs, so that a tier-1 run is offline by construction',
+          'the tier modules and net.mjs, so that a tier-1 run is offline by construction',
       ).toEqual([]);
     }
   });
@@ -162,7 +165,7 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
     // `.` (or identifier character) exempts a match.
     const SPAWN_CALL =
       /(?<![.\w$])(?:spawnSync|spawn|execFileSync|execFile|execSync|exec|fork)\s*\(/g;
-    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs']);
+    const ALLOWED = new Set(['tier2.mjs', 'tier3.mjs', 'tier4.mjs', 'net.mjs']);
     const benchFiles = readdirSync(join(packageRoot(), 'bench'))
       .filter((entry) => entry.endsWith('.mjs'))
       .toSorted();

@@ -23,11 +23,13 @@
  * Results are appended to `bench/RESULTS.md`. Rows are append-only — a re-run on a
  * newer model is a new row, never an edit.
  *
- * Network access lives only in `tier2.mjs`, `tier3.mjs` and `tier4.mjs`, which are
- * imported dynamically and only on their tiers — a tier-1 run never loads a module
- * that can reach the wire. The library under `src/` cannot reach any of this; bench/
- * sits outside the zero-network guard's walk and outside the published tarball, and
- * must stay there.
+ * Network access lives only in the tier modules (`tier2.mjs`, `tier3.mjs`,
+ * `tier4.mjs`) and their shared retrying transport (`net.mjs`), imported dynamically
+ * and only on their tiers — a tier-1 run never loads a module that can reach the
+ * wire. Transient failures (dropped connections, 429/5xx) are retried with backoff
+ * there, because a paid run must not die after its earlier calls were billed. The
+ * library under `src/` cannot reach any of this; bench/ sits outside the
+ * zero-network guard's walk and outside the published tarball, and must stay there.
  *
  * Zero dependencies: `node:` builtins plus the built `dist/` of this package.
  */

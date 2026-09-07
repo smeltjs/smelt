@@ -41,6 +41,7 @@ const API_VERSION = '2023-06-01';
 const MAX_ROUNDS = 16;
 
 import { AB_VERDICT_TOOL, abArmPrompt, abJudgeMessages, parseAbVerdict } from './lib.mjs';
+import { postJson } from './net.mjs';
 
 /**
  * Runs one A/B case and returns its log plus the values a row needs.
@@ -210,18 +211,13 @@ function invokeTool(tool, block) {
 }
 
 async function request({ apiKey, model, tools, messages }) {
-  const response = await fetch(API_URL, {
-    method: 'POST',
+  return postJson({
+    url: API_URL,
     headers: {
       'content-type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': API_VERSION,
     },
-    body: JSON.stringify({ model, max_tokens: 4096, tools, messages }),
+    body: { model, max_tokens: 4096, tools, messages },
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`messages: HTTP ${String(response.status)} — ${body}`);
-  }
-  return response.json();
 }
