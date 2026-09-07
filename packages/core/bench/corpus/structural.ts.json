@@ -1,5 +1,5 @@
 {
   "format": "smelt-bench-corpus-ref/v1",
   "from": "packages/core/src/plan/structural.ts",
-  "sha256": "935aeeb2a8adab17763550834a546ade02982dc580a07e4d40b7e9bfb9e9ecd9"
+  "sha256": "93ffd4a514a975fdee8c207df63a8464802f5e464f97256daa8a3b360e3c0d02"
 }

@@ -1,0 +1,5 @@
+{
+  "format": "smelt-bench-corpus-ref/v1",
+  "from": "packages/core/bench/ab-log/java-classes.json",
+  "sha256": "3724f9ee47fa201db6d47cbf6e6ea4a7b9b410cfef566fb43bd9ea8a977aa1d4"
+}

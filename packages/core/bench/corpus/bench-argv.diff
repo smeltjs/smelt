@@ -1,0 +1,102 @@
+diff --git a/packages/core/bench/lib.mjs b/packages/core/bench/lib.mjs
+index 2b0bda3..b4b4498 100644
+--- a/packages/core/bench/lib.mjs
++++ b/packages/core/bench/lib.mjs
+@@ -52,6 +52,22 @@ export const FORBIDDEN_RESULT_PHRASES = ['up to', 'cache hit rate'];
+  */
+ export const BENCH_STRATEGIES = ['lexical', 'structural', 'auto'];
+ 
++/**
++ * The runner's argv: which tier flags it carries, and every argument it does not
++ * know. A bare `--` is dropped rather than refused — it is the standard
++ * end-of-options separator, and pnpm's double hop through the workspace scripts
++ * leaks it into `process.argv` verbatim (`pnpm bench -- --tier3` from the root
++ * reaches the runner as `-- --tier3`). Dropping the separator is argv convention,
++ * not leniency: unknown arguments are still refused, because a typo'd flag must
++ * never silently enable nothing.
++ */
++export function parseBenchArgs(argv) {
++  const args = new Set((argv ?? []).filter((arg) => arg !== '--'));
++  const wantTier3 = args.delete('--tier3');
++  const wantTier4 = args.delete('--tier4');
++  return { wantTier3, wantTier4, unknown: [...args] };
++}
++
+ /**
+  * Validates the parsed `cases.json`. `fileExists` is injected so this stays pure.
+  * Returns the list of problems — an empty array is a pass.
+diff --git a/packages/core/bench/run.mjs b/packages/core/bench/run.mjs
+index de0affa..c34eea6 100644
+--- a/packages/core/bench/run.mjs
++++ b/packages/core/bench/run.mjs
+@@ -43,6 +43,7 @@ import {
+   appendResults,
+   CORPUS_REF_FORMAT,
+   corpusRefMismatch,
++  parseBenchArgs,
+   renderTable,
+   resultRow,
+   tier3Aggregate,
+@@ -79,11 +80,9 @@ function fail(message) {
+   process.exit(1);
+ }
+ 
+-const args = new Set(process.argv.slice(2));
+-const wantTier3 = args.delete('--tier3');
+-const wantTier4 = args.delete('--tier4');
+-if (args.size > 0) {
+-  fail(`unknown arguments: ${[...args].join(' ')} (only --tier3 and --tier4 are accepted)`);
++const { wantTier3, wantTier4, unknown } = parseBenchArgs(process.argv.slice(2));
++if (unknown.length > 0) {
++  fail(`unknown arguments: ${unknown.join(' ')} (only --tier3 and --tier4 are accepted)`);
+ }
+ 
+ if (!existsSync(distEntry)) {
+diff --git a/packages/core/test/bench.test.ts b/packages/core/test/bench.test.ts
+index adb6d95..f33414b 100644
+--- a/packages/core/test/bench.test.ts
++++ b/packages/core/test/bench.test.ts
+@@ -52,6 +52,11 @@ interface BenchLib {
+   }): string;
+   CORPUS_REF_FORMAT: string;
+   BENCH_STRATEGIES: readonly string[];
++  parseBenchArgs(argv: readonly string[]): {
++    wantTier3: boolean;
++    wantTier4: boolean;
++    unknown: readonly string[];
++  };
+   AB_VERDICT_TOOL: { name: string; input_schema: Record<string, unknown> };
+   abArmPrompt(input: { question: string; text: string; toolName?: string }): string;
+   abJudgeMessages(input: {
+@@ -697,6 +702,31 @@ describe('the tier-4 A/B measurement (transport-injected)', () => {
+   });
+ });
+ 
++describe('the runner argv (pure half)', () => {
++  it('reads the tier flags and refuses every argument it does not know', () => {
++    expect(lib.parseBenchArgs([])).toEqual({ wantTier3: false, wantTier4: false, unknown: [] });
++    expect(lib.parseBenchArgs(['--tier3'])).toEqual({
++      wantTier3: true,
++      wantTier4: false,
++      unknown: [],
++    });
++    expect(lib.parseBenchArgs(['--tier4']).wantTier4).toBe(true);
++    expect(lib.parseBenchArgs(['--vibes']).unknown).toEqual(['--vibes']);
++  });
++
++  it("drops a bare '--' — the separator pnpm leaks through the workspace double hop", () => {
++    // The regression: `pnpm bench -- --tier3 --tier4` from the repository root
++    // reaches run.mjs as `-- --tier3 --tier4`, and the literal separator used to
++    // be refused as an unknown argument. It is argv convention, not an argument.
++    expect(lib.parseBenchArgs(['--', '--tier3', '--tier4'])).toEqual({
++      wantTier3: true,
++      wantTier4: true,
++      unknown: [],
++    });
++    expect(lib.parseBenchArgs(['--']).unknown).toEqual([]);
++  });
++});
++
+ describe('the harness stays out of the product', () => {
+   it('package.json files excludes bench/', () => {
+     const packageManifest = JSON.parse(
