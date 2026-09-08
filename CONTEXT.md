@@ -22,12 +22,25 @@ codebase-design glossary.
   removing any bytes itself. `applyPlan` is the only byte-remover.
 - **Focus**: the caller's statement of what the task is actually about; focus-matched
   regions survive planning.
-- **Store**: content-addressed home of elided bytes (`ElisionStore`). No eviction: a
-  store that can forget turns "reversible" into "reversible, usually".
+- **Store**: content-addressed home of elided bytes (`ElisionStore`). No _automatic_
+  eviction: a store that can forget by itself turns "reversible" into "reversible,
+  usually". The one deletion is **Prune**, below, and it is a verb the user types.
 - **Expansion rate**: retrieved-back fraction of what smelt hid — the honest signal of
   over-pruning. Measured, never thresholded. The marker's `retrieve("hash")` is a real
   command — `smelt retrieve <hash>` — so the rate moves (and is measurable, via
   `smelt stats`) from pure shell, not only through the `smelt_retrieve` tool.
+- **Prune** (`smelt store prune`): the only eviction in smelt, and the reason a store
+  that deletes can still satisfy Law 3. Explicit (a user typed the verb; nothing prunes
+  on a timer, a size cap, or when a store is opened), bounded by a cut-off that user
+  named (`--older-than <n>d|h|w`, no default), journalled **before** the bytes go
+  (`evict "<hash>" "<date>"`, `fsync`ed, then the unlink), and counted: `elisionsStored`
+  keeps counting what was evicted, so pruning cannot raise the **Expansion rate** by
+  shrinking its own denominator, and the **Ledger** is untouched — the rule did make
+  that cut. Only `bytesStored` falls, because only `bytesStored` measures the disk. A
+  later `retrieve` of an evicted hash raises **`EvictedHashError`**, never
+  `UnknownHashError`: "you pruned it on <date>" and "it was never elided" are different
+  answers, and the second one would be false. `has()` answers `false` — a boolean has no
+  room for a reason. _Avoid_: eviction policy, GC, LRU, TTL.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by

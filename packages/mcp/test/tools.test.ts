@@ -1,10 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { budgetMalformed, budgetRequired, CliUsageError, readTree } from '@smeltjs/core';
+import {
+  budgetMalformed,
+  budgetRequired,
+  CliUsageError,
+  DirectoryElisionStore,
+  readTree,
+} from '@smeltjs/core';
 import { strictModeViolations, type ToolSchema } from '@smelt/guard-kit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -552,6 +558,40 @@ describe('smelt_retrieve', () => {
     expect(result.texts[0]).toContain('no stored content for hash "deadbeefdeadbeef"');
     // On a directory store the memory-store hint would be a non-sequitur.
     expect(result.texts[0]).not.toContain('memory store dies');
+  });
+
+  it('renders an evicted hash as the same shape as an unknown one, with its own text', async () => {
+    // The `smelt_retrieve` contract must not move: a refusal is a tool-level error
+    // with a text block, whichever refusal it is. What changes is the sentence — an
+    // evicted hash is one a user pruned, and telling the model it was "never elided"
+    // would be a false statement it cannot check.
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, 'smelt.config.json'),
+      `${JSON.stringify({
+        smeltConfig: 1,
+        store: { kind: 'directory', path: '.smelt-store' },
+      })}\n`,
+    );
+    const storePath = join(cwd, '.smelt-store');
+    const store = new DirectoryElisionStore(storePath);
+    const hash = store.put('bytes an operator pruned between sessions');
+    const ancient = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(join(storePath, 'blobs', hash), ancient, ancient);
+    store.prune({ olderThan: new Date(), keepRetrieved: false, dryRun: false });
+
+    const client = await connect(cwd);
+    const result = await call(client, RETRIEVE_TOOL_NAME, { hash });
+    expect(result.isError).toBe(true);
+    expect(result.texts).toHaveLength(1);
+    expect(result.texts[0]).toContain('EvictedHashError');
+    expect(result.texts[0]).toContain('smelt store prune');
+    expect(result.texts[0]).not.toContain('UnknownHashError');
+
+    // And the batch tool renders it in the same slot, for the same reason.
+    const batch = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes: [hash] });
+    expect(batch.isError).toBe(true);
+    expect(batch.texts[0]).toContain('EvictedHashError');
   });
 
   it('says how to get persistence when a memory store cannot hold earlier sessions', async () => {

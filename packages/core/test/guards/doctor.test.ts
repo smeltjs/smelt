@@ -13,6 +13,7 @@ import { runDoctor } from '@guard/cli/doctor';
 import type { DoctorReceipt } from '@guard/cli/doctor';
 import { SNIPPET_END_MD, SNIPPET_START_MD } from '@guard/harness/snippet';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
+import { DirectoryElisionStore } from '@guard/store-dir';
 
 import type { GuardMutation } from './_mutations.ts';
 import { packageRoot } from './_source.ts';
@@ -279,6 +280,62 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
+  it('reports the store it found: blob count and bytes, as receipt fields', () => {
+    const cwd = scratch('store-size');
+    try {
+      const storeDir = join(cwd, SETUP_RECIPE.store.defaultDir);
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
+        })}\n`,
+      );
+      const store = new DirectoryElisionStore(storeDir);
+      store.put('one elided blob');
+      store.put('another elided blob');
+
+      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      expect(receipt.config.store.dirExists).toBe(true);
+      // Structured, and exact: the prose line is a rendering of these two integers,
+      // so an agent reading the receipt never has to parse a rounded "1.2 KB".
+      expect(receipt.config.store.blobs).toBe(2);
+      expect(receipt.config.store.bytes).toBe(
+        Buffer.byteLength('one elided blob', 'utf8') +
+          Buffer.byteLength('another elided blob', 'utf8'),
+      );
+      expect(doctor(cwd, '9.9.9', false).stdout).toContain('2 blobs');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a missing store directory without creating it — doctor never writes', () => {
+    const cwd = scratch('store-absent');
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
+        })}\n`,
+      );
+      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      // The size is absent rather than zero: "there is no store here" and "the store
+      // here is empty" are different facts, and doctor states only the one it read.
+      expect(receipt.config.store.dirExists).toBe(false);
+      expect(receipt.config.store.blobs).toBeUndefined();
+      expect(receipt.config.store.bytes).toBeUndefined();
+      // And the orphan it already reported is still true after the reading: a doctor
+      // that opened the store to size it would have created the very directory it
+      // just called missing.
+      expect(existsSync(join(cwd, SETUP_RECIPE.store.defaultDir))).toBe(false);
+      expect(receipt.orphans.join('\n')).toContain('store directory');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('doctor never writes — the tree is byte-identical after every reading', async () => {
     const cwd = scratch('readonly');
     try {
@@ -430,6 +487,16 @@ export const MUTATIONS: GuardMutation[] = [
     find: "  if (file === undefined || file.entries.length === 0) return 'wired';",
     replace: "  if (file !== undefined) return 'wired (verified)';",
     why: 'doctor reporting `wired (verified)` whatever the probe answered \u2014 which is exactly the old `wired`, the text fact that reads identically for a working install and for a shim that exits 0 with empty stdout',
+  },
+  {
+    kind: 'src',
+    id: 'doctor-authors-the-store-it-reports-on',
+    file: 'store-dir.ts',
+    find: "  const blobsDir = join(resolve(root), 'blobs');",
+    replace:
+      "  const blobsDir = join(resolve(root), 'blobs');\n" +
+      '  mkdirSync(blobsDir, { recursive: true });',
+    why: 'the read-only store reader starts creating what it reads — `smelt doctor` would author the very store directory it is reporting as missing, breaking the one promise that separates doctor from setup (ADR-0003: doctor reports, setup repairs)',
   },
   {
     kind: 'src',

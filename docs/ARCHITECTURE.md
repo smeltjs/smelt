@@ -111,6 +111,21 @@ Two design consequences worth understanding before you change them:
 - `MemoryElisionStore` has no eviction and no `clear()`. A store that can forget turns
   this law into "reversible, usually", and a `retrieve()` that fails after an eviction is
   indistinguishable to the model from a hallucinated hash.
+- **Reversible until the user prunes — and the prune is itself counted.** One global
+  store shared by every session accumulates blobs forever, so there has to be a way to
+  reclaim the disk; every way that does it quietly (a size cap, an LRU, a TTL applied on
+  open) buys the space by having smelt decide which of someone else's elisions stopped
+  mattering, at a moment they did not choose, with no record of what went. So the only
+  eviction in smelt is `smelt store prune`: a verb a user types, against a cut-off that
+  user names, which journals `evict "<hash>" "<date>"` **before** it unlinks anything.
+  Two consequences make it compatible with this law rather than an exception to it. A
+  later `retrieve` of an evicted hash throws `EvictedHashError` — "you pruned it on
+  <date>", never `UnknownHashError`'s "it was never elided" — so the model can still tell
+  a lost blob from a hallucinated hash. And the counters do not move: `elisionsStored`
+  keeps counting what was evicted, because a prune that shrank the denominator would
+  raise the expansion rate for free, and the per-rule ledger is untouched, because the
+  rule did make that cut and nobody asked for it back. Only `bytesStored` falls, because
+  only `bytesStored` measures the disk. `test/guards/store-prune.test.ts` pins all four.
 
 ### Law 4 — claim no number that has not been measured
 
@@ -168,7 +183,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/src/cache/prefix.ts`         | Cache-prefix hygiene: `findPrefixDivergence` and `detectCacheBreakers`. Pure functions; detect and warn, never rewrite.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `packages/core/src/net/policy.ts`           | Law 1, written once: forbidden transports, forbidden globals, **and** the permitted sets — so the guard is a partition, not an allowlist.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `packages/core/src/cli/args.ts`             | `node:util.parseArgs`, zero new dependencies. Splits argv, answers `--help`/`--version`, looks the verb up in `SUBCOMMANDS`, and refuses every flag that verb does not own with one generated message — no per-verb branching left.                                                                                                                                                                                                                                                                                                                                             |
-| `packages/core/src/cli/subcommands/`        | One `Subcommand` per verb — the flags it owns, its parse, its `Resolved*Run` merge, its run, its help block. `Record<Verb, Subcommand>`, so totality is a compile error; the USAGE block, the help sections and the flag refusals are derived views.                                                                                                                                                                                                                                                                                                                            |
+| `packages/core/src/cli/subcommands/`     | One `Subcommand` per verb — the flags it owns, its parse, its `Resolved*Run` merge, its run, its help block. `Record<Verb, Subcommand>`, so totality is a compile error; the USAGE block, the help sections and the flag refusals are derived views. `store.ts` is the eviction verb (`smelt store prune`) and the only thing in smelt that deletes an elision.                                                             |
 | `packages/core/src/cli/config.ts`           | `smelt.config.json`: versioned, found by walking up, defaults only, malformed is a loud usage error. Owns **both** directions — `parseConfig` and `renderConfig`, one key order — so the verbs that write the file cannot disagree about its shape.                                                                                                                                                                                                                                                                                                                             |
 | `packages/core/src/cli/report.ts`           | The stderr report. Every total is read off the `SmeltResult`: two pieces of code counting the same bytes is how a report ends up disagreeing with its own library.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `packages/core/src/cli/run.ts`              | The CLI as a function returning an exit code, so it runs in-process in tests. A lookup and a dispatch: the verb that parsed an invocation is the verb that resolves and runs it.                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -206,6 +221,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/test/guards/marker-format.test.ts` | The wire surface. The rendered marker is pinned per version: the format cannot change without the version changing, and an unknown version fails. |
 | `packages/core/test/guards/third-party.test.ts` | Attribution. Reruns the real generator and fails if the committed `THIRD-PARTY.md` differs; also proves the generator refuses an unattributed grammar. |
 | `packages/core/test/guards/persistent-store.test.ts` | Law 3 across a process boundary. A damaged blob is refused as `StoreCorruptionError`, never returned; the retrieval counters survive a restart; "we hold damaged bytes" stays distinct from "never existed". |
+| `packages/core/test/guards/store-prune.test.ts` | The one eviction Law 3 allows. `smelt store prune` evicts only what the user's cut-off reaches, a dry run deletes nothing, an evicted lookup throws `EvictedHashError` rather than claiming the hash was never elided, and `elisionsStored` keeps counting what went — so a prune cannot raise the expansion rate by shrinking its own denominator. Five mutations prove each can go red. |
 | `packages/core/test/guards/cache-hygiene.test.ts` | Cache-prefix hygiene's promise: detect and warn, never rewrite — inputs stay unmutated, no export returns a "fixed" prompt, and no cache-hit-rate figure exists anywhere in `src`. |
 | `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, a survivor that still parses in its own grammar, and the budget rung's over-budget escalation labelled by its own rule id, never silently. |
 | `packages/core/test/guards/structural-totality.test.ts` | Tests for every claimed language: each id in `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment case — claiming a language without tests goes red. |
@@ -234,6 +250,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/test/guards/marker-format.test.ts` | The wire surface. The rendered marker is pinned per version: the format cannot change without the version changing, and an unknown version fails. |
 | `packages/core/test/guards/third-party.test.ts` | Attribution. Reruns the real generator and fails if the committed `THIRD-PARTY.md` differs; also proves the generator refuses an unattributed grammar. |
 | `packages/core/test/guards/persistent-store.test.ts` | Law 3 across a process boundary. A damaged blob is refused as `StoreCorruptionError`, never returned; the retrieval counters survive a restart; "we hold damaged bytes" stays distinct from "never existed". |
+| `packages/core/test/guards/store-prune.test.ts` | The one eviction Law 3 allows. `smelt store prune` evicts only what the user's cut-off reaches, a dry run deletes nothing, an evicted lookup throws `EvictedHashError` rather than claiming the hash was never elided, and `elisionsStored` keeps counting what went — so a prune cannot raise the expansion rate by shrinking its own denominator. Five mutations prove each can go red. |
 | `packages/core/test/guards/cache-hygiene.test.ts` | Cache-prefix hygiene's promise: detect and warn, never rewrite — inputs stay unmutated, no export returns a "fixed" prompt, and no cache-hit-rate figure exists anywhere in `src`. |
 | `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, a survivor that still parses in its own grammar, and the budget rung's over-budget escalation labelled by its own rule id, never silently. |
 | `packages/core/test/guards/structural-totality.test.ts` | Tests for every claimed language: each id in `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment case — claiming a language without tests goes red. |
@@ -670,13 +687,25 @@ The properties it holds, each pinned by a guard:
 
 - The interface does not change: the reversibility and expansion-counter guards run
   against both stores.
-- Still no eviction — no cap at all, so no "evicted" error exists to need. If a size cap
-  is ever genuinely required, retrieval of an evicted hash must throw a _distinct_ error
-  that says "evicted", never `UnknownHashError` — the model must be able to tell "never
-  existed" from "we lost it". (The class doc restates this for whoever adds a cap.) The
-  same distinction already exists for damage: a blob whose bytes no longer hash to their
-  name throws `StoreCorruptionError`, never `UnknownHashError`, and reads verify bytes
-  against the hash so a torn write can never be handed back as a faithful retrieval.
+- Still no _automatic_ eviction — no cap, no LRU, no TTL, and nothing that deletes a
+  blob because a store was opened. The one eviction is `smelt store prune`, a verb (see
+  Law 3 above and `src/cli/subcommands/store.ts`): it evicts only blobs older than a
+  cut-off the user typed, `--keep-retrieved` spares the hashes the journal shows were
+  asked for back, `--dry-run` frees nothing, and each eviction is journalled before the
+  unlink so nothing goes unrecorded. Retrieval of an evicted hash therefore throws a
+  _distinct_ `EvictedHashError` naming the date, never `UnknownHashError` — the model
+  must be able to tell "never existed" from "we lost it". The same distinction already
+  exists for damage: a blob whose bytes no longer hash to their name throws
+  `StoreCorruptionError`, never `UnknownHashError`, and reads verify bytes against the
+  hash so a torn write can never be handed back as a faithful retrieval.
+- The prune's own honesty, stated once: **journal, then unlink**. The other order loses
+  bytes with no receipt, which reads back as "never elided" for an elision the user
+  themselves removed. The opposite failure — a receipt for bytes still present, left by
+  an unlink that failed — is harmless, because `retrieve()` reads the blob before it
+  reads the journal, so bytes this store is holding are always served; the failed unlink
+  is counted as _kept_ and named on `process.emitWarning`
+  (`SmeltPruneUnlinkFailure`). `readStoreSize()` beside it is the read-only half `smelt
+doctor` uses, so reporting on a store never authors one.
 - Counters survive a restart: every retrieval appends one fsynced line to an append-only
   journal, and `stats()` is a fold over it, so `expansionRate` stays meaningful across a
   session.

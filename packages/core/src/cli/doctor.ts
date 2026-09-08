@@ -243,7 +243,11 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
           ? join(dirname(configPath), parsed.store.path)
           : undefined;
       const dirExists = storeDir === undefined ? undefined : existsSync(storeDir);
-      const size = storeDir === undefined || !dirExists ? undefined : readStoreSize(storeDir);
+      // Asked unconditionally, and answered `undefined` for a directory that holds no
+      // `blobs/` — including one that is not there at all. Reading is the whole of
+      // what this call does: a doctor that opened a store to size it would author the
+      // very directory it is about to report as missing.
+      const size = storeDir === undefined ? undefined : readStoreSize(storeDir);
       config = {
         present: true,
         schemaVersion: parsed.smeltConfig,
