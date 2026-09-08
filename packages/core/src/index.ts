@@ -64,8 +64,14 @@ export {
   DIRECTORY_STORE_FORMAT,
   DIRECTORY_STORE_VERSION,
   DirectoryElisionStore,
+  readStoreSize,
 } from './store-dir.ts';
-export type { DirectoryElisionStoreOptions } from './store-dir.ts';
+export type {
+  DirectoryElisionStoreOptions,
+  PrunedBlob,
+  PruneOptions,
+  PruneReport,
+} from './store-dir.ts';
 export * from './types.ts';
 export {
   CLI_JSON_FORMAT,

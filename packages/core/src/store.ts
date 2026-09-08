@@ -13,9 +13,13 @@ import type { ElisionReason, ElisionStore, RetrieveStats, RuleLedgerEntry } from
  * implements {@link ElisionStore} over storage of its own; the interface is five
  * methods wide for exactly that reason.
  *
- * There is no `clear()` and no LRU. A store that can forget turns Law 3 into
- * "reversible, usually", and a `retrieve()` that fails after an eviction is
- * indistinguishable to the model from a hallucinated hash.
+ * There is no `clear()`, no LRU and no prune. A store that can forget turns Law 3 into
+ * "reversible, usually", and a `retrieve()` that failed after an eviction would be
+ * indistinguishable to the model from a hallucinated hash. {@link DirectoryElisionStore}
+ * is the one place that ever deletes a blob, and only because it can leave a receipt: a
+ * journalled `evict` line, and {@link EvictedHashError} at the next lookup. This store
+ * has no journal to write one in and dies with its process anyway, so eviction here
+ * would be exactly the forgetting Law 3 refuses.
  */
 export interface MemoryElisionStoreOptions {
   /**

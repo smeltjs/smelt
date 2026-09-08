@@ -61,6 +61,31 @@ export class UnknownHashError extends SmeltError {
 }
 
 /**
+ * `retrieve(hash)` was called for bytes an explicit `smelt store prune` deleted.
+ *
+ * Deliberately distinct from {@link UnknownHashError}, and the reason the prune verb
+ * could be written at all. Law 3 says every elision is reversible; a store that could
+ * forget silently would turn that into "reversible, usually", and a `retrieve()` that
+ * failed after an eviction would be indistinguishable to the model from a hallucinated
+ * hash. It is distinguishable now because the eviction left a receipt: the store
+ * journals `evict "<hash>" "<date>"` before it unlinks the blob, so a later lookup says
+ * *when* the bytes went and *what took them* rather than claiming they never existed.
+ * The three answers a lookup can give stay three: never elided
+ * ({@link UnknownHashError}), damaged ({@link StoreCorruptionError}), deliberately
+ * evicted (this).
+ */
+export class EvictedHashError extends SmeltError {
+  override readonly name = 'EvictedHashError';
+
+  constructor(hash: string, date: string) {
+    super(
+      `smelt: hash "${hash}" was evicted on ${date} by \`smelt store prune\` — the bytes ` +
+        `are gone; the elision was reversible until then`,
+    );
+  }
+}
+
+/**
  * A planner was handed a `PlanInput` without `pricing`. The type makes `pricing`
  * required, so TypeScript callers cannot get here; a JS caller can, and the honest
  * answer is this error rather than a guessed marker cost — a planner pricing markers

@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import process from 'node:process';
 
 import {
+  EvictedHashError,
   HashCollisionError,
   SmeltError,
   StoreCorruptionError,
@@ -54,6 +55,18 @@ const LOG_LINE = /^(hit|miss|corrupt) ("(?:[^"\\]|\\.)*")$/;
 const PUT_LINE = /^put ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/;
 
 /**
+ * One eviction line: `evict`, the hash, and the ISO-8601 instant the blob was
+ * unlinked — both JSON string literals, like every other field in this journal.
+ *
+ * A third pattern for the same reason there is a second: neither the counter fold nor
+ * the ledger fold matches it, so a reader that predates `evict` skips the line exactly
+ * as it already skips a `put` — the precedent `test/ledger.test.ts` pins, and the
+ * reason a directory pruned by this version still reads as the same counters and the
+ * same ledger under the previous one.
+ */
+const EVICT_LINE = /^evict ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/;
+
+/**
  * A `tmp/` entry `#writeTemp` could have written: the pid that wrote it, then a hyphen,
  * then the 16 hex characters of `randomBytes(8).toString('hex')`. `#sweepStaleTemp`
  * matches only this shape — see its doc comment for why the pid is what makes a safe
@@ -75,6 +88,100 @@ function processAlive(pid: number): boolean {
   } catch (error) {
     return (error as { code?: string }).code !== 'ESRCH';
   }
+}
+
+/**
+ * What one {@link DirectoryElisionStore.prune} run was asked to do. Every field is
+ * required and none has a default: a prune deletes bytes a caller could otherwise
+ * still retrieve, so a cut-off, a keep rule or a dry run that smelt invented would be
+ * smelt deciding what to forget.
+ */
+export interface PruneOptions {
+  /**
+   * The age cut. A blob whose mtime is strictly before this instant is a candidate;
+   * everything at or after it is kept. The caller computes the instant (the CLI turns
+   * `--older-than 30d` into one), so nothing here reads a clock to decide what is old.
+   */
+  readonly olderThan: Date;
+  /**
+   * Keep any hash the journal shows was retrieved at least once, whatever its age —
+   * `--keep-retrieved`. A blob the model has asked for once is a blob it may ask for
+   * again, and the journal already knows which those are.
+   */
+  readonly keepRetrieved: boolean;
+  /** Measure and report; unlink nothing, journal nothing. `--dry-run`. */
+  readonly dryRun: boolean;
+}
+
+/** One blob a prune evicted (or, in a dry run, would have). */
+export interface PrunedBlob {
+  readonly hash: string;
+  /** The blob file's size, and therefore what evicting it frees. */
+  readonly bytes: number;
+  /**
+   * When the blob file was last written, as ISO-8601 — the age the cut was applied to.
+   *
+   * It is the file's `mtime`, and it is named `putAt` because for a blob that is what
+   * an mtime is: this store writes a blob once, atomically, and never touches it
+   * again. It is not read from the journal, because a `put` line carries no timestamp
+   * and giving new ones one would be a fourth field on a line the current `PUT_LINE`
+   * pattern matches to end-of-line — the reader shipped today would stop recognising
+   * its own attribution, and a ledger going quiet is exactly the failure this journal's
+   * skip rule exists to prevent. The filesystem already records the fact, for every
+   * blob, whichever version of smelt wrote it.
+   */
+  readonly putAt: string;
+}
+
+/**
+ * What one prune did. Every number is counted at the moment it happened — nothing here
+ * is estimated, and a dry run reports the same fields with `dryRun: true` so the two
+ * runs can be compared field for field.
+ */
+export interface PruneReport {
+  /** Blobs the scan looked at. */
+  readonly scanned: number;
+  /** What went, in the order the scan found it. Empty for a prune that evicted nothing. */
+  readonly evicted: readonly PrunedBlob[];
+  /** Blobs left in place — too new, retrieved, or impossible to remove. */
+  readonly kept: number;
+  /** Bytes the eviction actually freed. Zero for a dry run's *effect*, never for its report. */
+  readonly bytesFreed: number;
+  /** Whether this was a measurement. `true` means nothing on disk moved. */
+  readonly dryRun: boolean;
+}
+
+/**
+ * The blob count and total bytes of a store directory, read **without opening it** —
+ * `undefined` when the directory holds no `blobs/`.
+ *
+ * It exists for `smelt doctor`, whose whole contract is that it never writes
+ * (ADR-0003). Constructing a {@link DirectoryElisionStore} to ask it for `stats()`
+ * would create `blobs/`, `tmp/` and `format.json`, so a doctor run against a
+ * misconfigured path would author the very store it was reporting was missing. This is
+ * the read-only half, and it makes exactly two syscalls per blob more than a directory
+ * listing.
+ */
+export function readStoreSize(root: string): { blobs: number; bytes: number } | undefined {
+  const blobsDir = join(resolve(root), 'blobs');
+  let entries: string[];
+  try {
+    entries = readdirSync(blobsDir);
+  } catch {
+    return undefined; // not a store directory, or not readable right now
+  }
+  let blobs = 0;
+  let bytes = 0;
+  for (const entry of entries) {
+    if (!KEY_PATTERN.test(entry)) continue; // `.DS_Store` and friends are not blobs
+    try {
+      bytes += statSync(join(blobsDir, entry)).size;
+    } catch {
+      continue; // vanished between the listing and the stat — not a blob we hold
+    }
+    blobs += 1;
+  }
+  return { blobs, bytes };
 }
 
 /** See {@link MemoryElisionStoreOptions} in `store.ts` — same escape hatch, same reason. */
@@ -100,6 +207,7 @@ export interface DirectoryElisionStoreOptions {
  *   tmp/             staging for atomic writes; never read, safe to sweep
  *   retrievals.log   append-only journal: `hit "<hash>"` | `miss "<hash>"` | `corrupt "<hash>"`
  *                    | `put "<hash>" "<rule>"` (the ledger: which rule cut what)
+ *                    | `evict "<hash>" "<date>"` (the receipt a prune leaves)
  * ```
  *
  * **Nothing lives in memory.** Every read — `stats()` included — comes off the disk, so
@@ -154,14 +262,23 @@ export interface DirectoryElisionStoreOptions {
  *   (`SmeltStaleTempDiscard`); a file whose writer might still be running is left
  *   alone rather than raced.
  *
- * ## No eviction
+ * ## No automatic eviction
  *
- * Same rule as {@link MemoryElisionStore}: no cap, no LRU, no `clear()`. A store that
- * can forget turns Law 3 into "reversible, usually". Elided text is smaller than the
- * session that produced it; if disk pressure ever forces a cap, retrieval of an evicted
- * hash must throw a distinct "evicted" error — never {@link UnknownHashError} — so the
- * model can tell "we lost it" from "never existed". Today there is no such error because
- * there is no such cap.
+ * No cap, no LRU, no TTL, no `clear()`, and nothing anywhere in smelt that deletes a
+ * blob on its own — not a smelt run, not a hook, not opening this store. A store that
+ * could forget by itself would turn Law 3 into "reversible, usually", and there is no
+ * moment at which this code is entitled to decide which of someone else's elisions
+ * stopped mattering.
+ *
+ * The one exception is {@link DirectoryElisionStore.prune}, and every clause of it is
+ * load-bearing: it runs only when a user typed `smelt store prune`, it evicts only
+ * against a cut-off that user named, it journals `evict "<hash>" "<date>"` **before**
+ * it unlinks anything, and a later lookup of an evicted hash throws
+ * {@link EvictedHashError} — never {@link UnknownHashError}. So the model can tell "you
+ * pruned it" from "it never existed", the counters can tell what was hidden from what
+ * is still held, and the eviction is as explainable and as counted as the elision was.
+ * With one global store shared by every session the blobs would otherwise accumulate
+ * forever; the answer is a verb the user runs, not a rule smelt applies.
  *
  * ## Two deliberate choices around the edges
  *
@@ -307,9 +424,19 @@ export class DirectoryElisionStore implements ElisionStore {
     return hash;
   }
 
+  /**
+   * @throws {EvictedHashError} when a `smelt store prune` deleted these bytes — the
+   *   journal's receipt, rather than the silence of `undefined`. Absence with a receipt
+   *   and absence without one are different facts, and a caller that read `undefined`
+   *   for both would report "never elided" for bytes its own user deleted.
+   */
   peek(hash: string): string | undefined {
     const content = this.#readBlob(hash);
-    if (content === undefined) return undefined;
+    if (content === undefined) {
+      const evictedAt = this.#evictedAt(hash);
+      if (evictedAt !== undefined) throw new EvictedHashError(hash, evictedAt);
+      return undefined;
+    }
     if (this.#hash(content) !== hash) throw new StoreCorruptionError(hash);
     return content;
   }
@@ -317,7 +444,15 @@ export class DirectoryElisionStore implements ElisionStore {
   retrieve(hash: string): string {
     const content = this.#readBlob(hash);
     if (content === undefined) {
+      // A miss either way, and journalled either way: the model asked for material
+      // back and did not get it, so `retrieveCalls` and `misses` move exactly as they
+      // would for a hash that was never stored. An eviction that quietly stopped
+      // counting would let a prune improve the expansion rate, which is the one number
+      // this library exists to keep honest. Only the *error* differs — because only
+      // the error is read by a human deciding what went wrong.
       this.#appendLogCounting('miss', hash);
+      const evictedAt = this.#evictedAt(hash);
+      if (evictedAt !== undefined) throw new EvictedHashError(hash, evictedAt);
       throw new UnknownHashError(hash);
     }
     if (this.#hash(content) !== hash) {
@@ -345,22 +480,45 @@ export class DirectoryElisionStore implements ElisionStore {
    * number this library exists to keep honest. So no journal line is written here, not
    * even for the corrupt case — `retrieve()` journals that when the model asks.
    *
+   * An **evicted** hash answers `false`, not an error. `has()` asks one question — can
+   * the next `retrieve` return bytes? — and for a pruned hash the answer is no, the
+   * same no a hash that was never stored gets, because in both cases this store holds
+   * nothing. The distinction between them is a *reason*, and a reason is what
+   * `retrieve()` and `peek()` are for; a boolean has no room to carry one, and a
+   * consumer that checked first and then never retrieved would never be told it.
+   *
    * @throws {StoreCorruptionError} when the stored bytes do not hash to their name.
    */
   has(hash: string): boolean {
-    return this.peek(hash) !== undefined;
+    try {
+      return this.peek(hash) !== undefined;
+    } catch (error) {
+      if (error instanceof EvictedHashError) return false;
+      throw error;
+    }
   }
 
   /**
    * The five directly-observed counts, every one read off the disk — a scan of
    * `blobs/` plus a fold over `retrievals.log`. See {@link RawRetrieveCounters}; the
    * derived half of the stats comes from the shared `retrieveStats()`, never here.
+   *
+   * **A prune moves `bytesStored` and nothing else.** `elisionsStored` is *distinct
+   * blobs put into this store*, so an evicted hash still counts: the blobs on disk,
+   * plus every hash the journal says was evicted and is not back on disk. Counting only
+   * what is left would let a prune raise the expansion rate for free — the same
+   * numerator over a smaller denominator, the metric flattering itself over bytes the
+   * user deleted — which is precisely the silent failure Law 3's counters exist to
+   * refuse. `bytesStored` is the honest exception: it measures what this directory is
+   * actually holding, so freeing disk is exactly what it should show.
    */
   rawCounters(): RawRetrieveCounters {
     let elisionsStored = 0;
     let bytesStored = 0;
+    const onDisk = new Set<string>();
     for (const entry of readdirSync(this.#blobsDir)) {
       if (!KEY_PATTERN.test(entry)) continue; // `.DS_Store` and friends are not blobs
+      onDisk.add(entry);
       elisionsStored += 1;
       bytesStored += statSync(join(this.#blobsDir, entry)).size;
     }
@@ -368,15 +526,129 @@ export class DirectoryElisionStore implements ElisionStore {
     let retrieveCalls = 0;
     let misses = 0;
     const hits = new Set<string>();
+    const evicted = new Set<string>();
     for (const line of this.#readLog().split('\n')) {
+      const evict = EVICT_LINE.exec(line);
+      if (evict !== null) {
+        evicted.add(JSON.parse(evict[1]!) as string);
+        continue;
+      }
       const match = LOG_LINE.exec(line);
-      if (match === null) continue; // a torn tail from a crash mid-append, or blank
+      if (match === null) continue; // a put line, a torn tail from a crash, or blank
       retrieveCalls += 1;
       if (match[1] === 'miss') misses += 1;
       else if (match[1] === 'hit') hits.add(JSON.parse(match[2]!) as string);
     }
+    // A hash evicted and later re-put is on disk and already counted once; counting it
+    // again here would invent an elision nobody made.
+    for (const hash of evicted) if (!onDisk.has(hash)) elisionsStored += 1;
 
     return { elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved: hits.size, misses };
+  }
+
+  /**
+   * **The only eviction in smelt**, and the only one there will be: explicit, invoked
+   * by a user through `smelt store prune`, journalled before it deletes, and reported
+   * blob by blob.
+   *
+   * The order of business is the whole design. For each blob old enough to go (and not
+   * spared by `keepRetrieved`) the `evict` line is appended and `fsync`ed **first**,
+   * and only then is the blob unlinked. The other order loses information: bytes gone
+   * with no receipt read back as {@link UnknownHashError} — "it never existed" — for an
+   * elision the user themselves deleted, which is the silent loss this whole file is
+   * built to refuse. Journalling first can only leave the opposite state, a receipt for
+   * bytes still present, and that is harmless because {@link retrieve} reads the blob
+   * before it reads the journal: bytes this store is holding are always served.
+   *
+   * A blob whose unlink fails (a read-only directory, a vanished file) is counted as
+   * **kept** and named on `process.emitWarning`, never as evicted — `bytesFreed` must
+   * be bytes that were actually freed. A later prune tries again.
+   *
+   * `dryRun` short-circuits both writes: nothing is appended, nothing is unlinked, and
+   * the report is otherwise identical, so `--dry-run` and the real thing can be
+   * compared field for field.
+   */
+  prune(options: PruneOptions): PruneReport {
+    const at = new Date().toISOString();
+    const retrieved = options.keepRetrieved ? this.#retrievedHashes() : new Set<string>();
+    const evicted: PrunedBlob[] = [];
+    let scanned = 0;
+    let kept = 0;
+    let bytesFreed = 0;
+
+    for (const entry of readdirSync(this.#blobsDir).toSorted()) {
+      if (!KEY_PATTERN.test(entry)) continue; // never this store's to delete
+      const path = join(this.#blobsDir, entry);
+      let stat;
+      try {
+        stat = statSync(path);
+      } catch {
+        continue; // vanished between the listing and the stat — nothing to scan
+      }
+      scanned += 1;
+      if (retrieved.has(entry) || stat.mtimeMs >= options.olderThan.getTime()) {
+        kept += 1;
+        continue;
+      }
+      const blob: PrunedBlob = {
+        hash: entry,
+        bytes: stat.size,
+        putAt: new Date(stat.mtimeMs).toISOString(),
+      };
+      if (options.dryRun) {
+        evicted.push(blob);
+        bytesFreed += blob.bytes;
+        continue;
+      }
+      // The receipt, durably, before the bytes go. A failure here fails the prune:
+      // deleting bytes this store could not promise to explain is the one outcome
+      // worse than not pruning at all.
+      this.#appendLog('evict', entry, at);
+      try {
+        unlinkSync(path);
+      } catch (error) {
+        kept += 1;
+        process.emitWarning(
+          `smelt: could not evict blob "${entry}" from ${this.#blobsDir} ` +
+            `(${error instanceof Error ? error.message : String(error)}). The eviction is ` +
+            `journalled but the bytes are still here, so they still retrieve; the next ` +
+            `\`smelt store prune\` will try again.`,
+          'SmeltPruneUnlinkFailure',
+        );
+        continue;
+      }
+      evicted.push(blob);
+      bytesFreed += blob.bytes;
+    }
+
+    if (evicted.length > 0 && !options.dryRun) fsyncDirBestEffort(this.#blobsDir);
+    return { scanned, evicted, kept, bytesFreed, dryRun: options.dryRun };
+  }
+
+  /** Every hash the journal shows was retrieved at least once — `--keep-retrieved`. */
+  #retrievedHashes(): ReadonlySet<string> {
+    const hits = new Set<string>();
+    for (const line of this.#readLog().split('\n')) {
+      const match = LOG_LINE.exec(line);
+      if (match !== null && match[1] === 'hit') hits.add(JSON.parse(match[2]!) as string);
+    }
+    return hits;
+  }
+
+  /**
+   * When a prune evicted this hash, or `undefined` if none did — the last such line,
+   * because a hash evicted, re-put and evicted again went most recently at the second
+   * date, and a receipt naming the earlier one would misreport how long the bytes were
+   * available. Read only on the miss path, so the common case pays nothing for it.
+   */
+  #evictedAt(hash: string): string | undefined {
+    let at: string | undefined;
+    for (const line of this.#readLog().split('\n')) {
+      const match = EVICT_LINE.exec(line);
+      if (match === null) continue;
+      if ((JSON.parse(match[1]!) as string) === hash) at = JSON.parse(match[2]!) as string;
+    }
+    return at;
   }
 
   stats(): RetrieveStats {
@@ -387,6 +659,10 @@ export class DirectoryElisionStore implements ElisionStore {
    * The per-rule ledger: a fold over the journal's `put` lines against its `hit`
    * lines, derived by the shared `ruleLedger()`. Uncounted, and read off the disk
    * like everything else here, so two processes agree.
+   *
+   * A prune does not touch it. The rule *did* make that cut, and it was *not* asked
+   * for back; deleting the row when the bytes go would erase the evidence that a rule
+   * is cutting material nobody wants, which is the one thing this ledger is for.
    */
   ledger(): readonly RuleLedgerEntry[] {
     const puts: { hash: string; rule: string }[] = [];
@@ -459,14 +735,22 @@ export class DirectoryElisionStore implements ElisionStore {
    * The record starts with its own newline so a torn tail from an earlier crash — a
    * partial record with no trailing newline — can never bleed into this one: the tear
    * stays on its own line and is skipped by `stats()`, as blank lines are.
+   *
+   * `detail` is the line's second string field where its kind has one: the rule id on a
+   * `put`, the ISO-8601 instant on an `evict`. One append path for every kind, so every
+   * line in this journal is written the same way and `fsync`ed the same way.
    */
-  #appendLog(kind: 'hit' | 'miss' | 'corrupt' | 'put', hash: string, rule?: string): void {
+  #appendLog(
+    kind: 'hit' | 'miss' | 'corrupt' | 'put' | 'evict',
+    hash: string,
+    detail?: string,
+  ): void {
     const fd = openSync(this.#logPath, 'a');
     try {
       const fields =
-        rule === undefined
+        detail === undefined
           ? [kind, JSON.stringify(hash)]
-          : [kind, JSON.stringify(hash), JSON.stringify(rule)];
+          : [kind, JSON.stringify(hash), JSON.stringify(detail)];
       const record = Buffer.from(`\n${fields.join(' ')}\n`, 'utf8');
       let written = 0;
       while (written < record.length) {
