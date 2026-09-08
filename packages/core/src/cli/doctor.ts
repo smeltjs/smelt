@@ -1,9 +1,19 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { probeHookCommand } from '../harness/hook-command.ts';
+import type { HookCommand, HookProbe } from '../harness/hook-command.ts';
+import { hasShim } from '../harness/profile.ts';
+import { harnessById } from '../harness/registry.ts';
+
 import { CONFIG_FILE_NAME, CONFIG_VERSION } from './config.ts';
 import { readInstalledState } from './installed.ts';
-import type { InstalledBlock } from './installed.ts';
+import type {
+  InstalledBlock,
+  InstalledConfig,
+  InstalledHookFile,
+  InstalledMcp,
+} from './installed.ts';
 import { CLI_NAME, EXIT } from './shell.ts';
 
 /**
@@ -17,6 +27,21 @@ import { CLI_NAME, EXIT } from './shell.ts';
  * `smelt setup`, per harness where a block is behind — and nothing more happens.
  * The exit code carries the verdict, so the other-machine loop — upgrade, doctor,
  * setup — needs no prose parsing.
+ *
+ * The verdicts are shapes, not restatements: {@link DoctorBlock} and {@link DoctorMcp}
+ * are the reader's own types plus what doctor decided, so a field added to the reading
+ * reaches the receipt without being retyped here. {@link DoctorConfig} is deliberately
+ * *not* an extension of `InstalledConfig` — it carries the two facts (present,
+ * malformed) and then a verdict about the parse (`currentSchema`, the store directory),
+ * which is doctor's own and belongs to nobody else.
+ *
+ * **The wiring is probed, not merely seen.** `wired` used to be a text fact: any file
+ * carrying an entry of ours. A shim reached through a symlink and a Homebrew keg path
+ * an upgrade deleted both leave that text intact while the guard does nothing, so
+ * doctor now runs each command it read (`harness/hook-command.ts`) against a synthetic
+ * payload in a temp directory and reports `wired (verified)`, `wired but inert` or
+ * `wired but missing`. Probing is a read — ADR-0003 holds, doctor still writes no byte
+ * of the project.
  */
 
 export interface DoctorIo {
@@ -31,20 +56,23 @@ export interface DoctorOptions {
   readonly json: boolean;
 }
 
-/** One instruction block found on disk, with the release that wrote it. */
-export interface DoctorBlock {
-  readonly file: string;
-  /** The harness profiles whose instruction file this is (often exactly one). */
-  readonly harnesses: readonly string[];
-  /** The release that wrote it, or `undefined` when it predates stamping. */
-  readonly installedBy?: string;
+/**
+ * One instruction block found on disk, with the release that wrote it and doctor's
+ * verdict on it. The reading's own shape (`InstalledBlock`) plus `status` — minus
+ * `stampable`, which is *how* the verdict is reached and not part of it.
+ */
+export type DoctorBlock = Omit<InstalledBlock, 'stampable'> & {
   readonly status: 'current' | 'behind' | 'unversioned';
-}
+};
 
-/** The config as doctor saw it. A malformed config is a finding, not a crash. */
-export interface DoctorConfig {
-  readonly present: boolean;
-  readonly malformed?: boolean;
+/**
+ * The config as doctor saw it. A malformed config is a finding, not a crash.
+ *
+ * The two facts come from the reading; everything else is the verdict — whether the
+ * schema is the one this binary speaks, and whether the store directory the config
+ * promises is actually there.
+ */
+export type DoctorConfig = Pick<InstalledConfig, 'present' | 'malformed'> & {
   readonly schemaVersion?: number;
   readonly currentSchema?: boolean;
   readonly budgetBytes?: number;
@@ -53,13 +81,26 @@ export interface DoctorConfig {
     readonly path?: string;
     readonly dirExists?: boolean;
   };
+};
+
+/** One MCP registration found (or notably absent) on disk — the reading, verbatim. */
+export type DoctorMcp = InstalledMcp;
+
+/** One hook entry doctor read back, and what running it did. */
+export interface DoctorHookEntry {
+  /** The harness's own spelling of the event: `PreToolUse`, `Stop`, `SessionStart`. */
+  readonly event: string;
+  readonly kind: HookCommand['kind'];
+  /** The script the command names, resolved against the project. */
+  readonly script?: string;
+  readonly probe: { readonly status: HookProbe['status']; readonly detail: string };
 }
 
-/** One MCP registration found (or notably absent) on disk. */
-export interface DoctorMcp {
+/** One hook file, with every command of ours in it and its probe. */
+export interface DoctorHookFile {
   readonly file: string;
-  readonly server: string;
-  readonly registered: boolean;
+  readonly harness: string;
+  readonly entries: readonly DoctorHookEntry[];
 }
 
 /** The machine receipt — `--json`. Everything doctor read, and the verdict. */
@@ -73,6 +114,12 @@ export interface DoctorReceipt {
   readonly blocks: readonly DoctorBlock[];
   readonly hookFiles: readonly string[];
   readonly mcp: readonly DoctorMcp[];
+  /**
+   * The wiring, probed — present only when there is a JSON hook file of ours to probe.
+   * Additive: `hookFiles` still carries every wired file's name, in the shape it always
+   * did, and no field of this receipt has changed spelling or meaning.
+   */
+  readonly hooks?: readonly DoctorHookFile[];
   readonly orphans: readonly string[];
   readonly repair: readonly string[];
 }
@@ -96,6 +143,13 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   const behindBlocks = blocks.filter((block) => block.status === 'behind');
   for (const block of behindBlocks) {
     repair.push(...block.harnesses.map((id) => `${CLI_NAME} setup --harness ${id}`));
+  }
+
+  // ── the wiring, probed: does the command each entry carries still do anything? ──
+  const hooks = probeHookFiles(state.hooks, io.cwd);
+  const brokenHooks = hooks.filter((file) => hookFileStatus(file) !== 'fires');
+  for (const file of brokenHooks) {
+    repair.push(`${CLI_NAME} setup --harness ${file.harness}`);
   }
 
   // ── config detail + the store-directory orphan ──
@@ -153,7 +207,8 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
 
   // ── verdict ──
   const installed = wired || state.config.present || state.mcp.some((one) => one.registered);
-  const current = installed && behindBlocks.length === 0 && orphans.length === 0;
+  const current =
+    installed && behindBlocks.length === 0 && orphans.length === 0 && brokenHooks.length === 0;
 
   say(`${CLI_NAME} doctor — binary ${io.version}, reading ${io.cwd}\n`);
   if (!installed) {
@@ -179,7 +234,9 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
         } [${block.status}] — ${block.harnesses.join(', ')}\n`,
       );
     }
-    for (const name of state.hookFiles) say(`  ${name}: wired\n`);
+    for (const name of state.hookFiles) {
+      say(`  ${name}: ${describeWiring(hooks.find((file) => file.file === name))}\n`);
+    }
     for (const one of state.mcp) {
       if (one.registered) say(`  ${one.file}: ${one.server} registered\n`);
     }
@@ -190,7 +247,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
           `installed state to it:\n` +
           [...new Set(repair)].map((command) => `  ${command}\n`).join(''),
       );
-    } else if (orphans.length > 0) {
+    } else if (orphans.length > 0 || brokenHooks.length > 0) {
       say(`\nRepair:\n${[...new Set(repair)].map((command) => `  ${command}\n`).join('')}`);
     }
     say(
@@ -210,6 +267,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       blocks,
       hookFiles: [...state.hookFiles],
       mcp: [...state.mcp],
+      ...(hooks.length === 0 ? {} : { hooks }),
       orphans,
       repair: [...new Set(repair)],
     };
@@ -222,6 +280,72 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
 function blockStatus(block: InstalledBlock, binaryVersion: string): DoctorBlock['status'] {
   if (!block.stampable) return 'unversioned';
   return block.installedBy === binaryVersion ? 'current' : 'behind';
+}
+
+/**
+ * Every hook file's entries, run.
+ *
+ * Identical commands are probed **once**: `.claude/settings.json` wires the same shim
+ * under two matchers, and spawning it twice would answer the same question twice at a
+ * process apiece. The key is the whole command, so two entries that differ at all are
+ * still two probes.
+ */
+function probeHookFiles(
+  files: readonly InstalledHookFile[],
+  cwd: string,
+): readonly DoctorHookFile[] {
+  const seen = new Map<string, HookProbe>();
+  return files.map((file) => {
+    const profile = harnessById(file.harness);
+    return {
+      file: file.file,
+      harness: file.harness,
+      entries: file.entries.map((entry) => {
+        const key = `${file.harness} ${JSON.stringify(entry.command)}`;
+        let probe = seen.get(key);
+        if (probe === undefined) {
+          probe =
+            /* v8 ignore next 3 -- unreachable: a JSON hook file's harness ships a shim */
+            profile === undefined || !hasShim(profile)
+              ? { status: 'inert', detail: `${file.harness} ships no shim to probe` }
+              : probeHookCommand(entry.command, profile, { cwd });
+          seen.set(key, probe);
+        }
+        return {
+          event: entry.event,
+          kind: entry.command.kind,
+          ...(probe.script === undefined ? {} : { script: probe.script }),
+          probe: { status: probe.status, detail: probe.detail },
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * One file's verdict, worst first: anything the probe could not find outranks anything
+ * that ran and did nothing, which outranks a file that fires. A file whose entries were
+ * all foreign (nothing of ours parsed) has nothing to say and counts as firing — doctor
+ * reports what it read, and it read no command of ours there.
+ */
+function hookFileStatus(file: DoctorHookFile): HookProbe['status'] {
+  if (file.entries.some((entry) => entry.probe.status === 'missing')) return 'missing';
+  if (file.entries.some((entry) => entry.probe.status === 'inert')) return 'inert';
+  return 'fires';
+}
+
+/**
+ * What a wired file's line says. `wired` alone is the honest answer for a file with no
+ * probe behind it — the guard-only files smelt owns whole, which carry no event table
+ * to read commands out of.
+ */
+function describeWiring(file: DoctorHookFile | undefined): string {
+  if (file === undefined || file.entries.length === 0) return 'wired';
+  const worst = file.entries.find((entry) => entry.probe.status === 'missing');
+  if (worst !== undefined) return `wired but missing — ${worst.script ?? worst.probe.detail}`;
+  const inert = file.entries.find((entry) => entry.probe.status === 'inert');
+  if (inert !== undefined) return `wired but inert — ${inert.probe.detail}`;
+  return 'wired (verified)';
 }
 
 function describeStore(config: DoctorConfig): string {

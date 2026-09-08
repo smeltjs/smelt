@@ -78,6 +78,13 @@ export const ALLOWED_NODE_BUILTINS: readonly string[] = [
   'node:process', // argv, stdin/stdout/stderr and the exit code, for the CLI
   'node:os', // homedir(), for `smelt hooks install` harness detection — reads a path, opens nothing
   'node:tty', // isatty(0) for the CLI's TTY check — a plain syscall, no stream, no socket
+  // `smelt doctor`'s hook probe, and nothing else: it runs THIS node
+  // (`process.execPath`) on a script an installed hook entry already names, to learn
+  // whether that entry still does anything. A spawn is not a transport, but it is the
+  // one builtin on this list that could be turned into one, so the ruling is narrower
+  // than the import: `test/guards/hook-command.test.ts` asserts that every spawn call
+  // under `src/` names `process.execPath` as its program, and goes red on any other.
+  'node:child_process',
 ];
 
 /** Third-party packages any smelt module may import. Keep this list boring and short. */

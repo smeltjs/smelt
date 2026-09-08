@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 import { findConfigFile, parseConfig } from './config.ts';
 import type { SmeltConfig } from './config.ts';
-import { jsonHooksContainOurs } from './hooks.ts';
+import { jsonHooksContainOurs, parseHookEntries } from '../harness/hook-command.ts';
+import type { HookEntry } from '../harness/hook-command.ts';
 import { GUARD_ONLY_FILES, HARNESS_PROFILES, JSON_HOOK_FILES } from '../harness/registry.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
 import { hasTomlEntry } from '../text/toml-edit.ts';
@@ -20,7 +21,9 @@ import { hasTomlEntry } from '../text/toml-edit.ts';
  *
  * Reads only. Nothing here writes, and nothing here decides: "behind" is a verdict
  * against a binary version (doctor's), "repair" is a policy (setup's) — the reader
- * states what is on disk and stops there.
+ * states what is on disk and stops there. The recogniser it reads *with* is
+ * `harness/hook-command.ts`, not `cli/hooks.ts`: the parser has no writer in it, so
+ * the reader no longer has to import the installer to know what an entry says.
  */
 
 /** One instruction block found on disk, with the release that wrote it. */
@@ -51,10 +54,33 @@ export interface InstalledConfig {
   readonly path?: string;
 }
 
+/**
+ * One JSON hook file of a harness's, with the commands of ours it carries — read as
+ * {@link HookEntry} values, not as text.
+ *
+ * Guard-only files (Cline's executable hook, Hermes's YAML, the opencode plugin) are
+ * deliberately absent: they are files smelt owns *whole*, not event-to-entry tables,
+ * so there is no event to name and inventing one would be a fact nobody read. They
+ * still appear in {@link InstalledState.hookFiles}, exactly as before.
+ */
+export interface InstalledHookFile {
+  readonly file: string;
+  /** The harness whose file this is — each JSON hook file belongs to exactly one. */
+  readonly harness: string;
+  readonly entries: readonly HookEntry[];
+}
+
 /** Everything the readers need, in one reading. */
 export interface InstalledState {
   readonly blocks: readonly InstalledBlock[];
+  /**
+   * The names of every hook file carrying entries of ours. A `string[]` on purpose:
+   * it is what the `smelt.doctor.v1` receipt has always carried, and a receipt field
+   * may gain a sibling but never change shape.
+   */
   readonly hookFiles: readonly string[];
+  /** The same wiring, read as commands — {@link hookFiles}'s structured sibling. */
+  readonly hooks: readonly InstalledHookFile[];
   readonly mcp: readonly InstalledMcp[];
   readonly config: InstalledConfig;
 }
@@ -94,10 +120,17 @@ export function readInstalledState(cwd: string): InstalledState {
 
   // ── hook wiring: JSON hook files and guard-only shims that carry our entries ──
   const hookFiles: string[] = [];
+  const hooks: InstalledHookFile[] = [];
   for (const name of [...JSON_HOOK_FILES, ...GUARD_ONLY_FILES]) {
     const path = join(cwd, name);
     if (!existsSync(path)) continue;
-    if (fileIsOurs(name, readFileSync(path, 'utf8'))) hookFiles.push(name);
+    const text = readFileSync(path, 'utf8');
+    if (!fileIsOurs(name, text)) continue;
+    hookFiles.push(name);
+    const harness = jsonHookFileOwner(name);
+    if (harness !== undefined) {
+      hooks.push({ file: name, harness, entries: parseHookEntries(text) });
+    }
   }
 
   // ── MCP registrations: every profile's declared step, checked on disk ──
@@ -138,7 +171,21 @@ export function readInstalledState(cwd: string): InstalledState {
     }
   }
 
-  return { blocks, hookFiles, mcp: [...mcp.values()], config };
+  return { blocks, hookFiles, hooks, mcp: [...mcp.values()], config };
+}
+
+/**
+ * The harness whose `json-hooks` step declares this file, or `undefined` when no step
+ * does (a guard-only file, which is nobody's event table). Derived from the registry:
+ * a harness that starts writing a new settings file is read back by existing.
+ */
+function jsonHookFileOwner(file: string): string | undefined {
+  for (const profile of Object.values(HARNESS_PROFILES)) {
+    for (const step of profile.install) {
+      if (step.kind === 'json-hooks' && step.file === file) return profile.id;
+    }
+  }
+  return undefined;
 }
 
 /** The server entry a profile declares, present and parseable on disk or not. */

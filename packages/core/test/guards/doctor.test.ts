@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,6 +35,16 @@ import type { GuardMutation } from './_mutations.ts';
  *   5. a clean tree reports nothing-installed and exits 0 — nothing to be behind;
  *   6. and doctor never writes: every scenario asserts the tree is byte-identical
  *      after the run.
+ *
+ * And the promise added when `wired` stopped being a text fact:
+ *
+ *   7. **a wired hook is *run*, not merely seen.** `wired` used to mean "this file
+ *      carries an entry of ours". A shim reached through a symlink, and a Homebrew keg
+ *      path the next upgrade deleted, both leave that text exactly as it was while the
+ *      guard does nothing — and empty stdout is how every harness schema spells
+ *      *allow*, so the transcript looks identical to a working install. Doctor now
+ *      runs each command it read and reports `wired (verified)`, `wired but inert` or
+ *      `wired but missing`, and a broken one costs `current` and names its repair.
  */
 
 function scratch(label: string): string {
@@ -198,6 +208,100 @@ describe('smelt doctor reads installed state back', () => {
   });
 });
 
+/**
+ * The guard command a settings file carries, replaced with one naming `script`. The
+ * entry stays recognisably ours — a shim path is a shim path whether or not the file
+ * behind it exists — which is the whole point: the *text* cannot tell you.
+ */
+function pointGuardAt(cwd: string, script: string): void {
+  const path = join(cwd, '.claude', 'settings.json');
+  const settings = JSON.parse(readFileSync(path, 'utf8')) as {
+    hooks: Record<string, { hooks: { command: string }[] }[]>;
+  };
+  for (const entry of settings.hooks['PreToolUse'] ?? []) {
+    for (const one of entry.hooks) one.command = `node "${script}"`;
+  }
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+describe('a wired hook is one that runs', () => {
+  it('the shim setup wrote fires — `wired (verified)`, and the receipt says which', async () => {
+    const cwd = scratch('verified');
+    try {
+      await setupWith(cwd, '0.5.0');
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.ok);
+      expect(stdout).toContain('.claude/settings.json: wired (verified)');
+
+      const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+      const file = receipt.hooks?.find((one) => one.file === '.claude/settings.json');
+      expect(file?.harness).toBe('claude-code');
+      const guard = file?.entries.find((entry) => entry.kind === 'guard');
+      expect(guard?.probe.status, guard?.probe.detail).toBe('fires');
+      expect(guard?.script).toContain('hooks/shims/claude-code.js');
+      // Additive, never a rename: everything the receipt carried, it still carries.
+      expect(receipt.hookFiles).toContain('.claude/settings.json');
+      expect(receipt.format).toBe('smelt.doctor.v1');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('a settings file pointing at a deleted script is `wired but missing`, not wired', async () => {
+    const cwd = scratch('missing');
+    try {
+      await setupWith(cwd, '0.5.0');
+      // What `brew upgrade` leaves behind: the entry is untouched, the keg is gone.
+      const gone = join(
+        cwd,
+        'Cellar',
+        'smelt',
+        '0.5.0',
+        'dist',
+        'hooks',
+        'shims',
+        'claude-code.js',
+      );
+      pointGuardAt(cwd, gone);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.claude/settings.json: wired but missing');
+      expect(stdout).toContain(gone);
+      expect(stdout).toContain('smelt setup --harness claude-code');
+
+      const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+      expect(receipt.current).toBe(false);
+      expect(receipt.repair).toContain('smelt setup --harness claude-code');
+      const guard = receipt.hooks?.[0]?.entries.find((entry) => entry.kind === 'guard');
+      expect(guard?.probe.status).toBe('missing');
+      expect(guard?.probe.detail).toContain('does not exist');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('a shim that runs and says nothing is `wired but inert` — empty stdout is an allow', async () => {
+    const cwd = scratch('inert');
+    try {
+      await setupWith(cwd, '0.5.0');
+      const stub = join(cwd, 'hooks', 'shims', 'claude-code.js');
+      mkdirSync(join(cwd, 'hooks', 'shims'), { recursive: true });
+      // Exactly what the symlink defect produced: exit 0, no output, no guard.
+      writeFileSync(stub, 'process.exit(0);\n');
+      pointGuardAt(cwd, stub);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.claude/settings.json: wired but inert');
+      expect(stdout).toContain('empty stdout is an allow');
+      expect(stdout).toContain('smelt setup --harness claude-code');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('the installed binary answers doctor', () => {
   it('`smelt doctor --json` over piped stdin parses as a receipt', () => {
     // Only a real process proves the read-only verb needs no wizard stream — piped
@@ -228,6 +332,14 @@ describe('the installed binary answers doctor', () => {
  * file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    kind: 'src',
+    id: 'doctor-probe-result-ignored',
+    file: 'cli/doctor.ts',
+    find: "  if (file === undefined || file.entries.length === 0) return 'wired';",
+    replace: "  if (file !== undefined) return 'wired (verified)';",
+    why: 'doctor reporting `wired (verified)` whatever the probe answered \u2014 which is exactly the old `wired`, the text fact that reads identically for a working install and for a shim that exits 0 with empty stdout',
+  },
   {
     kind: 'src',
     id: 'doctor-version-comparison-flipped',

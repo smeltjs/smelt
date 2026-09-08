@@ -1,6 +1,6 @@
 {
-  "guards": 36,
-  "mutations": 180,
+  "guards": 37,
+  "mutations": 184,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -24,7 +24,7 @@
     },
     {
       "guard": "packages/core/test/guards/doctor.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/expansion-counter.test.ts",
@@ -37,6 +37,10 @@
     {
       "guard": "packages/core/test/guards/harness-registry.test.ts",
       "count": 8
+    },
+    {
+      "guard": "packages/core/test/guards/hook-command.test.ts",
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/hooks-preset.test.ts",

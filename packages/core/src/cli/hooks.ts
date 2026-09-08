@@ -4,8 +4,16 @@ import { join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
 import {
+  AGENTS_LINT_ARGS,
+  hookEntryCommands,
+  isOursEntry,
+  MAP_ON_START_ARGS,
+  parseHookCommand,
+  renderHookCommand,
+} from '../harness/hook-command.ts';
+import type { HookCommand } from '../harness/hook-command.ts';
+import {
   guardCoreScriptPath,
-  nodeCommand,
   portablePath,
   shimScriptPath,
   smeltBinPath,
@@ -147,19 +155,20 @@ function commandEntry(matcher: string | undefined, command: string): unknown {
 }
 
 /**
- * The hook command a harness's entries run: its own shim script, through node.
+ * The guard command a harness's entries run: its own shim script, as a
+ * {@link HookCommand} the renderer spells.
  *
  * @throws {Error} when a profile declares a JSON hook file but ships no shim — a
  *   registry bug, pinned by `test/guards/harness-registry.test.ts`, not a user error.
  */
-function shimCommand(profile: HarnessProfile, cwd: string, distDir?: string): string {
+function guardCommand(profile: HarnessProfile, distDir?: string): HookCommand {
   /* v8 ignore next 5 -- unreachable: pinned by the harness-registry guard */
   if (!hasShim(profile)) {
     throw new Error(
       `smelt: harness "${profile.id}" wires a hook command but ships no shim script.`,
     );
   }
-  return nodeCommand(cwd, shimScriptPath(profile, distDir));
+  return { kind: 'guard', script: shimScriptPath(profile, distDir) };
 }
 
 /**
@@ -170,10 +179,14 @@ function shimCommand(profile: HarnessProfile, cwd: string, distDir?: string): st
  * bin, and `smelt` has no verb that runs one — which is why only the three lifecycle
  * commands go through here.
  */
-function smeltLifecycleCommand(cwd: string, args: string, invocation: SmeltInvocation): string {
+function smeltLifecycleCommand(
+  kind: 'stats' | 'map' | 'lint',
+  args: string,
+  invocation: SmeltInvocation,
+): HookCommand {
   return invocation.kind === 'path'
-    ? `${invocation.command} ${args}`
-    : nodeCommand(cwd, invocation.script ?? smeltBinPath(), args);
+    ? { kind, invocation: 'path', args }
+    : { kind, invocation: 'node', script: invocation.script ?? smeltBinPath(), args };
 }
 
 /**
@@ -191,19 +204,21 @@ function smeltLifecycleCommand(cwd: string, args: string, invocation: SmeltInvoc
 function jsonHookEvents(
   step: HarnessJsonHooks,
   ctx: HarnessInstallContext,
-  command: string,
+  guard: HookCommand,
   invocation: SmeltInvocation,
 ): Record<string, readonly unknown[]> {
-  // The trailing shell comment tags the entry as this installer's (see isOursEntry):
-  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary,
-  // and a `smelt <verb>` spelling carries no path at all to recognise.
-  const lifecycle = (args: string): string =>
-    `${smeltLifecycleCommand(ctx.cwd, args, invocation)} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const stats = lifecycle('stats');
+  // Every string below is rendered by the one writer in `harness/hook-command.ts`, so
+  // the readers that have to recognise these entries again — the merge, the toggle
+  // reader, `smelt doctor` — parse rather than search for a substring.
+  const command = renderHookCommand(guard, ctx.cwd);
+  const lifecycle = (kind: 'stats' | 'map' | 'lint', args: string): string =>
+    renderHookCommand(smeltLifecycleCommand(kind, args, invocation), ctx.cwd);
+  const stats = lifecycle('stats', 'stats');
   const map = lifecycle(
+    'map',
     `${MAP_ON_START_ARGS} --budget ${String(ctx.budgetBytes)} --cache .smelt/tags`,
   );
-  const lint = lifecycle(AGENTS_LINT_ARGS);
+  const lint = lifecycle('lint', AGENTS_LINT_ARGS);
 
   const sessionStart = [
     ...(ctx.mapOnStart ? [commandEntry(SESSION_START_MATCHER, map)] : []),
@@ -228,26 +243,7 @@ function jsonHookEvents(
 /** The matcher both `SessionStart` entries fire under — a session opening, however. */
 const SESSION_START_MATCHER = 'startup|resume|clear|compact';
 
-/**
- * The two `SessionStart` commands' distinguishing arguments, and **the substrings a
- * re-run recognises each entry by**. Spelled once so the writer and the reader cannot
- * drift: `presetToggles` tells the two entries apart by the command each one runs, and
- * a wizard that wrote `agents lint .` while its reader looked for `agents lint` would
- * read every re-run's lint toggle back as off and quietly delete it.
- */
-const MAP_ON_START_ARGS = 'map .';
-export const AGENTS_LINT_ARGS = 'agents lint .';
-
-/**
- * True for a hook entry this installer wrote. Matched on the shim script paths and the
- * `smelt:hooks` token the stats/map commands carry — never on a substring as generic
- * as `cli/bin.js`, which another npm CLI's built binary could share: remove and
- * re-install may only ever touch entries that are provably smelt's.
- */
-function isOursEntry(entry: unknown): boolean {
-  const text = JSON.stringify(entry) ?? '';
-  return text.includes('hooks/shims/') || text.includes(OURS_TOKEN);
-}
+export { AGENTS_LINT_ARGS };
 
 /**
  * Merge our hook entries into a JSON settings file, preserving everything foreign
@@ -525,7 +521,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
         case 'json-hooks':
           planJsonHooks(
             step.file,
-            jsonHookEvents(step, ctx, shimCommand(profile, cwd, choices.distDir), invocation),
+            jsonHookEvents(step, ctx, guardCommand(profile, choices.distDir), invocation),
             step.shape ?? {},
           );
           break;
@@ -1042,36 +1038,6 @@ async function stepThreshold(
  * Exported for `smelt setup`, which applies the preset's *current* state the same way
  * — read off what is installed — rather than keeping a second copy of the defaults.
  */
-/**
- * Whether a JSON hook file's text carries entries of ours — the **one** predicate for
- * this fact, shared by the readers (`smelt doctor`, `smelt setup`'s repair policy) and
- * backed by the same `isOursEntry` the writer's strip-merge uses. The guard command
- * itself carries only the shim path (no token), so a text-level `OURS_TOKEN` search
- * would miss a guard-only install — the exact drift this exists to prevent.
- */
-export function jsonHooksContainOurs(text: string): boolean {
-  let hooks: Record<string, unknown> | undefined;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    const hooksValue =
-      typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)['hooks']
-        : undefined;
-    hooks =
-      typeof hooksValue === 'object' && hooksValue !== null && !Array.isArray(hooksValue)
-        ? (hooksValue as Record<string, unknown>)
-        : undefined;
-  } catch {
-    hooks = undefined;
-  }
-  if (hooks === undefined) return false;
-  return MANAGED_EVENTS.some((event) =>
-    Array.isArray(hooks[event])
-      ? (hooks[event] as unknown[]).some((entry) => isOursEntry(entry))
-      : false,
-  );
-}
-
 export function presetToggles(
   cwd: string,
 ): Pick<HooksChoices, 'guard' | 'statsOnStop' | 'mapOnStart' | 'lintOnStart'> {
@@ -1106,15 +1072,23 @@ export function presetToggles(
         ? (installed[event] as unknown[]).filter((entry) => isOursEntry(entry))
         : [];
     const hasOurs = (event: string): boolean => oursUnder(event).length > 0;
-    /** One of ours under `event` whose command carries `needle`. */
-    const hasOursRunning = (event: string, needle: string): boolean =>
-      oursUnder(event).some((entry) => (JSON.stringify(entry) ?? '').includes(needle));
+    /**
+     * One of ours under `event` that runs this kind of command. Read through the
+     * parser, not through a substring: `map` and `lint` share the `SessionStart` key,
+     * so what tells them apart is the command each entry runs — and the two spellings
+     * that command can take (`smelt map .` and `node "<bin>" map .`) are exactly what
+     * one recogniser owning both directions exists to keep straight.
+     */
+    const hasOursRunning = (event: string, kind: HookCommand['kind']): boolean =>
+      oursUnder(event).some((entry) =>
+        hookEntryCommands(entry).some((command) => parseHookCommand(command)?.kind === kind),
+      );
     if (!MANAGED_EVENTS.some((event) => hasOurs(event))) continue;
     anyOurs = true;
     guard ||= GUARD_EVENTS.some((event) => hasOurs(event));
     statsOnStop ||= hasOurs(LIFECYCLE_EVENTS.stats);
-    mapOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.map, MAP_ON_START_ARGS);
-    lintOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.lint, AGENTS_LINT_ARGS);
+    mapOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.map, 'map');
+    lintOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.lint, 'lint');
   }
 
   for (const name of GUARD_ONLY_FILES) {

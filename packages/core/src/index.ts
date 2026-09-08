@@ -140,6 +140,8 @@ export { runDoctor } from './cli/doctor.ts';
 export type {
   DoctorBlock,
   DoctorConfig,
+  DoctorHookEntry,
+  DoctorHookFile,
   DoctorIo,
   DoctorMcp,
   DoctorOptions,
