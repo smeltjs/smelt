@@ -14,6 +14,14 @@ distinct elisions the named model asked back via `smelt_retrieve` out of the
 distinct elisions stored (tier 3), where retrieving everything is a LOSS. Nothing
 here is extrapolated, rounded up, or converted between units.
 
+**The tier-3 rerank arm is unmeasured.** `bench/run.mjs --tier3` carries a second arm
+that runs the same cases with the opt-in `@smeltjs/rerank-voyage` stage wired in, so
+lexical and lexical+rerank can be compared on this corpus at the same budgets. It is
+gated on `VOYAGE_API_KEY` being set and that package being installed, and neither was
+true on any run recorded below — so there are **no `+rerank` rows here, and no claim
+about what reranking does to the expansion rate.** The case is committed and runnable;
+the numbers are not, and none are invented to stand in for them.
+
 ## run 2026-09-01 — tier 1 — corpus c03abf27bd4a
 
 | case            | tier   | date       | corpus commit | model | unit  | input | output | elisions | note                                      |

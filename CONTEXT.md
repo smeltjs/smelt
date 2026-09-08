@@ -334,6 +334,35 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   divergences stay in the adapters — `smelt retrieve`/`stats` refuse a memory store,
   the MCP server accepts one and hints — which is why `resolveStoreRun` stays
   unexported: it is the CLI's policy, not a shared law.
+- **Rerank slot**: where a `RerankStage` actually bites — `src/rerank/protect.ts`,
+  between the planner's decision and the cut. The **candidates** are the planner's own
+  proposed elisions (the regions actually at stake), the **query** is the run's focus
+  terms joined, and the stage's answer decides which of them are **spared**: dropped from
+  the plan, so they survive into the output as if a focus term had matched them. A stage
+  can only spare, never add — a run may therefore come back over budget, which is
+  reported in the words a too-large focus window already earns. No candidates or no query
+  and the stage is not called at all. What it did comes back as a **RerankAttribution**
+  (`{adapter, model?, candidates, kept}`) on `SmeltResult`, which the stderr report, the
+  `--json` envelope and `smelt_file`'s report block all render from — one value, three
+  surfaces, no front door counting anything itself. _Avoid_: "rerank filters", "rerank
+  cuts" — it only ever keeps.
+- **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
+  smelt setting that can send a caller's source to a third party. Two kinds: `module`
+  (an ESM file of the consumer's own, resolved against the config file, default-exporting
+  a `RerankStage`) and `voyage` (`@smeltjs/rerank-voyage`, which the consumer installs).
+  **Absent means nothing happens** — no import, no call — and that is what every default
+  config says. `loadRerankStage` (`src/rerank/load.ts`) is the one loader for both front
+  doors; every failure is a usage error naming the missing thing (the path, the `topK`
+  this kind requires, the environment **variable**, the uninstalled package) and never a
+  silent fall back to an unranked run. There is no `SMELT_RERANK_API_KEY` and no
+  environment variable smelt reads that a config did not name. _Avoid_: "the rerank flag"
+  (there is none), "enable reranking".
+- **Opt-in rerank bucket**: `OPT_IN_RERANK_PACKAGES` in `src/net/policy.ts` — adapter
+  packages a config block may **load** at runtime and no smelt module may **import**.
+  The name is data here and nowhere else in `src`; `load.ts` hands it to `import()`, so
+  the Law 1 walk finds no edge, and both packages' `classify()` rule an import of it
+  **forbidden** rather than unclassified. The rule in one line: _smelt may know this
+  package's name; smelt may not depend on it._
 - **guard-kit**: the guards' shared machine — `packages/guard-kit`, test-only,
   `private: true`, never published and never more than a devDependency. It owns the
   import-graph **walker** (`walkImportGraph`, `assertNoNetwork`) that both packages'
@@ -419,7 +448,7 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
 
 ## Setup and distribution
 
-Decided in the Sep 2026 architecture review; ADRs 0001–0003 carry the reasoning.
+Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasoning.
 
 - **SetupRecipe**: the one true way to put smelt on a machine — install, init choices,
   hooks, MCP registration, verification — held as data, from which every rendering

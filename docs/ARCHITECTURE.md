@@ -34,8 +34,9 @@ unless they understand why they are there.
 ### Law 1 — zero network
 
 **smelt makes no external calls. Code never leaves the machine.** Scoring is structural
-(tree-sitter WASM) and lexical. Reranking exists as a _pluggable stage interface_ that a
-consumer wires its own key into — never a default, never bundled.
+(tree-sitter WASM) and lexical. Reranking exists as a _pluggable stage interface_ a
+consumer opts into explicitly, in a config file they wrote — never a default, never
+bundled, never an environment variable smelt picks up on its own (ADR-0004).
 
 _Why it is load-bearing:_ the natural way to make a context optimizer better is to ask a
 model which parts matter. The moment that becomes a default, every consumer of smelt is
@@ -57,6 +58,16 @@ classifies _every_ edge. The walk is one machine (`packages/guard-kit`, test-onl
 never published); the ruling on what an edge may be is one small `classify()` per
 package, so both packages defend Law 1 with the same defences and their own verdict.
 See "How to prove a guard can fail" below.
+
+The one adapter that _does_ reach the network — `@smeltjs/rerank-voyage` — is a separate
+package a consumer installs themselves, and the rulings name it as **forbidden** rather
+than merely unvetted. Its name lives in `net/policy.ts` as data
+(`OPT_IN_RERANK_PACKAGES`), `rerank/load.ts` hands that value to `import()` when a
+consumer's own `rerank` config block asks for it, and three mutations prove the
+distinction is real: a static import of the adapter in either package goes red, and so
+does respelling the loader's dynamic import with a string literal. That last one is the
+important one — it changes nothing about the running code, and everything about whether
+the adapter is in the graph.
 
 ### Law 2 — every elision is explainable
 
@@ -130,7 +141,9 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 
 | File                                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core/src/types.ts`                | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `DistillStage`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `packages/core/src/types.ts`             | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `RerankAttribution`, `DistillStage`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                         |
+| `packages/core/src/rerank/protect.ts`    | The rerank **slot**: between the planner's decision and the cut. The candidates are the planner's own proposed elisions, and a stage may only spare them — never add one.                                                                                                                                                                                                                                                   |
+| `packages/core/src/rerank/load.ts`       | A `rerank` config block to a live stage. `undefined` in, `undefined` out; the opt-in adapter package is loaded by computed specifier and imported by nothing.                                                                                                                                                                                                                                                               |
 | `packages/core/src/errors.ts`               | Every error is a `SmeltError`, so callers can tell "the library said no" from "something broke".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `packages/core/src/hash.ts`                 | 16 hex chars of sha256. Short because the hash goes in every marker and the model pays for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `packages/core/src/detect.ts`               | Extension → language. `'unknown'` is a first-class answer, not a failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -1032,6 +1045,18 @@ tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
 `smelt.config.json`-discovered store the CLI uses, so a marker minted anywhere can be
 cashed in anywhere and one set of counters moves. Its stdio-local guarantee — the SDK's
 HTTP transports never enter the import graph — is guard-enforced in its own package.
+`smelt_file` honours the same `rerank` opt-in the CLI does, by handing the config block
+to the core's loader; the server imports no adapter of its own, and its guard says so.
+
+### The opt-in reranker adapter
+
+[`@smeltjs/rerank-voyage`](../packages/rerank-voyage/) is the **one package in this
+workspace that reaches the network**, which is why it is a package at all rather than a
+module. It is not a dependency of `@smeltjs/core` — it peer-depends on it — and both
+zero-network guards name it forbidden as an import, so it can only ever arrive the way a
+consumer chose: `npm install @smeltjs/rerank-voyage` plus a `rerank` block in their own
+config. It sends the query and the text of the regions the planner had already decided
+to remove, and nothing else. See ADR-0004.
 
 ---
 
@@ -1204,22 +1229,34 @@ outside a store it was handed, or require a key.
 
 ## Explicitly out of scope
 
-**The external reranker.** A hosted reranker would improve relevance and is exactly why
-`RerankStage` exists as an interface. It is out of scope because a _default_ reranker breaks Law 1
-for every consumer at once, including the ones who never read the changelog. A consumer
-who wants one implements the interface in their own code, with their own key, so that the
-outbound call is visible in their own source and their own review. There is no
-`SMELT_RERANK_API_KEY`, no bundled adapter, and no "just set this env var" — the first of
-those to appear turns a zero-network library into a library that is zero-network unless
-configured, which is not the same claim.
+**A _default_ reranker.** Still out, and permanently. A default reranker breaks Law 1 for
+every consumer at once, including the ones who never read the changelog — there is no way
+to opt out of a default you did not know existed. There is no `SMELT_RERANK_API_KEY` and
+no environment variable smelt reads on its own: an env-var switch turns a zero-network
+library into a library that is zero-network unless configured, which is not the same
+claim, and it is a switch nobody writes down.
 
-**An example reranker in the repository.** Out (Decision 5). The README shows the snippet
-and `RerankStage` is the interface; there is nothing under `examples/`, and there will not
-be. The zero-network guard requires every discovered `.ts` file to be reachable from a
-manifest entrypoint or explicitly justified, so a file importing an HTTP client either
-breaks the guard or gets excluded from it — and **excluding a file from an honesty guard
-to accommodate an example is how a guard erodes.** Naming a vendor in-repo also dates the
-project: Voyage's `voyage-code-3` is already legacy.
+**The reranker as an explicit config opt-in** is _in_, and ADR-0004 records the reopening.
+The difference from the ruling above is the whole of it: a consumer writes a `rerank`
+block into a `smelt.config.json` they own, installs the adapter package themselves, and
+names the environment variable their own key lives in. With no `rerank` key — every
+default install — nothing is loaded, nothing is imported and nothing is called. `smelt
+doctor` prints the opt-in and whether that variable is set (presence only, never the
+value), and every run that reranks says so on its own report line, in the `--json`
+envelope and in the `smelt_file` report block: `rerank  voyage/rerank-2.5  (23
+candidates, 8 kept)`. The stage may only **spare** regions the planner had already decided
+to cut, so the worst a bad answer can do is cost bytes — and bytes are already reported.
+
+**An example reranker in the repository.** Still out, and Decision 5 is unchanged — but
+`packages/rerank-voyage` is not that. An `examples/` file importing an HTTP client either
+breaks the zero-network guard or gets excluded from it, and **excluding a file from an
+honesty guard to accommodate an example is how a guard erodes.** A published package with
+its own manifest, its own README, its own tests and a `peerDependency` on the core is
+_not_ excluded from anything: it is outside the walk because it is outside the package,
+and the core's ruling names it forbidden by name so it can never quietly come inside. The
+vendor-dating objection stands and is answered the same way — the name is in one package
+and one config key, so a second adapter is a second package rather than an edit to
+smelt's graph.
 
 **The learned distillation stage.** Out for a reason beyond the network: a model-written
 summary cannot satisfy Law 2. "The model condensed this" is not a statement of what was
@@ -1316,14 +1353,21 @@ arithmetic, not an opinion, and what to do about it is the caller's call. Guarde
 `test/guards/expansion-counter.test.ts`; mutation `degenerate-outcome-never-fires` wires
 the flag to a constant and the guard goes red.
 
-### Decision 5 — no example reranker in the repo
+### Decision 5 — no example reranker in the repo, and no adapter inside the core
 
 A README snippet and the stage interface, and **nothing under `examples/`**. The
 zero-network guard requires every discovered `.ts` file to be reachable from a manifest
 entrypoint or explicitly justified. A file importing an HTTP client either breaks that
 guard or gets excluded from it — and **excluding a file from an honesty guard to
-accommodate an example is how a guard erodes.** Separately, naming a vendor in-repo
-dates the project: Voyage's `voyage-code-3` is already legacy.
+accommodate an example is how a guard erodes.**
+
+ADR-0004 did not weaken this; it took the other route out. The Voyage adapter is a
+**separate published package** (`@smeltjs/rerank-voyage`), so no `.ts` file inside
+`packages/core/src` imports a transport, no file is excluded from any walk, and the core's
+`classify()` names the adapter package **forbidden** rather than unvetted. The
+vendor-dating objection is answered by the same shape: the vendor's name appears in one
+package name and one config `kind`, and a second vendor is a second package rather than a
+second import.
 
 ### Decision 6 — the grammars are bundled, and `THIRD-PARTY.md` is generated
 
@@ -1397,8 +1441,8 @@ arguments, and a library whose behaviour depends on where it was invoked from wo
 an invisible input.
 
 **`smelt init`** walks through five choices — default byte budget, store (memory or a
-persistent directory plus path), default planner strategy, a measure-hook stub, a
-reranker stub — one question at a time. Every step accepts `back`. A re-run over an
+persistent directory plus path), default planner strategy, a measure-hook stub, and a
+reranker (`none`, a `module` of your own, or `voyage`) — one question at a time. Every step accepts `back`. A re-run over an
 existing config shows the current values and edits one choice at a time. **Nothing is
 written until a final confirm** that lists exactly what will be written, and an
 existing file is **never overwritten without an explicit per-file yes** — enforced by
@@ -1414,11 +1458,22 @@ malformed config is a usage error even when every flag was given: a config silen
 skipped would be a setting the user believed was in force. `test/cli-config.test.ts`
 pins the precedence and the strict parse.
 
+Its one non-default key is `rerank` (ADR-0004): the explicit opt-in to a relevance
+stage, absent from every default config, and refused loudly when it names a module that
+is not there, a `topK` it needs, an environment variable that is unset, or an adapter
+package that is not installed — never a quiet fallback to an unranked run. It is
+**additive and does not bump `smeltConfig`**: the schema version exists so a _mismatch_
+is visible rather than half-understood, and an older build reading this key refuses it
+loudly as unknown, which is exactly the behaviour that makes the strict parse worth
+having. Bumping would break every config in the field to announce a key nobody set.
+
 **The generated stubs** (`smelt.measure.ts`, `smelt.rerank.ts`) implement `Measure`
 and `RerankStage` against the real exported types — `test/init-stub-typecheck.test.ts`
 compiles the wizard's actual output with the real `tsc`. The reranker stub sketches
 the outbound HTTP call as a marked TODO **in the consumer's file**, reading the
-consumer's own env var; smelt's own import graph gains no HTTP client, and the
+consumer's own env var, and the wizard now also writes the `rerank` config block that
+loads it — a stub nothing points at was a file the user watched themselves ask for and
+never got used. smelt's own import graph gains no HTTP client, and the
 templates are string literals the zero-network guard's string-stripper ignores. This
 does not reopen Decision 5: nothing under `examples/`, nothing in smelt's graph — the
 sketch only ever exists in a file the consumer asked the wizard to write, outside this

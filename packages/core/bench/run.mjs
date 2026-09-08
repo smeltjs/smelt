@@ -14,6 +14,11 @@
  *   tier 3  expansion rate from real model calls counting `smelt_retrieve`
  *           invocations. Paid, so it additionally requires the explicit `--tier3`
  *           flag; the retrieval log is written to `bench/tier3-log/` to be committed.
+ *           It carries a second, separately gated **rerank arm**: the same cases with
+ *           the opt-in `@smeltjs/rerank-voyage` stage wired in, run only when
+ *           VOYAGE_API_KEY is set AND that package is installed. Missing either, the
+ *           arm prints its reason and appends nothing — a missing row is the truth,
+ *           and an unmeasured row would be a claim.
  *   tier 4  answer-quality A/B: the same question against the raw blob and the
  *           smelted one (retrieve tool wired), judged against the raw blob as
  *           reference, both arms' token usage recorded. Paid; additionally requires
@@ -202,8 +207,11 @@ const rows = [];
 const tiersRun = [];
 
 /** A fresh smelter and result for one case — each case gets its own store. */
-async function smeltCase(benchCase) {
-  const smelter = createSmelter({ strategy: benchCase.strategy });
+async function smeltCase(benchCase, rerank) {
+  const smelter = createSmelter({
+    strategy: benchCase.strategy,
+    ...(rerank === undefined ? {} : { rerank }),
+  });
   const text = readFileSync(join(benchDir, benchCase.file), 'utf8');
   const result = await smelter.smelt(text, {
     path: benchCase.path,
@@ -296,7 +304,18 @@ if (wantTier3) {
   if (apiKey === undefined || apiKey === '') fail('--tier3 needs ANTHROPIC_API_KEY.');
   tiersRun.push('3');
   const model = process.env.SMELT_BENCH_MODEL ?? 'claude-opus-5';
-  const { measureExpansion } = await import('./tier3.mjs');
+  const { measureExpansion, voyageStageOrReason } = await import('./tier3.mjs');
+  // The rerank arm's gate, decided once before the loop so the reason is printed once.
+  // `RERANK_TOP_K` and the model come from the environment: they are the caller's
+  // numbers, and a harness that picked them would be choosing what the arm measures.
+  const rerankModel = process.env.SMELT_BENCH_RERANK_MODEL ?? 'rerank-2.5';
+  const rerankTopK = Number(process.env.SMELT_BENCH_RERANK_TOP_K ?? '8');
+  const rerankArm = await voyageStageOrReason({
+    env: process.env,
+    model: rerankModel,
+    topK: rerankTopK,
+  });
+  if (rerankArm.reason !== undefined) process.stderr.write(`bench: ${rerankArm.reason}\n`);
   const logDir = join(benchDir, 'tier3-log');
   mkdirSync(logDir, { recursive: true });
   const completed = [];
@@ -354,6 +373,53 @@ if (wantTier3) {
             `over ${String(completed.length)} completed case(s)${excluded}`,
     }),
   );
+  // -- tier 3, rerank arm: the same cases with the opt-in reranker wired in ------
+  //
+  // The comparison the arm exists for is lexical-vs-lexical+rerank on the SAME corpus
+  // and the same budgets, so the only difference between a baseline row and its
+  // `rerank` sibling is the stage. Rows name the adapter and its `(N candidates, M
+  // kept)` so the pairing is readable without opening a log; the logs land beside the
+  // baseline ones under a `.rerank` suffix, and are committed like every other tier-3
+  // log. When the arm is gated off, nothing is appended at all — an unmeasured row is
+  // a claim, and a missing row is the truth.
+  if (rerankArm.stage !== undefined) {
+    for (const benchCase of manifest.cases) {
+      const { smelter, shown, result } = await smeltCase(benchCase, rerankArm.stage);
+      const log = await measureExpansion({
+        apiKey,
+        model,
+        benchCase,
+        smelter,
+        smeltedText: shown,
+      });
+      writeFileSync(
+        join(logDir, `${benchCase.id}.rerank.json`),
+        `${JSON.stringify(log, null, 2)}\n`,
+      );
+      const attribution = result.rerank;
+      rows.push(
+        resultRow({
+          caseId: `${benchCase.id} +rerank`,
+          tier: 3,
+          date,
+          corpusCommit,
+          model,
+          unit: 'elisions retrieved',
+          input: log.stats.elisionsStored,
+          output: log.stats.uniqueRetrieved,
+          note:
+            `${tier3RowNote({
+              verdict: tier3Verdict(log.stats),
+              retrieveCalls: log.stats.retrieveCalls,
+              truncated: log.truncated,
+              maxRounds: log.maxRounds,
+            })} — rerank ${String(attribution?.adapter)}/${String(attribution?.model)} ` +
+            `(${String(attribution?.candidates)} candidates, ${String(attribution?.kept)} kept)`,
+        }),
+      );
+    }
+  }
+
   process.stderr.write(`bench: tier 3 retrieval logs written to ${logDir} — commit them.\n`);
 }
 
