@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { budgetMalformed, budgetRequired, CliUsageError, readTree } from '@smeltjs/core';
+import { strictModeViolations, type ToolSchema } from '@smelt/guard-kit';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -584,5 +585,57 @@ describe('startup', () => {
     writeFileSync(join(cwd, 'smelt.config.json'), '{"smeltConfig": 1, "defaultBudgetByte": 5}\n');
     expect(() => createSmeltMcpServer({ cwd })).toThrow(CliUsageError);
     expect(() => createSmeltMcpServer({ cwd })).toThrow(/unknown key "defaultBudgetByte"/);
+  });
+});
+
+/**
+ * Strict-mode registrability, over the served `tools/list` — not the source. This
+ * lives here rather than in `test/guards/packaging.test.ts` on purpose: a guard's
+ * `kind: 'src'` mutation points `@guard/*` at a bare copy of this package's `src`
+ * with no `node_modules` beside it, and `createSmeltMcpServer` reaches into
+ * `@smeltjs/core` — a real, executed import the scratch copy cannot resolve. Every
+ * other check in the packaging guard is deliberately string-level for the same
+ * reason (`readSource('server.ts')`); this one needs the real protocol round trip
+ * `tools.test.ts` already runs everything else through, so it stays with its
+ * siblings instead of crashing the guard it would otherwise live in. The literal
+ * source facts that keep these two checks true — `additionalProperties: false` on
+ * every entry `buildToolList` returns, and `smelt_stats`'s `required: []` beside it —
+ * are pinned separately, and mutation-tested, in `test/guards/packaging.test.ts`.
+ */
+describe('every tool this server serves is registrable, strict-mode-wise, up to its own documented limits', () => {
+  it('closes every tool schema to unknown keys, no exceptions', async () => {
+    const client = await connect(tempDir());
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(2); // non-vacuity: the list really loaded
+    const offenders = tools
+      .filter(
+        (tool) =>
+          (tool.inputSchema as { additionalProperties?: unknown }).additionalProperties !== false,
+      )
+      .map((tool) => tool.name);
+    expect(
+      offenders.join(', '),
+      'every tool schema this server serves must close additionalProperties, strict ' +
+        'clients aside — an open object schema lets a model send an argument that was ' +
+        'silently ignored, exactly what refuseUnknownKeys exists to refuse at the value ' +
+        'layer',
+    ).toBe('');
+  });
+
+  it('the three argument-free-or-required tools are fully strict-mode valid', async () => {
+    const client = await connect(tempDir());
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    // smelt_file and repo_map are the documented exception: both have genuinely
+    // optional arguments, and strict mode has no notion of optional. See the
+    // module doc on `server.ts`'s `buildToolList`.
+    const fullyStrict = [RETRIEVE_TOOL_NAME, RETRIEVE_BATCH_TOOL_NAME, SMELT_STATS_TOOL_NAME];
+    const offenders: string[] = [];
+    for (const name of fullyStrict) {
+      const tool = byName.get(name);
+      expect(tool, `${name} is not in the served tool list`).toBeDefined();
+      offenders.push(...strictModeViolations(tool!.inputSchema as unknown as ToolSchema, name));
+    }
+    expect(offenders.join('\n')).toBe('');
   });
 });

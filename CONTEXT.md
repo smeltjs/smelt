@@ -169,12 +169,29 @@ codebase-design glossary.
   ledger — never inferred from which pass happened to run. The lexical planner's
   context ladder is the sibling of this idea, and `src/plan/budget.ts` is the
   arithmetic they share.
+- **Unit** (structural, `unitsOf` in `src/plan/structural.ts`): one root-level sibling
+  the structural planner can match or collapse — a top-level declaration plus its
+  attached comment/attribute prefix. **Root children only, one level, a stated
+  non-goal**: a class or object body one level down is never re-grouped into units of
+  its own, so a class is one opaque unit — kept whole the moment anything inside it
+  matches the focus, collapsed whole otherwise, and never split method by method. The
+  honest minimum this planner claims for one very large class with one matching method
+  and nothing else nearby to trade: no elision at all. `--strategy lexical` covers
+  that case by lines, without a per-method name. `test/structural.test.ts` pins the
+  behaviour (`'does not descend into a class body — a stated non-goal'`) as a fixture,
+  not a bug.
 - **RepoMap**: the ranked whole-tree symbol map `buildRepoMap` returns — deliberately
   **not** an `ElisionPlan` and its builder deliberately not a Planner: nothing is
   elided, stored, or reversible, so the Planner interface would claim laws the map
   cannot honour. Its CLI front door is the `smelt map` subcommand, never a
   `--strategy` name; the map fits itself to its byte budget by construction, so
-  `map` has no over-budget exit.
+  `map` has no over-budget exit. **Path-only** (`map.pathOnly`, `REPO_MAP_PATH_ONLY_RULE`)
+  is what an unmapped-language file gets, and — by the same mechanism, no special case
+  — what php, kotlin and bash get too: their `LanguageProfile.repomap.defKinds` is `{}`
+  (their definitions are not the identifier-shaped nodes the walk reads, so they are
+  omitted rather than guessed at), which means zero defs, which is the one condition
+  `buildRepoMap` checks. The file still appears in the map, honestly labelled, never as
+  a name-less, rank-less regular entry.
 - **ResolvedMapRun**: `smelt map`'s single merge of flags + config + built-ins
   (`resolveMapRun` in `src/cli/subcommands/map.ts`) — ResolvedRun's sibling, sharing
   the seam that owns precedence (`Subcommand.resolve`) and the budget-required

@@ -76,10 +76,18 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { tmpdir } from 'node:os';
+import process from 'node:process';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packagesDir = join(repoRoot, 'packages');
 const scratchDir = join(repoRoot, '.mutants');
+/**
+ * Where each guard run's structured result lands — one file, reused (overwritten)
+ * across every sequential run, never committed. See {@link runGuard} for why a JSON
+ * reporter rides alongside the human-readable `dot` one.
+ */
+const reportPath = join(tmpdir(), `smelt-mutate-report-${String(process.pid)}.json`);
 
 function die(message) {
   console.error(`mutate: ${message}`);
@@ -342,12 +350,72 @@ if (process.argv.includes('--write-guards')) {
 
 assertGuardsManifestCurrent();
 
+/**
+ * Run one guard file, both for its human-readable console output (`dot`, unchanged)
+ * and — the reason a second reporter rides alongside it — a structured verdict
+ * `classifyRun` can trust without parsing formatted text. `dot` alone cannot tell
+ * "the assertion this guard exists for went red" from "vitest could not even load the
+ * file" apart: both exit non-zero, and a naive `status !== 0` reads a syntax error, a
+ * missing import, or a module that throws at the top level as a caught mutation —
+ * exactly the silent failure this runner exists to refuse (see `classifyRun`).
+ *
+ * `--reporter=json --outputFile=<reportPath>` writes vitest's own count of tests it
+ * actually ran to a scratch file (one path, overwritten every run — these run
+ * sequentially, never concurrently), read back below and never committed.
+ */
 function runGuard(guard, guardSrc, guardRoot = guard.pkg.dir) {
-  return spawnSync('./node_modules/.bin/vitest', ['run', guard.file, '--reporter=dot'], {
-    cwd: guard.pkg.dir,
-    env: { ...process.env, SMELT_GUARD_SRC: guardSrc, SMELT_GUARD_ROOT: guardRoot },
-    encoding: 'utf8',
-  });
+  rmSync(reportPath, { force: true });
+  const run = spawnSync(
+    './node_modules/.bin/vitest',
+    ['run', guard.file, '--reporter=dot', '--reporter=json', `--outputFile=${reportPath}`],
+    {
+      cwd: guard.pkg.dir,
+      env: { ...process.env, SMELT_GUARD_SRC: guardSrc, SMELT_GUARD_ROOT: guardRoot },
+      encoding: 'utf8',
+    },
+  );
+  run.report = readJsonReport();
+  return run;
+}
+
+/**
+ * The JSON reporter's own tally, or `undefined` when it never wrote one (vitest itself
+ * failed to start — an even earlier failure than a crashed test file). Returning
+ * `undefined` rather than guessing a shape keeps {@link classifyRun} honest about what
+ * it does not know.
+ */
+function readJsonReport() {
+  if (!existsSync(reportPath)) return undefined;
+  try {
+    return JSON.parse(readFileSync(reportPath, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What a guard run actually was, distinguishing the two ways `status !== 0` happens:
+ *
+ *   - **`'caught'`** — the guard file loaded, its assertions ran, and at least one
+ *     failed. This is what a mutation is *supposed* to produce: the guard noticed.
+ *   - **`'crashed'`** — vitest could not run the guard's tests at all (a syntax error
+ *     in the mutant, an import that no longer resolves, a top-level throw). Exit code
+ *     alone is identical to `'caught'`, but nothing was actually asserted — the guard
+ *     went red for a reason that has nothing to do with what it exists to check, which
+ *     is a hole, not a save. `numTotalTests === 0` on a failed run is vitest's own
+ *     signal for this: a suite that failed to *load* runs zero tests, where a suite
+ *     whose assertions failed always ran at least one (`test/guards/mutate-*` fixtures
+ *     pin both shapes; see the doc comment on the runner as a whole).
+ *   - **`'pass'`** — exit 0, the guard is green.
+ *
+ * A missing or unparseable JSON report on a non-zero exit is treated as `'crashed'`
+ * too — the conservative reading: this function must never call a run `'caught'`
+ * without positive evidence a real assertion failed.
+ */
+function classifyRun(run) {
+  if (run.status === 0) return 'pass';
+  if (run.report !== undefined && run.report.numTotalTests > 0) return 'caught';
+  return 'crashed';
 }
 
 function firstFailureLine(output) {
@@ -432,15 +500,26 @@ for (const { guard, mutations } of MUTATIONS_BY_GUARD) {
     writeFileSync(target, original.replace(mutation.find, mutation.replace));
 
     const run = runGuard(guard, guardSrc, guardRoot);
-    const caught = run.status !== 0;
-    if (!caught) failed += 1;
-    results.push({ mutation, caught, output: run.stdout + run.stderr });
+    const outcome = classifyRun(run);
+    const caught = outcome === 'caught';
+    // A crash is not a catch: nothing was actually asserted, so it fails the run
+    // exactly as a survived mutation does — see `classifyRun`.
+    if (outcome !== 'caught') failed += 1;
+    results.push({ mutation, caught, outcome, output: run.stdout + run.stderr });
 
-    console.log(`  ${caught ? 'CAUGHT ' : 'SURVIVED'} ${mutation.id}`);
+    const label = outcome === 'caught' ? 'CAUGHT ' : outcome === 'crashed' ? 'CRASHED' : 'SURVIVED';
+    console.log(`  ${label} ${mutation.id}`);
     console.log(`           mutation: ${mutation.why}`);
     console.log(`           guard:    ${guard.label}`);
-    if (caught) {
+    if (outcome === 'caught') {
       console.log(`           red on:   ${firstFailureLine(results.at(-1).output)}`);
+    } else if (outcome === 'crashed') {
+      console.log(
+        '           the guard did not run its assertions at all — vitest could not load ' +
+          'the mutant (a syntax error, a broken import, a top-level throw). That is a ' +
+          'hole in the mutation, not a catch: fix the mutation so the guard actually runs.',
+      );
+      console.log(`           vitest said: ${firstFailureLine(results.at(-1).output)}`);
     } else {
       console.log(
         '           the guard did NOT notice. That is a hole in the guard, not in the mutation.',
@@ -451,14 +530,23 @@ for (const { guard, mutations } of MUTATIONS_BY_GUARD) {
 }
 
 rmSync(scratchDir, { recursive: true, force: true });
+rmSync(reportPath, { force: true });
 
-const caughtCount = results.filter((r) => r.caught).length;
+const caughtCount = results.filter((r) => r.outcome === 'caught').length;
+const crashedCount = results.filter((r) => r.outcome === 'crashed').length;
 console.log(
   `=== ${String(caughtCount)}/${String(totalMutations)} mutations caught across ` +
-    `${String(GUARDS.length)} guards ===\n`,
+    `${String(GUARDS.length)} guards` +
+    (crashedCount > 0 ? ` (${String(crashedCount)} CRASHED — not a catch)` : '') +
+    ' ===\n',
 );
 
 if (failed > 0) {
-  console.error('mutation testing failed. A guard that cannot go red is not a guard.\n');
+  console.error(
+    crashedCount > 0
+      ? 'mutation testing failed. A guard that crashed instead of asserting proved ' +
+          'nothing, and a guard that cannot go red is not a guard.\n'
+      : 'mutation testing failed. A guard that cannot go red is not a guard.\n',
+  );
   process.exit(1);
 }

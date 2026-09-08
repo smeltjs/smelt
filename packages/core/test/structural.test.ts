@@ -103,6 +103,59 @@ describe('the structural planner', () => {
     }
   });
 
+  /**
+   * Pins the stated non-goal on {@link StructuralPlanner} (`src/plan/structural.ts`):
+   * `unitsOf` groups only the parse tree's *root* children, so a class body is one
+   * opaque unit — its methods are never individually matched, and never individually
+   * collapsed. A class the focus matches survives with every method intact, matching
+   * or not; a class the focus does not touch is collapsed whole, never split into a
+   * per-method run of its own. This is the honest minimum this planner claims —
+   * demonstrated, not merely asserted, so a future change to `unitsOf` that starts
+   * descending into class bodies has to touch this test on purpose, not by accident.
+   */
+  it('does not descend into a class body — a stated non-goal', async () => {
+    const src = [
+      'export class Wanted {',
+      '  matchingMethod() {',
+      '    return "the method the focus names";',
+      '  }',
+      '  siblingMethod() {',
+      '    return "a method inside the matched class — never elided on its own";',
+      '  }',
+      '}',
+      '',
+      'export class Unwanted {',
+      '  methodOne() {',
+      '    return "padding to make this class worth collapsing as a whole";',
+      '  }',
+      '  methodTwo() {',
+      '    return "more padding, same reasoning, never offered method by method";',
+      '  }',
+      '}',
+      '',
+    ].join('\n');
+    const plan = await planStructural({
+      text: src,
+      language: 'typescript',
+      budgetBytes: 40,
+      focus: ['matchingMethod'],
+      pricing: markerPricing('typescript'),
+    });
+    const result = applyPlan(src, plan, new MemoryElisionStore());
+
+    // The matched class survives whole — its non-matching sibling method included —
+    // because `unitsOf` never split it into per-method units to prune from.
+    expect(result.text).toContain('matchingMethod');
+    expect(result.text).toContain('siblingMethod');
+    expect(result.text).toContain('a method inside the matched class');
+
+    // The unmatched class is gone whole, as one unit — never as two per-method cuts.
+    expect(result.text).not.toContain('methodOne');
+    expect(result.text).not.toContain('methodTwo');
+    const classElisions = plan.elisions.filter((e) => /class/.test(e.reason.explanation));
+    expect(classElisions).toHaveLength(1);
+  });
+
   it('refuses every language it has not mapped, naming the ones it has', async () => {
     const attempt = planStructural({ ...inputFor(TS_FIXTURE), language: 'unknown' });
     await expect(attempt).rejects.toThrow(GrammarUnavailableError);

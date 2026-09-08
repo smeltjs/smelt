@@ -80,11 +80,18 @@ smelt big.log --budget 4000 > small.log                   # the two pipe apart
 ```
 
 ```
+smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical
+```
+
+```
 smelt  packages/core/src/plan/lexical.ts  typescript  lexical/v1
-in 7,297 B → out 985 B   (-86.5%, 3 elisions)
+in 8,205 B → out 987 B   (-88.0%, 3 elisions)
+focus  planLexical
 
   rule          lines  bytes  hash              explanation
-  focus-window     53  2,224  84998967370f38bc  collapsed 53 lines with no match for the focu…
+  focus-window     49  2,077  8ce2e5af28e6d6f0  collapsed 49 lines with no match for the focu…
+  focus-window     11    756  c35d231379780e11  collapsed 11 lines with no match for the focu…
+  focus-window    141  4,715  9d211d0922e7bb2f  collapsed 141 lines with no match for the foc…
 ```
 
 At the end of a session the store reports on itself — the counters, then the ledger, one

@@ -114,6 +114,25 @@ interface Unit {
  * asked for structural planning, and whose grammar failed to load, gets line-window
  * output labelled `structural/v1` — plausible, wrong, and undetectable from the
  * outside. A caller who wants the fallback asks for it, by planning lexically itself.
+ *
+ * **Non-goal: one level deep.** {@link unitsOf} groups only the parse tree's *root*
+ * children — a file's top-level functions, classes, and the rest. A class's own
+ * methods are never separately matched or collapsed; the whole class body is one
+ * opaque unit that is either kept in full (any method's text matches the focus, or the
+ * class is small enough that collapsing it costs more than it saves) or collapsed
+ * whole into the run around it. One very large class with one matching method — and no
+ * other top-level declarations near it to collapse instead — gets no elision at all,
+ * because there is nothing at the root level *to* collapse. Recursing into class
+ * bodies for a second, nested collapse pass was considered and set aside: it would
+ * double the shapes every consumer of a plan (the outline, the budget rung, the
+ * per-rule ledger) has to reason about, for a case the lexical planner already
+ * handles reasonably — a focus window still finds the matching method and prunes the
+ * rest of a large class by *lines*, just without a per-method name in the marker.
+ * `--strategy auto` does not route around this; a caller who hits it can ask for
+ * `--strategy lexical` on that file. `test/guards/structural.test.ts` pins this as
+ * the stated behaviour (`'does not descend into a class body — a stated non-goal'`),
+ * not a bug: a fixture with one huge class produces no method-level collapse, on
+ * purpose, and a change here is a design decision, not a fix.
  */
 export class StructuralPlanner implements Planner {
   readonly id = STRUCTURAL_PLANNER_ID;
@@ -464,6 +483,12 @@ function restOfLineIsBlank(text: string, index: number): boolean {
  * blank-free whitespace separates it from what follows — one newline at most — so a doc
  * comment travels with its declaration, while a comment left floating above a blank
  * line stands alone.
+ *
+ * **`root` only, one level, deliberately.** This function is never called on anything
+ * but `tree.rootNode` — a class or object body one level down is never re-grouped
+ * into units of its own, so its methods are never individually matched or collapsed.
+ * See the "Non-goal" paragraph on {@link StructuralPlanner} for why, and
+ * `test/guards/structural.test.ts` for the fixture that pins it.
  *
  * Attributes attach *unconditionally*: tree-sitter-rust parses `#[inline]` as a
  * top-level sibling of the item it decorates, but the language's own rule is that an

@@ -421,6 +421,17 @@ The properties it holds, each pinned by a fixture or guard:
   totality guard (`test/guards/structural-totality.test.ts`): every id in
   `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment
   case — claiming a language without tests goes red.
+- **Non-goal, stated rather than hidden: units are root children only, one level.**
+  `unitsOf` groups the parse tree's _root_ children and nothing deeper, so a class or
+  object body is one opaque unit — kept whole the moment anything inside it matches
+  the focus, collapsed whole otherwise, never split method by method. One very large
+  class with one matching method and nothing else nearby to trade gets no elision at
+  all under this planner; `--strategy lexical` covers that shape by lines, without a
+  per-method name in the marker. Recursing into class bodies was considered and set
+  aside — it would double the shapes the outline, the budget rung and the per-rule
+  ledger all have to reason about, for a case the lexical planner already handles
+  reasonably. `test/structural.test.ts` pins the behaviour with a fixture (one class
+  the focus matches, one it does not) as a decision, not a bug to fix later.
 
 Several rules were set by measuring a claim rather than trusting it, and each is guarded
 by a mutation:
@@ -732,6 +743,21 @@ map over one damaged cache entry the map never needed. Guarded by
 cache invalidation, the corrupt-entry discard, the unreadable-entry discard, the symlink
 refusal, the default ignore list, the error wrap, the cache bound and the two statements
 of the resolution limit can each go red.
+
+**php, kotlin and bash are path-only, and the map says so.** All three carry
+`defKinds: {}` in their `LanguageProfile` — the extraction walk reads only node kinds
+whose `name` field is itself an identifier node, and none of php's `name` nodes,
+kotlin's field-less declarations or bash's `word` function names fit that shape, so
+they are omitted rather than guessed at (`RepoMapFacts`'s doc comment in
+`lang/profile.ts`). This is not a special case anywhere in `repomap/map.ts`: any file
+whose extracted tags come back with zero definitions — an unmapped language, or one of
+these three — falls into the same `pathOnly` list, under `REPO_MAP_PATH_ONLY_RULE`,
+that a file smelt cannot detect the language of already uses. The file still appears in
+the map, honestly labelled path-only, rather than looking like a structurally-supported
+language that simply had nothing to report. `test/guards/repo-map.test.ts` fixtures a
+php, a kotlin and a bash file and asserts both ends: `extractTags` itself returns
+no definitions, and `buildRepoMap` renders the file into `pathOnly`, never into a
+name-less, rank-less regular entry.
 
 **What the ranking resolves, and what it does not.** A reference binds to a definition
 **by bare identifier**. The tags carry names, not resolved symbols, so every definition

@@ -134,6 +134,33 @@ describe("the served smelt_retrieve schema is the core's, not a copy of it", () 
   });
 });
 
+/**
+ * `smelt_stats`'s source facts that keep it strict-mode registrable: `required: []`
+ * beside `additionalProperties: false`, on the tool that takes no arguments at all —
+ * the one gap this schema used to leave (a missing key reads as "not yet decided",
+ * not as "nothing required"). This is a text-level check, not a live protocol round
+ * trip: `test/tools.test.ts` runs the real `tools/list` (including this same fact,
+ * plus the universal "every schema closes to unknown keys" rule across all five
+ * tools, and `smelt_retrieve`/`smelt_retrieve_batch`'s full strict-mode validity) —
+ * a check this guard cannot make, because a `kind: 'src'` mutation points `@guard/*`
+ * at a bare copy of `src` with no `node_modules` beside it, and actually executing
+ * `createSmeltMcpServer` reaches into `@smeltjs/core`, which that copy cannot
+ * resolve. Every other check in this guard reads `server.ts` as text for the same
+ * reason; this one keeps the pairing.
+ */
+describe('smelt_stats is strict-mode shaped in its own source, not only when it happens to be served', () => {
+  it('states required: [] beside additionalProperties: false on the smelt_stats entry', () => {
+    const source = readSource('server.ts');
+    const entry = source.slice(source.indexOf('name: SMELT_STATS_TOOL_NAME,'));
+    expect(entry, 'the smelt_stats tool entry was not found in server.ts').not.toBe('');
+    expect(
+      /required:\s*\[\s*\]\s*,[\s\S]{0,80}additionalProperties:\s*false\s*,/.test(entry),
+      'smelt_stats no longer states `required: []` beside `additionalProperties: false` ' +
+        '— the tool that takes no arguments stops being strict-mode registrable',
+    ).toBe(true);
+  });
+});
+
 export const MUTATIONS: GuardMutation[] = [
   {
     id: 'mcp-retrieve-schema-reforked',
@@ -158,5 +185,12 @@ export const MUTATIONS: GuardMutation[] = [
     find: '"inlineSources": true,',
     replace: '"inlineSources": false,',
     why: 'the MCP package emitting .js.map files that name ../src/*.ts, a path its tarball never carries — dead maps for every consumer',
+  },
+  {
+    id: 'mcp-smelt-stats-schema-loses-strict-mode',
+    file: 'server.ts',
+    find: '        required: [],\n        additionalProperties: false,\n      },\n    },\n  ];\n}',
+    replace: '        required: [],\n      },\n    },\n  ];\n}',
+    why: 'smelt_stats losing additionalProperties: false in its own source — the one tool that takes no arguments at all stops being strict-mode registrable, and the source-level pin (paired with the live protocol check in test/tools.test.ts) must notice',
   },
 ];
