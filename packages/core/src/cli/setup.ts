@@ -16,7 +16,7 @@ import { detectedHarnesses, planInstall, presetToggles } from './hooks.ts';
 import { fileIsOurs } from './installed.ts';
 import { confirmLoop, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
 import type { Ask, Step } from './wizard.ts';
-import type { HooksChoices } from './hooks.ts';
+import type { HooksChoices, ManualStep } from './hooks.ts';
 import {
   CONFIG_FILE_NAME,
   CONFIG_VERSION,
@@ -26,6 +26,8 @@ import {
 } from './config.ts';
 import type { SmeltConfig, SmeltConfigStore } from './config.ts';
 import { HARNESSES, harnessById } from '../harness/registry.ts';
+import { resolveScope, scopeRoot } from '../harness/scope.ts';
+import type { InstallScope } from '../harness/scope.ts';
 import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessLabel, TIER_HONESTY } from '../harness/profile.ts';
 import { DirectoryElisionStore } from '../store-dir.ts';
@@ -87,6 +89,13 @@ export interface SetupOptions {
   readonly yes: boolean;
   readonly noMcp: boolean;
   readonly json: boolean;
+  /**
+   * This project, or this machine. Absent means detect: `user` when the working
+   * directory *is* the home directory — the only way to get one config and one store
+   * for every project, since config discovery walks up — and `project` otherwise. The
+   * wizard states what detection found and lets you flip it.
+   */
+  readonly scope?: InstallScope;
 }
 
 /** One file's fate, as the receipt and the confirm listing both spell it. */
@@ -108,6 +117,8 @@ export interface SetupCheck {
 export interface SetupReceipt {
   readonly format: 'smelt.setup.v1';
   readonly cwd: string;
+  /** Which install this run applied. Always emitted; `project` is the old behaviour. */
+  readonly scope: InstallScope;
   readonly config: { readonly action: 'written' | 'updated' | 'current' };
   readonly files: readonly SetupFileAction[];
   readonly mcp: {
@@ -131,6 +142,7 @@ interface SetupChoices {
   budgetBytes: number | undefined;
   store: SmeltConfigStore | undefined;
   registerMcp: boolean;
+  scope: InstallScope;
 }
 
 /**
@@ -203,14 +215,17 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
 
 /** `--yes`: the recipe's answers, printed loudly — never silently assumed. */
 async function yesPath(options: SetupOptions, io: SetupIo, say: Say): Promise<SetupChoices> {
+  const scope = scopeOf(options, io);
   const choices: SetupChoices = {
     harnesses: options.harnessIds.map((id) => harnessById(id)!),
     budgetBytes: SETUP_RECIPE.recommendedBudgetBytes,
     store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
     registerMcp: !options.noMcp,
+    scope,
   };
   say(
     `${CLI_NAME} setup — applying the recipe with --yes:\n` +
+      `  ${scopeLine(scope, io)}\n` +
       `  budget: ${String(SETUP_RECIPE.recommendedBudgetBytes)} bytes (written only if ` +
       `the config carries none)\n` +
       `  store: directory at ${SETUP_RECIPE.store.defaultDir} (only if the config ` +
@@ -243,12 +258,14 @@ async function wizardPath(
     budgetBytes: undefined,
     store: undefined,
     registerMcp: true,
+    scope: scopeOf(options, io),
   };
+  const detected = choices.scope;
 
   // Budget: the config's own if it carries one, else the recipe's recommendation —
   // Enter is always an answer here, which is the difference from `init`, whose
   // confirm refuses to proceed without a budget someone typed.
-  const configPath = findConfigFile(io.cwd) ?? join(io.cwd, CONFIG_FILE_NAME);
+  const configPath = setupConfigPath(io, choices.scope);
   const existingText = readIfExists(configPath);
   const existing = existingText === undefined ? undefined : parseConfig(existingText, configPath);
   const budgetDefault = existing?.defaultBudgetBytes ?? SETUP_RECIPE.recommendedBudgetBytes;
@@ -256,6 +273,13 @@ async function wizardPath(
   // The wizard kit's step machine, so back is real back: harnesses ← budget ← store
   // ← mcp, each step returning to the one before it (the first says so).
   const steps: readonly Step[] = [
+    // The scope question is asked only when detection picked `user`: from any other
+    // directory `project` is the only reading that makes sense, and a question whose
+    // answer is already certain is a question that trains people to hit Enter.
+    async (a) =>
+      options.scope !== undefined || detected === 'project'
+        ? 'ok'
+        : await stepScope(say, a, choices, io),
     async (a) => {
       if (options.harnessIds.length > 0) {
         for (const profile of choices.harnesses) say(`  ${tierLine(profile)}\n`);
@@ -278,6 +302,37 @@ async function wizardPath(
     }
     // A confirm's back lands on the last step — and from there, real back.
     await walkSteps(steps, ask, say, steps.length - 1);
+  }
+}
+
+/**
+ * The one scope question, asked only where detection said `user` — i.e. from the home
+ * directory itself. It states what was detected and why, and Enter takes it.
+ */
+async function stepScope(
+  say: Say,
+  ask: Ask,
+  choices: SetupChoices,
+  io: SetupIo,
+): Promise<'ok' | 'back'> {
+  say(
+    `\nYou are in your home directory, so this looks like a **machine-wide** install:\n` +
+      `  ${scopeLine('user', io)}\n` +
+      `  every project on this machine then finds one ${CONFIG_FILE_NAME} and one store.\n` +
+      `A project install writes into ${io.cwd} instead, and only that project sees it.\n`,
+  );
+  for (;;) {
+    const answer = await ask(`scope (1 machine / 2 project) [1]> `);
+    if (answer === 'back') return 'back';
+    if (answer === '' || answer === '1') {
+      choices.scope = 'user';
+      return 'ok';
+    }
+    if (answer === '2') {
+      choices.scope = 'project';
+      return 'ok';
+    }
+    say(`1 for this machine, 2 for this project.\n`);
   }
 }
 
@@ -394,8 +449,8 @@ async function confirm(
   const plan =
     choices.harnesses.length === 0
       ? undefined
-      : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version));
-  say(`\nAbout to apply, into ${io.cwd}:\n`);
+      : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version, io));
+  say(`\nAbout to apply, into ${setupRoot(io, choices.scope)}:\n`);
   say(
     `  ${CONFIG_FILE_NAME.padEnd(32)} (budget ` +
       `${String(choices.budgetBytes ?? SETUP_RECIPE.recommendedBudgetBytes)}, strategy ` +
@@ -411,18 +466,14 @@ async function confirm(
       fileFate,
     );
   }
-  const mcpApplied = choices.harnesses.some((profile) =>
-    profile.install.some(
-      (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
-    ),
-  );
+  const mcp = mcpVerdict(choices, plan?.manual ?? []);
   say(
     `  mcp ${
-      !choices.registerMcp
+      mcp.status === 'skipped'
         ? '(skipped)'
-        : mcpApplied
-          ? `(applied beside your existing servers: ${SETUP_RECIPE.mcp.register})`
-          : `(manual step: ${SETUP_RECIPE.mcp.register})`
+        : mcp.status === 'applied'
+          ? `(applied beside your existing servers: ${String(mcp.command)})`
+          : `(manual step: ${String(mcp.command)})`
     }\nNothing has been written yet.\n`,
   );
   const confirmed = await confirmLoop(
@@ -453,7 +504,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
 
   // ── config first: the hooks plan reads the settled bytes back, so a second run
   //    plans the same file as `unchanged` instead of chasing its own tail ──
-  const configPath = findConfigFile(io.cwd) ?? join(io.cwd, CONFIG_FILE_NAME);
+  const configPath = setupConfigPath(io, choices.scope);
   const before = readIfExists(configPath);
   const existing = before === undefined ? undefined : parseConfig(before, configPath);
   const budget =
@@ -493,7 +544,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
   const plan =
     choices.harnesses.length === 0
       ? undefined
-      : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version));
+      : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version, io));
   if (plan !== undefined) {
     for (const file of plan.files) {
       if (file.unchanged) {
@@ -531,22 +582,21 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
       });
     }
     notes.push(...plan.notes);
+    for (const skip of plan.skipped) {
+      files.push({ name: skip.name, action: 'skipped', detail: skip.why });
+    }
+    for (const step of plan.manual) {
+      notes.push(
+        `${step.harness}: ${step.name} is ${step.harness}'s to write — run: ${step.command}`,
+      );
+    }
   }
 
   // ── mcp: applied where a profile carries either registration step (JSON or TOML),
   //    handed over as the exact command where none does (no harness named, or a
   //    harness whose registration this preset does not yet know) — never pretending
   //    it ran something it did not ──
-  const mcpApplied = choices.harnesses.some((profile) =>
-    profile.install.some(
-      (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
-    ),
-  );
-  const mcp: SetupReceipt['mcp'] = !choices.registerMcp
-    ? { status: 'skipped' }
-    : mcpApplied
-      ? { status: 'applied', command: SETUP_RECIPE.mcp.register }
-      : { status: 'manual', command: SETUP_RECIPE.mcp.register };
+  const mcp = mcpVerdict(choices, plan?.manual ?? []);
 
   // ── verify: the checks that make "set up" a claim with evidence ──
   const checks: SetupCheck[] = [];
@@ -572,6 +622,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
   const failedChecks = checks.filter((check) => !check.ok).length;
   return {
     receipt: {
+      scope: choices.scope,
       config: { action: configAction },
       files,
       mcp,
@@ -601,7 +652,7 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
   }
   if (mcp.status === 'manual') {
     say(
-      `MCP registration stays in your hands (no selected harness carries it):\n` +
+      `MCP registration stays in your hands:\n` +
         `  ${mcp.command}\n` +
         `packages/mcp/README.md has the mechanism for every harness surveyed.\n`,
     );
@@ -717,17 +768,80 @@ function hooksChoices(
   choices: SetupChoices,
   cwd: string,
   version: string | undefined,
+  io: SetupIo,
 ): HooksChoices {
+  const home = io.home ?? homedir();
   return {
     harnesses: choices.harnesses,
     ...(version === undefined ? {} : { writtenBy: version }),
     // Read off what is actually installed, falling back to the installer's defaults
     // when nothing of smelt's is on disk — the same "edit, never reset" reading the
     // hooks installer itself uses. No second copy of the defaults lives here.
-    ...presetToggles(cwd),
+    ...presetToggles(cwd, { scope: choices.scope, home }),
     enforcement: 'deny',
     thresholdBytes: DEFAULT_THRESHOLD_BYTES,
+    scope: choices.scope,
+    home,
   };
+}
+
+/** The scope this run applies: what the caller named, else what detection found. */
+function scopeOf(options: SetupOptions, io: SetupIo): InstallScope {
+  return resolveScope(options.scope, { cwd: io.cwd, home: io.home ?? homedir() });
+}
+
+/** The directory this scope's files live under. */
+function setupRoot(io: SetupIo, scope: InstallScope): string {
+  return scopeRoot(scope, { cwd: io.cwd, home: io.home ?? homedir() });
+}
+
+/**
+ * Where the config goes. At project scope it is *discovered* — the nearest one above
+ * the project wins, which is what lets a monorepo carry one. At user scope it is
+ * *decided*: `~/smelt.config.json`, the file every project below finds by walking up,
+ * with the recipe's directory store under it at `~/.smelt/store`.
+ */
+function setupConfigPath(io: SetupIo, scope: InstallScope): string {
+  const root = setupRoot(io, scope);
+  if (scope === 'user') return join(root, CONFIG_FILE_NAME);
+  return findConfigFile(io.cwd) ?? join(io.cwd, CONFIG_FILE_NAME);
+}
+
+/** The one line setup prints about where it is applying, at either scope. */
+function scopeLine(scope: InstallScope, io: SetupIo): string {
+  const root = setupRoot(io, scope);
+  return scope === 'user'
+    ? `scope: this machine — ${join(root, CONFIG_FILE_NAME)}, store at ` +
+        `${join(root, SETUP_RECIPE.store.defaultDir)}, harness files at their ` +
+        `documented user-level locations`
+    : `scope: this project — ${root}`;
+}
+
+/**
+ * The MCP verdict, read off the plan rather than off the profile list.
+ *
+ * A profile carrying an mcp step does not mean *this scope* writes it: Claude Code's
+ * user-scope registration lives in a file Claude Code owns, so at user scope the step
+ * is a printed command. Reading the profile alone would have the receipt say `applied`
+ * for a registration nobody performed — the receipt lying in the direction that costs
+ * the agent a working MCP server.
+ */
+function mcpVerdict(choices: SetupChoices, manual: readonly ManualStep[]): SetupReceipt['mcp'] {
+  if (!choices.registerMcp) return { status: 'skipped' };
+  const manualMcp = manual.find(
+    (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
+  );
+  if (manualMcp !== undefined) return { status: 'manual', command: manualMcp.command };
+  const applied = choices.harnesses.some((profile) =>
+    profile.install.some(
+      (step) =>
+        (step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration') &&
+        !(choices.scope === 'user' && step.user === undefined),
+    ),
+  );
+  return applied
+    ? { status: 'applied', command: SETUP_RECIPE.mcp.register }
+    : { status: 'manual', command: SETUP_RECIPE.mcp.register };
 }
 
 function tierLine(profile: HarnessProfile): string {

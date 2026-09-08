@@ -75,6 +75,11 @@ export const codex: ShimmedHarnessProfile = {
   detect: ['.codex'],
   detectHome: ['.codex'],
   instructionFile: 'AGENTS.md',
+  // Verified 2026-09-09: `~/.codex/AGENTS.md` is loaded unconditionally by the
+  // CodexHome user-instructions provider (codex-rs/codex-home/src/instructions), and
+  // the User config layer's `.codex/` folder is where `hooks.json` is read from
+  // (codex-rs/config/src/state.rs `hooks_config_folder`).
+  userInstructionFile: '.codex/AGENTS.md',
   instructions: 'snippet',
   caveats: [
     'project-level Codex hooks run only once the project is trusted (features.hooks; see docs/research/2026-09-02-agent-enforcement.md § 3)',
@@ -88,10 +93,12 @@ export const codex: ShimmedHarnessProfile = {
       matchers: ['Read', 'Bash'],
       entry: 'command-list',
       lifecycle: true,
+      user: { file: '.codex/hooks.json' },
     },
     {
       kind: 'marker-block',
       file: '.codex/config.toml',
+      user: { file: '.codex/config.toml' },
       block: codexConfigTomlBlock,
       start: SNIPPET_START_HASH,
       end: SNIPPET_END_HASH,
@@ -103,6 +110,7 @@ export const codex: ShimmedHarnessProfile = {
     {
       kind: 'toml-mcp-registration',
       file: '.codex/config.toml',
+      user: { file: '.codex/config.toml' },
       path: ['mcp_servers', 'smelt'],
       entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },

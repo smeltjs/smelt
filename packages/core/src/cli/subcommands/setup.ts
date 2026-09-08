@@ -8,8 +8,10 @@ import { colorize } from '../lava.ts';
 import { CLI_NAME } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
+import { parseScope } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
+import type { InstallScope } from '../../harness/scope.ts';
 
 /**
  * `smelt setup` — the one-command front door for the whole recipe. The flow itself is
@@ -31,15 +33,17 @@ export interface SetupInvocation {
   readonly yes: boolean;
   readonly noMcp: boolean;
   readonly json: boolean;
+  /** Absent means detect — see `harness/scope.ts`. */
+  readonly scope?: InstallScope;
 }
 
 export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
   name: 'setup',
-  flags: ['harness', 'yes', 'no-mcp', 'json'],
+  flags: ['harness', 'scope', 'yes', 'no-mcp', 'json'],
   refusal: `setup applies the recipe; answer it with --yes (and --harness, --no-mcp, --json) or let it ask.`,
   usage: {
     synopsis: [],
-    occasional: ['setup [--harness <id>]... [--yes] [--no-mcp] [--json]'],
+    occasional: ['setup [--harness <id>]... [--scope <where>] [--yes] [--no-mcp] [--json]'],
     section: {
       heading: 'SETUP',
       body:
@@ -47,7 +51,7 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
         `  hooks preset for the harnesses you name, the MCP registration step, and a real\n` +
         `  smelt → retrieve round trip to prove the loop. Interactive from a terminal; for\n` +
         `  an agent, answer everything up front:\n\n` +
-        `    ${CLI_NAME} setup --yes [--harness <id>]... [--no-mcp] [--json]\n\n` +
+        `    ${CLI_NAME} setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]\n\n` +
         `  The defaults are the recipe's: budget ${SETUP_RECIPE.recommendedBudgetBytes} bytes\n` +
         `  (written only when the config carries none), a directory store at\n` +
         `  ${SETUP_RECIPE.store.defaultDir} (only when the config carries none). Existing\n` +
@@ -81,12 +85,14 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
           `The interactive flow's output is for humans.`,
       );
     }
+    const scope = parseScope(values.scope);
     return {
       mode: 'setup',
       harnessIds,
       yes,
       noMcp: values['no-mcp'] === true,
       json,
+      ...(scope === undefined ? {} : { scope }),
     };
   },
 

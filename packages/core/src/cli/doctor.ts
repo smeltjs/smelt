@@ -1,10 +1,13 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { probeHookCommand } from '../harness/hook-command.ts';
 import type { HookCommand, HookProbe } from '../harness/hook-command.ts';
 import { hasShim } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
+import { resolveScope, scopeRoot } from '../harness/scope.ts';
+import type { InstallScope } from '../harness/scope.ts';
 
 import { CONFIG_FILE_NAME, CONFIG_VERSION } from './config.ts';
 import { readInstalledState } from './installed.ts';
@@ -48,12 +51,22 @@ export interface DoctorIo {
   readonly output: (text: string) => void;
   /** Where installed state is read: config discovery, instruction files, hook files. */
   readonly cwd: string;
+  /** The home directory a user-scope reading looks in. Defaults to the real one. */
+  readonly home?: string;
   /** The running binary's version — what "current" is measured against. */
   readonly version: string;
 }
 
 export interface DoctorOptions {
   readonly json: boolean;
+  /**
+   * Which install to read: this project, or this machine. Absent means detect —
+   * `user` when the working directory *is* the home directory, `project` otherwise.
+   * A doctor that read the project paths while the install went to the home directory
+   * would report a healthy install where nothing is wired, which is the same silent
+   * agreement between writer and reader that InstallScope exists to end.
+   */
+  readonly scope?: InstallScope;
 }
 
 /**
@@ -110,6 +123,8 @@ export interface DoctorReceipt {
   /** True when something is installed and nothing is behind and there are no orphans. */
   readonly current: boolean;
   readonly installed: boolean;
+  /** Which install this receipt is about. Always emitted; `project` is the old shape. */
+  readonly scope: InstallScope;
   readonly config: DoctorConfig;
   readonly blocks: readonly DoctorBlock[];
   readonly hookFiles: readonly string[];
@@ -131,7 +146,10 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   const orphans: string[] = [];
   const repair: string[] = [];
 
-  const state = readInstalledState(io.cwd);
+  const home = io.home ?? homedir();
+  const scope = resolveScope(options.scope, { cwd: io.cwd, home });
+  const root = scopeRoot(scope, { cwd: io.cwd, home });
+  const state = readInstalledState(io.cwd, { scope, home });
 
   // ── verdict: blocks vs the running binary ──
   const blocks: DoctorBlock[] = state.blocks.map((block) => ({
@@ -142,14 +160,19 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   }));
   const behindBlocks = blocks.filter((block) => block.status === 'behind');
   for (const block of behindBlocks) {
-    repair.push(...block.harnesses.map((id) => `${CLI_NAME} setup --harness ${id}`));
+    repair.push(
+      ...block.harnesses.map((id) => `${CLI_NAME} setup --harness ${id}${scopeFlag(scope)}`),
+    );
   }
 
   // ── the wiring, probed: does the command each entry carries still do anything? ──
   const hooks = probeHookFiles(state.hooks, io.cwd);
   const brokenHooks = hooks.filter((file) => hookFileStatus(file) !== 'fires');
   for (const file of brokenHooks) {
-    repair.push(`${CLI_NAME} setup --harness ${file.harness}`);
+    repair.push(`${CLI_NAME} setup --harness ${file.harness}${scopeFlag(scope)}`);
+  }
+  for (const one of state.mcp) {
+    if (one.manual !== undefined && !one.registered) repair.push(one.manual);
   }
 
   // ── config detail + the store-directory orphan ──
@@ -160,10 +183,10 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       orphans.push(
         `${CONFIG_FILE_NAME} is malformed: ${state.config.malformedWhy ?? 'unparseable JSON'}`,
       );
-      repair.push(`${CLI_NAME} setup`);
+      repair.push(`${CLI_NAME} setup${scopeFlag(scope)}`);
     } else {
       const parsed = state.config.parsed;
-      const configPath = state.config.path ?? join(io.cwd, CONFIG_FILE_NAME);
+      const configPath = state.config.path ?? join(root, CONFIG_FILE_NAME);
       const dirExists =
         parsed.store?.kind === 'directory'
           ? existsSync(join(dirname(configPath), parsed.store.path))
@@ -185,7 +208,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
         orphans.push(
           `the store directory (${parsed.store.path}) does not exist — retrieves across processes would fail`,
         );
-        repair.push(`${CLI_NAME} setup`);
+        repair.push(`${CLI_NAME} setup${scopeFlag(scope)}`);
       }
     }
   }
@@ -196,13 +219,13 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     orphans.push(
       'an MCP registration is present but no hooks wiring is — the guard and the retrieval contract travel together',
     );
-    repair.push(`${CLI_NAME} setup`);
+    repair.push(`${CLI_NAME} setup${scopeFlag(scope)}`);
   }
   if (wired && !state.config.present) {
     orphans.push(
       'hooks are wired but there is no smelt.config.json — the store and budget the hooks promise live there',
     );
-    repair.push(`${CLI_NAME} setup`);
+    repair.push(`${CLI_NAME} setup${scopeFlag(scope)}`);
   }
 
   // ── verdict ──
@@ -210,7 +233,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   const current =
     installed && behindBlocks.length === 0 && orphans.length === 0 && brokenHooks.length === 0;
 
-  say(`${CLI_NAME} doctor — binary ${io.version}, reading ${io.cwd}\n`);
+  say(`${CLI_NAME} doctor — binary ${io.version}, reading ${root} (${scope} scope)\n`);
   if (!installed) {
     say(`Nothing of smelt's is installed here. \`${CLI_NAME} setup\` would change that.\n`);
   } else {
@@ -239,6 +262,12 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     }
     for (const one of state.mcp) {
       if (one.registered) say(`  ${one.file}: ${one.server} registered\n`);
+      // A registration the harness owns is a step a person runs, so an absent one is
+      // reported with the command rather than silently. It does not cost `current`:
+      // smelt never wrote it and cannot know it was wanted.
+      else if (one.manual !== undefined) {
+        say(`  ${one.file}: ${one.server} not registered — run: ${one.manual}\n`);
+      }
     }
     for (const orphan of orphans) say(`  ORPHAN: ${orphan}\n`);
     if (behindBlocks.length > 0) {
@@ -263,6 +292,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       version: io.version,
       current,
       installed,
+      scope,
       config,
       blocks,
       hookFiles: [...state.hookFiles],
@@ -274,6 +304,15 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     io.output(JSON.stringify(receipt, null, 2) + '\n');
   }
   return current || !installed ? EXIT.ok : EXIT.refused;
+}
+
+/**
+ * The `--scope` a repair command has to carry to repair *this* reading. Project scope
+ * is the detected default from a project directory, so it stays silent; a user-scope
+ * repair must say so, or the command doctor printed would repair the wrong install.
+ */
+function scopeFlag(scope: InstallScope): string {
+  return scope === 'user' ? ' --scope user' : '';
 }
 
 /** The verdict over one block: whole-owned files carry no stamp to compare. */

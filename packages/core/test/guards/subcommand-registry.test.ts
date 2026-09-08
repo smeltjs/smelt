@@ -59,6 +59,7 @@ const FLAG_ARGV: Record<VerbFlag, readonly string[]> = {
   ignore: ['--ignore', 'vendor'],
   cache: ['--cache', '.smelt-tags'],
   harness: ['--harness', 'codex'],
+  scope: ['--scope', 'project'],
   yes: ['--yes'],
   'no-mcp': ['--no-mcp'],
   strict: ['--strict'],
@@ -73,10 +74,10 @@ const OWNED: Record<Verb, readonly VerbFlag[]> = {
   map: ['budget', 'focus', 'ignore', 'cache', 'json'],
   retrieve: [],
   stats: ['json'],
-  hooks: ['harness'],
+  hooks: ['harness', 'scope'],
   agents: ['strict', 'json'],
-  setup: ['harness', 'yes', 'no-mcp', 'json'],
-  doctor: ['json'],
+  setup: ['harness', 'scope', 'yes', 'no-mcp', 'json'],
+  doctor: ['scope', 'json'],
 };
 
 /** How a verb is named in its own refusal — the default verb has no word to use. */

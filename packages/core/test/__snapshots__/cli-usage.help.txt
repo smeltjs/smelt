@@ -6,15 +6,15 @@ USAGE
   smelt map <dir> --budget <bytes> [--focus <term>]... [--ignore <entry>]... [--cache <dir>]
   smelt retrieve <hash>
   smelt stats [--json]
-  smelt hooks install [--harness <id>]
-  smelt hooks remove [--harness <id>]
+  smelt hooks install [--harness <id>] [--scope <where>]
+  smelt hooks remove [--harness <id>] [--scope <where>]
   smelt agents lint [dir] [--strict] [--json]
-  smelt doctor [--json]
+  smelt doctor [--scope <where>] [--json]
   smelt --reconstruct <result.json>
   smelt --reconstruct < result.json
   smelt init
   smelt agents split [dir]
-  smelt setup [--harness <id>]... [--yes] [--no-mcp] [--json]
+  smelt setup [--harness <id>]... [--scope <where>] [--yes] [--no-mcp] [--json]
 
 Smelted text goes to stdout and the report goes to stderr, so the two can be piped
 apart:  smelt big.log --budget 4000 > small.log
@@ -113,7 +113,7 @@ SETUP
   smelt → retrieve round trip to prove the loop. Interactive from a terminal; for
   an agent, answer everything up front:
 
-    smelt setup --yes [--harness <id>]... [--no-mcp] [--json]
+    smelt setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]
 
   The defaults are the recipe's: budget 4000 bytes
   (written only when the config carries none), a directory store at
@@ -166,6 +166,14 @@ OPTIONS
                        claude-code, codex, gemini, grok, hermes, cursor, opencode,
                        cline, kilocode, aider.
                        Repeatable for setup; hooks takes one per run.
+  --scope <where>      project | user. Where the install lives: this project, or this
+                       machine. Defaults to user when the working directory is your home
+                       directory, project everywhere else. At user scope the config is
+                       ~/smelt.config.json — which every project below finds, since
+                       discovery walks up — the store is ~/.smelt/store,
+                       and each harness file goes to that harness's own documented
+                       user-level location; one that documents none is reported skipped,
+                       never guessed.
   --yes                setup only. Non-interactive setup: the recipe's defaults, printed
                        loudly as they are applied. Existing files are never
                        overwritten — skipped with a note; hooks install edits

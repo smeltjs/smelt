@@ -1,6 +1,7 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
 import { nodeCommand, shimScriptPath } from './paths.ts';
+import { renderRoot } from './scope.ts';
 import type { HarnessInstallContext, ShimmedHarnessProfile } from './profile.ts';
 import { SNIPPET_END_HASH, SNIPPET_START_HASH } from './snippet.ts';
 
@@ -47,7 +48,7 @@ function hermesHooksYaml(ctx: HarnessInstallContext): string {
 # file directly, merge the \`hooks:\` section into ~/.hermes/config.yaml.
 hooks:
   pre_tool_call:
-    - command: ${nodeCommand(ctx.cwd, shimScriptPath(hermes, ctx.distDir))}
+    - command: ${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(hermes, ctx.distDir))}
 ${SNIPPET_END_HASH}
 `;
 }
@@ -61,6 +62,10 @@ export const hermes: ShimmedHarnessProfile = {
   detectHome: ['.hermes'],
   instructionFile: 'AGENTS.md',
   instructions: 'snippet',
+  // Project-only at user scope, deliberately: `.hermes/hooks.yaml` is smelt's own
+  // invention (the written file says so), and the file Hermes documents at home level
+  // is `~/.hermes/config.yaml`, which is theirs — merging into it is the hand-edit the
+  // written file already asks for. Nothing here is guessed into `~`.
   caveats: [
     'Hermes memory tools bypass disabled_toolsets (NousResearch/hermes-agent#46171) — treat tool gating there as leaky',
     'hook config may need merging into ~/.hermes/config.yaml by hand; the written file says how',

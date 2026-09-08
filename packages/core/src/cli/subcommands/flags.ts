@@ -1,11 +1,15 @@
 import { SUPPORTED_LANGUAGES } from '../../detect.ts';
 import { CliUsageError } from '../../errors.ts';
 import { HARNESS_IDS } from '../../harness/registry.ts';
+import { INSTALL_SCOPES } from '../../harness/scope.ts';
+import type { InstallScope } from '../../harness/scope.ts';
 import { budgetFault, budgetMalformed } from '../../ops/inputs.ts';
 import type { BudgetFault } from '../../ops/inputs.ts';
 import { STRATEGIES, DEFAULT_STRATEGY } from '../../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../../plan/structural.ts';
 import { DEFAULT_REPO_IGNORE } from '../../repomap/map.ts';
+import { SETUP_RECIPE } from '../../setup/recipe.ts';
+import { CONFIG_FILE_NAME } from '../config.ts';
 import { CLI_NAME } from '../shell.ts';
 
 /**
@@ -44,6 +48,12 @@ export const CLI_FLAGS = {
    * records how argv is read, not how many a verb accepts.
    */
   harness: { type: 'string', multiple: true },
+  /**
+   * `project` or `user` — which install the three install-seam verbs act on. One flag,
+   * three verbs, because a setup at one scope and a doctor at the other would agree an
+   * install is healthy while nothing is wired.
+   */
+  scope: { type: 'string' },
   yes: { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
   strict: { type: 'boolean' },
@@ -216,6 +226,19 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'Repeatable for setup; hooks takes one per run.',
     ],
   },
+  scope: {
+    label: '--scope <where>',
+    body: () => [
+      `${INSTALL_SCOPES.join(' | ')}. Where the install lives: this project, or this`,
+      'machine. Defaults to user when the working directory is your home',
+      'directory, project everywhere else. At user scope the config is',
+      `~/${CONFIG_FILE_NAME} — which every project below finds, since`,
+      `discovery walks up — the store is ~/${SETUP_RECIPE.store.defaultDir},`,
+      "and each harness file goes to that harness's own documented",
+      'user-level location; one that documents none is reported skipped,',
+      'never guessed.',
+    ],
+  },
   yes: {
     label: '--yes',
     body: () => [
@@ -295,4 +318,21 @@ export function parseBudget(raw: string | undefined): number | undefined {
 /** The malformed-budget refusal, in the CLI's currency: prefixed, and exit 2. */
 function refuseBudget(fault: BudgetFault, raw: string): CliUsageError {
   return new CliUsageError(`${CLI_NAME}: ${budgetMalformed(fault, '--budget', raw)}`);
+}
+
+/**
+ * `--scope project|user`, or `undefined` when nobody typed it — which is not the same
+ * as `project`: absent means *detect*, and the three verbs that own this flag detect
+ * the same way (`resolveScope` in `harness/scope.ts`).
+ *
+ * It lives with the flag rather than with a verb because three verbs own it, and the
+ * three of them agreeing on what `user` means is the whole point: a setup at one scope
+ * and a doctor at the other would report a healthy install with nothing wired.
+ */
+export function parseScope(raw: string | undefined): InstallScope | undefined {
+  if (raw === undefined) return undefined;
+  if ((INSTALL_SCOPES as readonly string[]).includes(raw)) return raw as InstallScope;
+  throw new CliUsageError(
+    `${CLI_NAME}: --scope takes ${INSTALL_SCOPES.join(' or ')}, got "${raw}".`,
+  );
 }

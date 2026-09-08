@@ -56,6 +56,10 @@ export const grok: ShimmedHarnessProfile = {
     {
       kind: 'toml-mcp-registration',
       file: '.grok/config.toml',
+      // `~/.grok/config.toml` is the documented user-level config (docs.x.ai/build/
+      // settings/reference, verified 2026-09-08). The hooks file's user-level home is
+      // not documented anywhere we could find, so that step stays project-only.
+      user: { file: '.grok/config.toml' },
       path: ['mcp_servers', 'smelt'],
       entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },

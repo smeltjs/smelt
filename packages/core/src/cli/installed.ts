@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { findConfigFile, parseConfig } from './config.ts';
+import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from './config.ts';
 import type { SmeltConfig } from './config.ts';
 import { jsonHooksContainOurs, parseHookEntries } from '../harness/hook-command.ts';
 import type { HookEntry } from '../harness/hook-command.ts';
-import { GUARD_ONLY_FILES, HARNESS_PROFILES, JSON_HOOK_FILES } from '../harness/registry.ts';
+import { HARNESS_PROFILES, JSON_HOOK_FILE_NAMES } from '../harness/registry.ts';
+import { instructionArtefact, locateStep } from '../harness/scope.ts';
+import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
 import { hasTomlEntry } from '../text/toml-edit.ts';
 
@@ -42,6 +45,12 @@ export interface InstalledMcp {
   readonly file: string;
   readonly server: string;
   readonly registered: boolean;
+  /**
+   * The command that performs this registration where the file is the harness's own
+   * to rewrite and not smelt's to edit — Claude Code's `~/.claude.json` at user scope.
+   * Absent for a registration smelt writes itself, which is every project-scope one.
+   */
+  readonly manual?: string;
 }
 
 /** The config as it sits: present, parseable, or malformed (a finding, not a crash). */
@@ -91,27 +100,44 @@ export interface InstalledState {
  * (the guard command carries only a shim path), the token for everything else.
  */
 export function fileIsOurs(name: string, text: string): boolean {
-  return JSON_HOOK_FILES.includes(name) ? jsonHooksContainOurs(text) : text.includes(OURS_TOKEN);
+  return JSON_HOOK_FILE_NAMES.includes(name)
+    ? jsonHooksContainOurs(text)
+    : text.includes(OURS_TOKEN);
 }
 
-/** Everything installed, read once. Pure reads; safe to call on any directory. */
-export function readInstalledState(cwd: string): InstalledState {
+/**
+ * Everything installed, read once. Pure reads; safe to call on any directory.
+ *
+ * Every path goes through `locateStep` — the same resolver the installer wrote with —
+ * so a user-scope reading looks at `~/.claude/settings.json` and a project-scope one
+ * is unchanged. Reading from the project spellings while the writer used the user ones
+ * is how doctor and setup would agree an install is healthy while nothing is wired.
+ */
+export function readInstalledState(
+  cwd: string,
+  where: { readonly scope?: InstallScope; readonly home?: string } = {},
+): InstalledState {
+  const scope: InstallScope = where.scope ?? 'project';
+  const home = where.home ?? homedir();
+  const rootsFor = (harness: string): ScopeRoots => ({ cwd, home, harness });
+
   // ── instruction blocks: every profile's instruction file that exists and is ours ──
-  const owners = new Map<string, string[]>();
+  const owners = new Map<string, { name: string; harnesses: string[] }>();
   for (const profile of Object.values(HARNESS_PROFILES)) {
-    const list = owners.get(profile.instructionFile) ?? [];
-    list.push(profile.id);
-    owners.set(profile.instructionFile, list);
+    const located = locateStep(instructionArtefact(profile), scope, rootsFor(profile.name));
+    if (located.path === undefined || located.name === undefined) continue;
+    const entry = owners.get(located.path) ?? { name: located.name, harnesses: [] };
+    entry.harnesses.push(profile.id);
+    owners.set(located.path, entry);
   }
   const blocks: InstalledBlock[] = [];
-  for (const [file, harnesses] of owners) {
-    const path = join(cwd, file);
+  for (const [path, { name, harnesses }] of owners) {
     if (!existsSync(path)) continue;
     const text = readFileSync(path, 'utf8');
     if (!text.includes(OURS_TOKEN)) continue;
     const installedBy = snippetStampVersion(text);
     blocks.push({
-      file,
+      file: name,
       harnesses,
       ...(installedBy === undefined ? {} : { installedBy }),
       stampable: text.includes(SNIPPET_START_MD),
@@ -121,15 +147,23 @@ export function readInstalledState(cwd: string): InstalledState {
   // ── hook wiring: JSON hook files and guard-only shims that carry our entries ──
   const hookFiles: string[] = [];
   const hooks: InstalledHookFile[] = [];
-  for (const name of [...JSON_HOOK_FILES, ...GUARD_ONLY_FILES]) {
-    const path = join(cwd, name);
-    if (!existsSync(path)) continue;
-    const text = readFileSync(path, 'utf8');
-    if (!fileIsOurs(name, text)) continue;
-    hookFiles.push(name);
-    const harness = jsonHookFileOwner(name);
-    if (harness !== undefined) {
-      hooks.push({ file: name, harness, entries: parseHookEntries(text) });
+  const seenHookPaths = new Set<string>();
+  for (const profile of Object.values(HARNESS_PROFILES)) {
+    for (const step of profile.install) {
+      const isJson = step.kind === 'json-hooks';
+      const isGuardOnly = step.kind === 'own-file' && step.guardOnly;
+      if (!isJson && !isGuardOnly) continue;
+      const located = locateStep(step, scope, rootsFor(profile.name));
+      if (located.path === undefined || located.name === undefined) continue;
+      if (seenHookPaths.has(located.path)) continue;
+      seenHookPaths.add(located.path);
+      if (!existsSync(located.path)) continue;
+      const text = readFileSync(located.path, 'utf8');
+      if (isJson ? !jsonHooksContainOurs(text) : !text.includes(OURS_TOKEN)) continue;
+      hookFiles.push(located.name);
+      if (isJson) {
+        hooks.push({ file: located.name, harness: profile.id, entries: parseHookEntries(text) });
+      }
     }
   }
 
@@ -138,21 +172,31 @@ export function readInstalledState(cwd: string): InstalledState {
   for (const profile of Object.values(HARNESS_PROFILES)) {
     for (const step of profile.install) {
       if (step.kind !== 'mcp-registration' && step.kind !== 'toml-mcp-registration') continue;
-      const key = `${step.file}·${step.path[1]}`;
+      const located = locateStep(step, scope, rootsFor(profile.name));
+      if (located.path === undefined || located.name === undefined) continue;
+      const key = `${located.path}·${step.path[1]}`;
       if (mcp.has(key)) continue;
+      // A `manual` registration is read exactly like any other — the file is the
+      // harness's to write, not ours, and doctor's job is to say whether the entry is
+      // there. Reading is never writing (ADR-0003).
       mcp.set(key, {
-        file: step.file,
+        file: located.name,
         server: step.path[1],
         registered:
           step.kind === 'mcp-registration'
-            ? mcpEntryRegistered(cwd, step.file, step.path)
-            : tomlMcpEntryRegistered(cwd, step.file, step.path),
+            ? mcpEntryRegistered(located.path, step.path)
+            : tomlMcpEntryRegistered(located.path, step.path),
+        ...(located.manual === undefined ? {} : { manual: located.manual }),
       });
     }
   }
 
   // ── the config ──
-  const configPath = findConfigFile(cwd);
+  // At user scope the config is `~/smelt.config.json`, decided rather than discovered:
+  // that one file is what every project below the home directory finds by walking up,
+  // and walking up from `~` looking for somebody else's would defeat the point.
+  const configPath =
+    scope === 'user' ? existingOrUndefined(join(home, CONFIG_FILE_NAME)) : findConfigFile(cwd);
   let config: InstalledConfig = { present: false };
   if (configPath !== undefined) {
     try {
@@ -174,23 +218,13 @@ export function readInstalledState(cwd: string): InstalledState {
   return { blocks, hookFiles, hooks, mcp: [...mcp.values()], config };
 }
 
-/**
- * The harness whose `json-hooks` step declares this file, or `undefined` when no step
- * does (a guard-only file, which is nobody's event table). Derived from the registry:
- * a harness that starts writing a new settings file is read back by existing.
- */
-function jsonHookFileOwner(file: string): string | undefined {
-  for (const profile of Object.values(HARNESS_PROFILES)) {
-    for (const step of profile.install) {
-      if (step.kind === 'json-hooks' && step.file === file) return profile.id;
-    }
-  }
-  return undefined;
+/** A path when it exists, `undefined` when it does not — the config's own presence. */
+function existingOrUndefined(path: string): string | undefined {
+  return existsSync(path) ? path : undefined;
 }
 
 /** The server entry a profile declares, present and parseable on disk or not. */
-function mcpEntryRegistered(cwd: string, file: string, path: readonly [string, string]): boolean {
-  const full = join(cwd, file);
+function mcpEntryRegistered(full: string, path: readonly [string, string]): boolean {
   if (!existsSync(full)) return false;
   try {
     const parsed: unknown = JSON.parse(readFileSync(full, 'utf8'));
@@ -204,12 +238,7 @@ function mcpEntryRegistered(cwd: string, file: string, path: readonly [string, s
 }
 
 /** {@link mcpEntryRegistered}'s TOML sibling — table form or dotted form, either counts. */
-function tomlMcpEntryRegistered(
-  cwd: string,
-  file: string,
-  path: readonly [string, string],
-): boolean {
-  const full = join(cwd, file);
+function tomlMcpEntryRegistered(full: string, path: readonly [string, string]): boolean {
   if (!existsSync(full)) return false;
   return hasTomlEntry(readFileSync(full, 'utf8'), path);
 }

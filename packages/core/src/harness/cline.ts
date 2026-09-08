@@ -1,6 +1,7 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
 import { nodeCommand, shimScriptPath } from './paths.ts';
+import { renderRoot } from './scope.ts';
 import type { HarnessInstallContext, ShimmedHarnessProfile } from './profile.ts';
 
 /**
@@ -33,7 +34,7 @@ function clineHookSource(ctx: HarnessInstallContext): string {
 # smelt:hooks v1 — Cline PreToolUse hook. EXPERIMENTAL tier: schema mapped from the
 # capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, Cline row),
 # not yet smoke-tested against the real binary. Written by \`smelt hooks install\`.
-exec ${nodeCommand(ctx.cwd, shimScriptPath(cline, ctx.distDir))}
+exec ${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(cline, ctx.distDir))}
 `;
 }
 
@@ -44,6 +45,9 @@ export const cline: ShimmedHarnessProfile = {
   detect: ['.clinerules'],
   detectHome: [],
   instructionFile: '.clinerules/smelt.md',
+  // Verified 2026-09-09: docs.cline.bot/cli/configuration lays out `~/.cline/` with
+  // `rules/` (global rules) and `hooks/` (global hooks) beside each other.
+  userInstructionFile: '.cline/rules/smelt.md',
   instructions: 'snippet',
   caveats: ['deny-only hooks: input rewrite is not supported, so rewrite mode falls back to deny'],
   hooks: HOOKS,
@@ -51,6 +55,7 @@ export const cline: ShimmedHarnessProfile = {
     {
       kind: 'own-file',
       file: '.clinerules/hooks/PreToolUse',
+      user: { file: '.cline/hooks/PreToolUse' },
       content: clineHookSource,
       mode: 0o755,
       guardOnly: true,

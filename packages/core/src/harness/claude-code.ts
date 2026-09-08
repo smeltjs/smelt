@@ -1,6 +1,6 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
-import { MCP_RUN_ARGS } from '../setup/recipe.ts';
+import { MCP_RUN_ARGS, SETUP_RECIPE } from '../setup/recipe.ts';
 import type { ShimmedHarnessProfile } from './profile.ts';
 
 /**
@@ -61,6 +61,10 @@ export const claudeCode: ShimmedHarnessProfile = {
   detect: ['.claude'],
   detectHome: ['.claude'],
   instructionFile: 'CLAUDE.md',
+  // Verified 2026-09-09: `~/.claude/CLAUDE.md` is the user-scope memory file
+  // (code.claude.com/docs/en/glossary, .../memory), and `~/.claude/settings.json` the
+  // user settings file (.../settings-reference).
+  userInstructionFile: '.claude/CLAUDE.md',
   instructions: 'snippet',
   caveats: [],
   hooks: HOOKS,
@@ -72,12 +76,17 @@ export const claudeCode: ShimmedHarnessProfile = {
       matchers: ['Read', 'Bash'],
       entry: 'command-list',
       lifecycle: true,
+      user: { file: '.claude/settings.json' },
     },
     {
       kind: 'mcp-registration',
       file: '.mcp.json',
       path: ['mcpServers', 'smelt'],
       entry: () => ({ command: MCP_RUN_ARGS[0], args: MCP_RUN_ARGS.slice(1) }),
+      // `.mcp.json` is the *project* scope and is ours to merge into. The user scope
+      // is the top-level `mcpServers` key of `~/.claude.json`, which Claude Code owns
+      // and rewrites — so it is a printed command, checked read-only by doctor.
+      user: { file: '.claude.json', manual: SETUP_RECIPE.mcp.registerUser },
     },
   ],
 };

@@ -6,6 +6,7 @@ import {
 
 import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import { guardCoreScriptPath, portablePath } from './paths.ts';
+import { renderRoot } from './scope.ts';
 import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
 
 /**
@@ -21,7 +22,7 @@ import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
  * nothing could see them drift from what the shims print.
  */
 function opencodePluginSource(ctx: HarnessInstallContext): string {
-  const guardCore = portablePath(ctx.cwd, guardCoreScriptPath(ctx.distDir));
+  const guardCore = portablePath(renderRoot(ctx.scope, ctx), guardCoreScriptPath(ctx.distDir));
   return `// smelt:hooks v1 — opencode plugin shim. EXPERIMENTAL tier: mapped from the
 // capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, opencode
 // row; https://opencode.ai/docs/plugins/). This template's deny/pass/window paths
@@ -94,6 +95,13 @@ export const opencode: HarnessProfile = {
   detect: ['.opencode', 'opencode.json'],
   detectHome: ['.config/opencode'],
   instructionFile: 'AGENTS.md',
+  // Verified 2026-09-09: global config is `~/.config/opencode/opencode.json`
+  // (opencode.ai/docs/config § Locations), global rules `~/.config/opencode/AGENTS.md`
+  // (.../docs/rules), and the global plugin directory `~/.config/opencode/plugins/`
+  // (.../docs/plugins § "From local files"). Note the plural: today's docs spell the
+  // *project* directory `.opencode/plugins/` too, while smelt has always written
+  // `.opencode/plugin/`. Changing the project path is not this change's to make.
+  userInstructionFile: '.config/opencode/AGENTS.md',
   instructions: 'snippet',
   caveats: [
     'MCP tools can bypass opencode plugin hooks (sst/opencode#2319) — the guard sees built-in tools only',
@@ -102,12 +110,14 @@ export const opencode: HarnessProfile = {
     {
       kind: 'own-file',
       file: '.opencode/plugin/smelt-guard.js',
+      user: { file: '.config/opencode/plugins/smelt-guard.js' },
       content: opencodePluginSource,
       guardOnly: true,
     },
     {
       kind: 'mcp-registration',
       file: 'opencode.json',
+      user: { file: '.config/opencode/opencode.json' },
       path: ['mcp', 'smelt'],
       entry: () => ({ type: 'local', command: [...MCP_RUN_ARGS] }),
     },

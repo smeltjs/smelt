@@ -99,13 +99,15 @@ export const AGENTS_LINT_ARGS = 'agents lint .';
 /**
  * The exact string a harness config carries for this command — the only writer.
  *
- * Paths are portable relative to `cwd` (a path inside the project travels with the
- * repo), which is `harness/paths.ts`'s rule and not this module's.
+ * Paths are portable relative to `root` (a path inside the project travels with the
+ * repo), which is `harness/paths.ts`'s rule and not this module's. `undefined` is the
+ * user scope's answer: a machine-level hook runs from whatever project the agent
+ * opened, so it names every path absolutely.
  */
-export function renderHookCommand(cmd: HookCommand, cwd: string): string {
-  if (cmd.kind === 'guard') return nodeCommand(cwd, cmd.script);
+export function renderHookCommand(cmd: HookCommand, root: string | undefined): string {
+  if (cmd.kind === 'guard') return nodeCommand(root, cmd.script);
   const prefix =
-    cmd.invocation === 'path' ? SMELT_COMMAND_NAME : nodeCommand(cwd, cmd.script ?? '');
+    cmd.invocation === 'path' ? SMELT_COMMAND_NAME : nodeCommand(root, cmd.script ?? '');
   return `${prefix} ${cmd.args}${HOOK_COMMAND_TAIL}`;
 }
 

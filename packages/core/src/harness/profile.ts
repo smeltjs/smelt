@@ -2,6 +2,8 @@ import { shimFromSchema } from '../hooks/shim.ts';
 import type { HarnessHookSchema, ShimAdapter } from '../hooks/shim.ts';
 import type { TomlValue } from '../text/toml-edit.ts';
 
+import type { InstallScope } from './scope.ts';
+
 /**
  * Everything smelt knows about one agent harness, in one place.
  *
@@ -50,6 +52,13 @@ export interface HarnessProfile {
   readonly detectHome: readonly string[];
   /** The standing-instructions file this harness reads (capability matrix column d). */
   readonly instructionFile: string;
+  /**
+   * The **documented** user-level standing-instructions file, relative to `$HOME` —
+   * `.claude/CLAUDE.md`, `.codex/AGENTS.md`, `.gemini/GEMINI.md`. Absent means this
+   * harness documents none, and a user-scope install says so instead of writing the
+   * project spelling into the home directory, where nothing would read it.
+   */
+  readonly userInstructionFile?: string;
   /**
    * The standing-instructions layer — belt and braces under every shim, and the *only*
    * layer an advisory harness has:
@@ -137,6 +146,13 @@ export function harnessLabel(profile: HarnessProfile): string {
 export interface HarnessInstallContext {
   /** Project directory: every path a renderer emits is portable relative to it. */
   readonly cwd: string;
+  /**
+   * Project or machine. A renderer reads it through `renderRoot(ctx.scope, ctx)`: at
+   * project scope a script inside the repo is spelled relative to it, because the
+   * config travels with the repo; at user scope nothing travels and the hook runs from
+   * whatever project the agent opened, so every path it emits is absolute.
+   */
+  readonly scope: InstallScope;
   /** The release writing these bytes — stamped into shared blocks for `smelt doctor`. */
   readonly writtenBy?: string;
   readonly guard: boolean;
@@ -160,6 +176,29 @@ export interface HarnessInstallContext {
 export type HarnessFileContent = (ctx: HarnessInstallContext) => string;
 
 /**
+ * The **documented** user-level home of one install artefact, relative to `$HOME`.
+ *
+ * It lives on the profile beside the project path because it is a per-harness fact,
+ * exactly like the project path is: `HarnessProfile` keeps owning every per-harness
+ * fact, and `harness/scope.ts` is the one resolver that folds a scope and a pair of
+ * roots into a path. A step with no `user` location is project-only, and a user-scope
+ * install reports it skipped with the reason rather than guessing.
+ */
+export interface HarnessUserLocation {
+  /** The path, relative to the home directory. */
+  readonly file: string;
+  /**
+   * Present when the harness **owns and rewrites** this file, so smelt must not: the
+   * value is the exact command a human runs instead. Claude Code's user-scope MCP
+   * registration lives under the top-level `mcpServers` key of `~/.claude.json`, a
+   * file its own docs say to manage through `/config` and the `claude mcp` CLI rather
+   * than by editing — so the step becomes a printed command that setup hands over and
+   * doctor checks read-only.
+   */
+  readonly manual?: string;
+}
+
+/**
  * One artefact `hooks install` writes. The kind is also the un-write: `json-hooks` is
  * merged in and strip-merged out, `marker-block` is upserted and stripped,
  * `own-file` is written and deleted, `mcp-registration` is nested-merged in and
@@ -181,6 +220,8 @@ export interface HarnessJsonHooks {
   readonly kind: 'json-hooks';
   /** Project-relative path of the file. */
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
   /** The pre-tool event, in this harness's spelling (`PreToolUse`, `BeforeTool`, …). */
   readonly event: string;
   /**
@@ -209,6 +250,8 @@ export interface HarnessJsonHooks {
 export interface HarnessMarkerBlock {
   readonly kind: 'marker-block';
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
   readonly block: HarnessFileContent;
   /** The marker line opening the block — also how `remove` finds it. */
   readonly start: string;
@@ -225,6 +268,8 @@ export interface HarnessMarkerBlock {
 export interface HarnessOwnFile {
   readonly kind: 'own-file';
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
   readonly content: HarnessFileContent;
   /** chmod after writing (Cline's hook must be executable). */
   readonly mode?: number;
@@ -246,6 +291,8 @@ export interface HarnessMcpRegistration {
   readonly kind: 'mcp-registration';
   /** Project-relative path of the config file. */
   readonly file: string;
+  /** Where this registration lives for the whole machine, when one is documented. */
+  readonly user?: HarnessUserLocation;
   /** The container key, then the server's name: `['mcpServers', 'smelt']`. */
   readonly path: readonly [string, string];
   /** The server entry as a JSON value — the bytes are the editor's. */
@@ -265,6 +312,8 @@ export interface HarnessTomlMcpRegistration {
   readonly kind: 'toml-mcp-registration';
   /** Project-relative path of the config file. */
   readonly file: string;
+  /** Where this registration lives for the whole machine, when one is documented. */
+  readonly user?: HarnessUserLocation;
   /** The container key, then the server's name: `['mcp_servers', 'smelt']`. */
   readonly path: readonly [string, string];
   /** The server entry as a TOML table's body — string/number/boolean/string-array. */

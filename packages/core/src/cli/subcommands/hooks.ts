@@ -8,8 +8,10 @@ import { runHooks } from '../hooks.ts';
 import { CLI_NAME } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
+import { parseScope } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
+import type { InstallScope } from '../../harness/scope.ts';
 
 /**
  * `smelt hooks install` / `smelt hooks remove` — the harness-hooks installer's front
@@ -26,6 +28,8 @@ export interface HooksInvocation {
   readonly mode: 'hooks';
   readonly action: 'install' | 'remove';
   readonly harness?: string;
+  /** Which install to write or take back out. Absent means detect. */
+  readonly scope?: InstallScope;
 }
 
 /**
@@ -46,10 +50,13 @@ function tierNames(tier: HarnessTier): string {
 
 export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
   name: 'hooks',
-  flags: ['harness'],
+  flags: ['harness', 'scope'],
   refusal: `hooks is interactive; the wizard asks the rest.`,
   usage: {
-    synopsis: ['hooks install [--harness <id>]', 'hooks remove [--harness <id>]'],
+    synopsis: [
+      'hooks install [--harness <id>] [--scope <where>]',
+      'hooks remove [--harness <id>] [--scope <where>]',
+    ],
     section: {
       heading: 'HOOKS',
       body:
@@ -93,10 +100,12 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
           `each harness.`,
       );
     }
+    const scope = parseScope(values.scope);
     return {
       mode: 'hooks',
       action,
       ...(values.harness === undefined ? {} : { harness: values.harness[0] }),
+      ...(scope === undefined ? {} : { scope }),
     };
   },
 
@@ -119,6 +128,7 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
       output: (text) => io.stdout(colorize(text, io.color === true)),
       cwd: io.cwd ?? process.cwd(),
       version: io.version,
+      ...(resolved.scope === undefined ? {} : { scope: resolved.scope }),
     });
   },
 };

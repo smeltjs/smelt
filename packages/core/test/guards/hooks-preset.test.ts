@@ -70,6 +70,10 @@ async function install(answers: readonly string[]): Promise<string> {
     },
     cwd: dir,
     home: dir,
+    // `home` is `dir` so harness detection finds nothing real; that also makes the
+    // detected scope `user` (cwd *is* home), which would add the scope question and
+    // eat the first scripted answer. This guard is about consent, not scope: name it.
+    scope: 'project',
   });
   return output;
 }

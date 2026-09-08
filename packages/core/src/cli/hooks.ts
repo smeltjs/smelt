@@ -21,20 +21,27 @@ import {
 import { hasShim, TIER_HONESTY } from '../harness/profile.ts';
 import type {
   HarnessInstallContext,
+  HarnessInstallStep,
   HarnessJsonHooks,
   HarnessProfile,
 } from '../harness/profile.ts';
 import {
   GUARD_EVENTS,
-  GUARD_ONLY_FILES,
   HARNESSES,
   harnessById,
   harnessNames,
-  JSON_HOOK_FILES,
   LIFECYCLE_EVENTS,
   lifecycleHarnesses,
   MANAGED_EVENTS,
 } from '../harness/registry.ts';
+import {
+  instructionArtefact,
+  locateStep,
+  renderRoot,
+  resolveScope,
+  scopeRoot,
+} from '../harness/scope.ts';
+import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
 import {
   instructionSnippet,
   OURS_TOKEN,
@@ -122,8 +129,18 @@ export interface HooksIo {
   readonly output: (text: string) => void;
   /** Project directory: detection, config discovery, and every write are relative to it. */
   readonly cwd: string;
-  /** Home directory for detection only. Tests point it at a temp dir; nothing writes here. */
+  /**
+   * Home directory: harness detection, and — at user scope — where every file goes.
+   * Tests point it at a temp dir, which is the only way a user-scope install is
+   * testable without writing into the developer's own home.
+   */
   readonly home?: string;
+  /**
+   * This project or this machine. Absent means detect: `user` when {@link cwd} *is*
+   * {@link home}, `project` otherwise. The wizard states what it found and, where it
+   * found `user`, offers to flip it.
+   */
+  readonly scope?: InstallScope;
   /**
    * The release running the install — stamped into the instruction block so
    * `smelt doctor` can tell what wrote it. Absent (legacy callers) writes no stamp.
@@ -210,9 +227,13 @@ function jsonHookEvents(
   // Every string below is rendered by the one writer in `harness/hook-command.ts`, so
   // the readers that have to recognise these entries again — the merge, the toggle
   // reader, `smelt doctor` — parse rather than search for a substring.
-  const command = renderHookCommand(guard, ctx.cwd);
+  // Paths in a written command are spelled against the scope's render root: relative
+  // to the project where the config travels with the repo, absolute at user scope,
+  // where the hook runs from whatever project the agent happened to open.
+  const root = renderRoot(ctx.scope, ctx);
+  const command = renderHookCommand(guard, root);
   const lifecycle = (kind: 'stats' | 'map' | 'lint', args: string): string =>
-    renderHookCommand(smeltLifecycleCommand(kind, args, invocation), ctx.cwd);
+    renderHookCommand(smeltLifecycleCommand(kind, args, invocation), root);
   const stats = lifecycle('stats', 'stats');
   const map = lifecycle(
     'map',
@@ -372,16 +393,41 @@ export interface HooksChoices {
    * Homebrew machine.
    */
   distDir?: string;
+  /**
+   * Project or machine (CONTEXT.md, **InstallScope**). Defaults to `'project'`, which
+   * is exactly what this installer did before scopes existed. At `'user'` every path
+   * is resolved through `locateStep` against {@link home}, and a harness that
+   * documents no user-level home for an artefact is skipped with the reason.
+   */
+  scope?: InstallScope;
+  /** The home directory a user-scope plan writes into. Defaults to the real one. */
+  home?: string;
+}
+
+/**
+ * One step this scope turns into a printed command rather than a written file: the
+ * location exists, but the harness owns and rewrites it. Claude Code's user-scope MCP
+ * registration is the case that exists — `~/.claude.json` is theirs.
+ */
+export interface ManualStep {
+  /** The file the command edits, as the user sees it. */
+  readonly name: string;
+  readonly kind: HarnessInstallStep['kind'];
+  /** The exact command to run. */
+  readonly command: string;
+  /** Which harness asked for it. */
+  readonly harness: string;
 }
 
 interface InstallPlan {
   readonly files: readonly PlannedFile[];
   readonly skipped: readonly SkippedFile[];
   readonly notes: readonly string[];
+  /** Steps this scope hands back to the user as a command. Empty at project scope. */
+  readonly manual: readonly ManualStep[];
 }
 
-function planFile(cwd: string, name: string, content: string, mode?: number): PlannedFile {
-  const path = join(cwd, name);
+function planFile(path: string, name: string, content: string, mode?: number): PlannedFile {
   const exists = existsSync(path);
   const unchanged = exists && readFileSync(path, 'utf8') === content;
   return { name, path, content, exists, unchanged, ...(mode === undefined ? {} : { mode }) };
@@ -405,6 +451,16 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   const files = new Map<string, PlannedFile>();
   const skipped: SkippedFile[] = [];
   const notes: string[] = [];
+  const manual: ManualStep[] = [];
+
+  // Project or machine. Every path below goes through `locateStep` — the one resolver
+  // — so a user-scope install lands where each harness's own documentation says, and
+  // an artefact with no documented user-level home is skipped with the reason rather
+  // than written into `~` where nothing reads it.
+  const scope: InstallScope = choices.scope ?? 'project';
+  const home = choices.home ?? homedir();
+  const root = scopeRoot(scope, { cwd, home });
+  const rootsFor = (profile: HarnessProfile): ScopeRoots => ({ cwd, home, harness: profile.name });
 
   // Every path this plan writes down has to still be there tomorrow. The verdict is
   // taken per **script actually named** — the guard shim, the guard core the opencode
@@ -442,7 +498,16 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
 
   // -- smelt.config.json: the guard's runtime settings live here, not in any harness
   // file, so every shim reads one source of truth.
-  const configPath = findConfigFile(cwd) ?? join(cwd, CONFIG_FILE_NAME);
+  //
+  // At user scope the location is not *discovered*, it is decided: `~/smelt.config.json`,
+  // with the directory store at `~/.smelt/store` under it. That is the whole point of
+  // installing for the machine — config discovery walks up, so one config at `~` is the
+  // one every project below it finds — and walking up from `~` looking for somebody
+  // else's config would defeat it.
+  const configPath =
+    scope === 'user'
+      ? join(home, CONFIG_FILE_NAME)
+      : (findConfigFile(cwd) ?? join(cwd, CONFIG_FILE_NAME));
   const existingConfig =
     readIfExists(configPath) === undefined
       ? undefined
@@ -453,7 +518,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   };
   const budgetBytes = existingConfig?.defaultBudgetBytes ?? DEFAULT_SUGGESTION_BUDGET_BYTES;
   files.set(configPath, {
-    name: portablePath(cwd, configPath),
+    name: portablePath(root, configPath),
     path: configPath,
     content: renderConfigWithHooks(existingConfig, hooksBlock),
     exists: existsSync(configPath),
@@ -462,6 +527,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
 
   const ctx: HarnessInstallContext = {
     cwd,
+    scope,
     ...(choices.writtenBy === undefined ? {} : { writtenBy: choices.writtenBy }),
     guard: choices.guard,
     statsOnStop: choices.statsOnStop,
@@ -471,14 +537,14 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     budgetBytes,
     ...(choices.distDir === undefined ? {} : { distDir: choices.distDir }),
   };
-  const snippet = instructionSnippet(choices.thresholdBytes, budgetBytes, choices.writtenBy);
+  const snippet = instructionSnippet(choices.thresholdBytes, budgetBytes, choices.writtenBy, scope);
 
   const planJsonHooks = (
+    path: string,
     name: string,
     events: Record<string, readonly unknown[]>,
     shape: { readonly version?: number } = {},
   ): void => {
-    const path = join(cwd, name);
     // Nothing to install and nothing to strip: don't create an empty hooks file.
     if (Object.keys(events).length === 0 && !existsSync(path)) return;
     const merged = mergeJsonHooks(readIfExists(path), events, shape);
@@ -489,17 +555,17 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
       });
       return;
     }
-    files.set(path, planFile(cwd, name, merged));
+    files.set(path, planFile(path, name, merged));
   };
 
   const planBlockFile = (
+    path: string,
     name: string,
     block: string,
     start: string,
     end: string,
     skipWhen?: { readonly contains: string; readonly why: string },
   ): void => {
-    const path = join(cwd, name);
     const existing = currentContent(path);
     // A file that already carries its owner's version of what this block does is
     // theirs to edit, not ours: say so, and touch nothing.
@@ -512,30 +578,45 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
       skipped.push({ name, why: skipWhen.why });
       return;
     }
-    files.set(path, planFile(cwd, name, upsertMarkerBlock(existing, block, start, end)));
+    files.set(path, planFile(path, name, upsertMarkerBlock(existing, block, start, end)));
   };
 
   for (const profile of choices.harnesses) {
+    const roots = rootsFor(profile);
     for (const step of profile.install) {
+      // One resolver, before any per-kind work: no path means this harness documents
+      // no home for this artefact at this scope, and a `manual` one means the harness
+      // owns the file and we print a command instead of writing a byte.
+      const located = locateStep(step, scope, roots);
+      if (located.path === undefined || located.name === undefined) {
+        skipped.push({ name: step.file, why: located.skipped ?? 'no location at this scope' });
+        continue;
+      }
+      const { path, name } = located;
+      if (located.manual !== undefined) {
+        manual.push({ name, kind: step.kind, command: located.manual, harness: profile.id });
+        continue;
+      }
       switch (step.kind) {
         case 'json-hooks':
           planJsonHooks(
-            step.file,
+            path,
+            name,
             jsonHookEvents(step, ctx, guardCommand(profile, choices.distDir), invocation),
             step.shape ?? {},
           );
           break;
         case 'marker-block':
-          planBlockFile(step.file, step.block(ctx), step.start, step.end, step.skipWhen);
+          planBlockFile(path, name, step.block(ctx), step.start, step.end, step.skipWhen);
           break;
         case 'own-file':
           if (step.guardOnly && !ctx.guard) break;
-          files.set(join(cwd, step.file), planFile(cwd, step.file, step.content(ctx), step.mode));
+          files.set(path, planFile(path, name, step.content(ctx), step.mode));
           break;
         case 'mcp-registration': {
           // Byte-faithful beside whatever servers the user already registered —
           // sibling entries, key order and indentation all ride through.
-          const existing = readIfExists(join(cwd, step.file));
+          const existing = readIfExists(path);
           const merged = editJsonProperty(
             existing ?? '{}',
             step.path,
@@ -544,12 +625,12 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
           );
           if (merged === undefined) {
             skipped.push({
-              name: step.file,
+              name,
               why: 'exists but is not a JSON object — fix or remove it, then re-run',
             });
             break;
           }
-          files.set(join(cwd, step.file), planFile(cwd, step.file, merged));
+          files.set(path, planFile(path, name, merged));
           break;
         }
         case 'toml-mcp-registration': {
@@ -557,35 +638,47 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
           // whatever the user already has — via currentContent, so a profile whose
           // marker-block step already wrote this file (Codex's [features] block) is
           // edited on top of that plan rather than overwritten by a fresh disk read.
-          const path = join(cwd, step.file);
           const existing = currentContent(path);
           const merged = editTomlTable(existing ?? '', step.path, step.entry(ctx));
           if (merged === undefined) {
             skipped.push({
-              name: step.file,
+              name,
               why: 'the server is already registered both as a table and as dotted keys — fix by hand, then re-run',
             });
             break;
           }
-          files.set(path, planFile(cwd, step.file, merged));
+          files.set(path, planFile(path, name, merged));
           break;
         }
       }
     }
 
-    if (profile.instructions === 'snippet') {
-      planBlockFile(profile.instructionFile, snippet, SNIPPET_START_MD, SNIPPET_END_MD);
+    // The instruction layer is located by the same rule, through the same resolver.
+    const instructions = locateStep(instructionArtefact(profile), scope, roots);
+    if (instructions.path === undefined || instructions.name === undefined) {
+      skipped.push({
+        name: profile.instructionFile,
+        why: instructions.skipped ?? 'no location at this scope',
+      });
+    } else if (profile.instructions === 'snippet') {
+      planBlockFile(
+        instructions.path,
+        instructions.name,
+        snippet,
+        SNIPPET_START_MD,
+        SNIPPET_END_MD,
+      );
     } else {
       files.set(
-        join(cwd, profile.instructionFile),
-        planFile(cwd, profile.instructionFile, profile.instructions(ctx)),
+        instructions.path,
+        planFile(instructions.path, instructions.name, profile.instructions(ctx)),
       );
     }
 
     for (const caveat of profile.caveats) notes.push(`${profile.name}: ${caveat}`);
   }
 
-  return { files: [...files.values()], skipped, notes };
+  return { files: [...files.values()], skipped, notes, manual };
 }
 
 /** Where the installed config points the persistent store, relative to the config file. */
@@ -633,8 +726,12 @@ export function renderConfigWithHooks(
 export function planRemove(
   cwd: string,
   harnesses: readonly HarnessProfile[],
+  where: { readonly scope?: InstallScope; readonly home?: string } = {},
 ): readonly PlannedRemoval[] {
   const removals = new Map<string, PlannedRemoval>();
+  const scope: InstallScope = where.scope ?? 'project';
+  const home = where.home ?? homedir();
+  const rootsFor = (profile: HarnessProfile): ScopeRoots => ({ cwd, home, harness: profile.name });
 
   /**
    * A step's base text for stripping: the previous step's planned removal for this
@@ -649,8 +746,7 @@ export function planRemove(
     return readIfExists(path);
   };
 
-  const planJsonStrip = (name: string): void => {
-    const path = join(cwd, name);
+  const planJsonStrip = (path: string, name: string): void => {
     const existing = readIfExists(path);
     if (existing === undefined) return;
     const stripped = mergeJsonHooks(existing, {});
@@ -669,8 +765,7 @@ export function planRemove(
     );
   };
 
-  const planBlockStrip = (name: string, start: string, end: string): void => {
-    const path = join(cwd, name);
+  const planBlockStrip = (path: string, name: string, start: string, end: string): void => {
     const existing = currentText(path);
     if (existing === undefined || !existing.includes(start)) return;
     const stripped = stripMarkerBlock(existing, start, end);
@@ -682,8 +777,7 @@ export function planRemove(
     );
   };
 
-  const planWholeFileDelete = (name: string): void => {
-    const path = join(cwd, name);
+  const planWholeFileDelete = (path: string, name: string): void => {
     const existing = readIfExists(path);
     if (existing === undefined || !existing.includes(OURS_TOKEN)) return;
     removals.set(path, { name, path, action: 'delete' });
@@ -695,8 +789,7 @@ export function planRemove(
    * once the entry is gone — is removed with it, so a file that never carried the
    * key round-trips to byte-identical; one that carries other servers keeps them.
    */
-  const planMcpStrip = (name: string, keys: readonly [string, string]): void => {
-    const path = join(cwd, name);
+  const planMcpStrip = (path: string, name: string, keys: readonly [string, string]): void => {
     const existing = currentText(path);
     if (existing === undefined) return;
     const removed = editJsonProperty(existing, keys, undefined);
@@ -716,8 +809,7 @@ export function planRemove(
   };
 
   /** {@link planMcpStrip}'s TOML sibling — the table lifted out, byte-faithfully. */
-  const planTomlMcpStrip = (name: string, keys: readonly [string, string]): void => {
-    const path = join(cwd, name);
+  const planTomlMcpStrip = (path: string, name: string, keys: readonly [string, string]): void => {
     const existing = currentText(path);
     if (existing === undefined) return;
     const removed = editTomlTable(existing, keys, undefined);
@@ -731,29 +823,39 @@ export function planRemove(
   };
 
   for (const profile of harnesses) {
+    const roots = rootsFor(profile);
     for (const step of profile.install) {
+      // The same resolver the install went through. A step with no home at this scope
+      // wrote nothing here, so there is nothing to take back out; a `manual` one was a
+      // printed command, and un-writing what a person ran by hand is not ours to do.
+      const located = locateStep(step, scope, roots);
+      if (located.path === undefined || located.name === undefined) continue;
+      if (located.manual !== undefined) continue;
+      const { path, name } = located;
       switch (step.kind) {
         case 'json-hooks':
-          planJsonStrip(step.file);
+          planJsonStrip(path, name);
           break;
         case 'marker-block':
-          planBlockStrip(step.file, step.start, step.end);
+          planBlockStrip(path, name, step.start, step.end);
           break;
         case 'own-file':
-          planWholeFileDelete(step.file);
+          planWholeFileDelete(path, name);
           break;
         case 'mcp-registration':
-          planMcpStrip(step.file, step.path);
+          planMcpStrip(path, name, step.path);
           break;
         case 'toml-mcp-registration':
-          planTomlMcpStrip(step.file, step.path);
+          planTomlMcpStrip(path, name, step.path);
           break;
       }
     }
+    const instructions = locateStep(instructionArtefact(profile), scope, roots);
+    if (instructions.path === undefined || instructions.name === undefined) continue;
     if (profile.instructions === 'snippet') {
-      planBlockStrip(profile.instructionFile, SNIPPET_START_MD, SNIPPET_END_MD);
+      planBlockStrip(instructions.path, instructions.name, SNIPPET_START_MD, SNIPPET_END_MD);
     } else {
-      planWholeFileDelete(profile.instructionFile);
+      planWholeFileDelete(instructions.path, instructions.name);
     }
   }
 
@@ -814,6 +916,7 @@ async function installFlow(
 ): Promise<number> {
   const home = io.home ?? homedir();
   const detected = detectedHarnesses(io.cwd, home);
+  const detectedScope = resolveScope(io.scope, { cwd: io.cwd, home });
 
   io.output(
     `${CLI_NAME} hooks install — wires the smelt guard into agent-harness hooks.\n` +
@@ -824,9 +927,11 @@ async function installFlow(
   const choices: HooksChoices = {
     harnesses: harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...detected],
     ...(io.version === undefined ? {} : { writtenBy: io.version }),
-    ...presetToggles(io.cwd),
+    ...presetToggles(io.cwd, { scope: detectedScope, home }),
     enforcement: 'deny',
     thresholdBytes: DEFAULT_THRESHOLD_BYTES,
+    scope: detectedScope,
+    home,
   };
 
   // With --harness the selection step is skipped, so the tier label — and its one
@@ -836,6 +941,13 @@ async function installFlow(
   }
 
   const steps: readonly ((io_: HooksIo, ask_: Asker) => Promise<'ok' | 'back'>)[] = [
+    // Asked only where detection said `user` — from any other directory `project` is
+    // the only reading that makes sense, and a question with one possible answer is a
+    // question that trains people to hit Enter.
+    async (io_, ask_) =>
+      io.scope !== undefined || detectedScope === 'project'
+        ? 'ok'
+        : stepScope(io_, ask_, choices, home),
     async (io_, ask_) =>
       harnessFlag !== undefined ? 'ok' : stepHarnesses(io_, ask_, choices, detected),
     async (io_, ask_) =>
@@ -909,6 +1021,40 @@ function guardCopy(): string {
     `smelted first, \`smelt retrieve\` for the rest. Windowed reads (offset/limit) ` +
     `always pass.`
   );
+}
+
+/**
+ * The one scope question, asked only where detection said `user`. It states what was
+ * found and what each answer writes; Enter takes the detected answer.
+ */
+async function stepScope(
+  io: HooksIo,
+  ask: Asker,
+  choices: HooksChoices,
+  home: string,
+): Promise<'ok' | 'back'> {
+  io.output(
+    `\nYou are in your home directory, so this looks like a machine-wide install:\n` +
+      `  every harness file goes to its own documented user-level location under ` +
+      `${home}, and ${CONFIG_FILE_NAME} to ${join(home, CONFIG_FILE_NAME)} — which ` +
+      `every project below it finds, because config discovery walks up.\n` +
+      `  A project install writes into ${io.cwd} instead, and only that project sees it.\n` +
+      `  A harness that documents no user-level location for a file is listed as ` +
+      `skipped, never guessed into ${home}.\n`,
+  );
+  for (;;) {
+    const answer = await ask(`scope (1 machine / 2 project) [1]> `);
+    if (answer === 'back') return 'back';
+    if (answer === '' || answer === '1') {
+      choices.scope = 'user';
+      return 'ok';
+    }
+    if (answer === '2') {
+      choices.scope = 'project';
+      return 'ok';
+    }
+    io.output(`1 for this machine, 2 for this project.\n`);
+  }
 }
 
 async function stepHarnesses(
@@ -1040,6 +1186,7 @@ async function stepThreshold(
  */
 export function presetToggles(
   cwd: string,
+  where: { readonly scope?: InstallScope; readonly home?: string } = {},
 ): Pick<HooksChoices, 'guard' | 'statsOnStop' | 'mapOnStart' | 'lintOnStart'> {
   const defaults = { guard: true, statsOnStop: true, mapOnStart: false, lintOnStart: false };
   let anyOurs = false;
@@ -1048,8 +1195,30 @@ export function presetToggles(
   let mapOnStart = false;
   let lintOnStart = false;
 
-  for (const name of JSON_HOOK_FILES) {
-    const text = readIfExists(join(cwd, name));
+  const scope: InstallScope = where.scope ?? 'project';
+  const home = where.home ?? homedir();
+  // The files to read are derived from the registry through the same resolver the
+  // installer wrote them with — never from a second list of names, which at user scope
+  // would be the project spellings and would read every toggle back as off.
+  const installedFiles = (kind: 'json-hooks' | 'guard-only'): readonly string[] => {
+    const paths = new Set<string>();
+    for (const profile of HARNESSES) {
+      const roots: ScopeRoots = { cwd, home, harness: profile.name };
+      for (const step of profile.install) {
+        const wanted =
+          kind === 'json-hooks'
+            ? step.kind === 'json-hooks'
+            : step.kind === 'own-file' && step.guardOnly;
+        if (!wanted) continue;
+        const located = locateStep(step, scope, roots);
+        if (located.path !== undefined && located.manual === undefined) paths.add(located.path);
+      }
+    }
+    return [...paths];
+  };
+
+  for (const path of installedFiles('json-hooks')) {
+    const text = readIfExists(path);
     if (text === undefined) continue;
     let hooks: Record<string, unknown> | undefined;
     try {
@@ -1091,8 +1260,8 @@ export function presetToggles(
     lintOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.lint, 'lint');
   }
 
-  for (const name of GUARD_ONLY_FILES) {
-    const text = readIfExists(join(cwd, name));
+  for (const path of installedFiles('guard-only')) {
+    const text = readIfExists(path);
     if (text !== undefined && text.includes(OURS_TOKEN)) {
       anyOurs = true;
       guard = true;
@@ -1113,9 +1282,18 @@ async function confirmAndInstall(
   choices: HooksChoices,
 ): Promise<'done' | 'back'> {
   const plan = planInstall(io.cwd, choices);
+  const root = scopeRoot(choices.scope ?? 'project', {
+    cwd: io.cwd,
+    home: choices.home ?? homedir(),
+  });
 
-  io.output(`\nAbout to write, into ${io.cwd}:\n`);
+  io.output(`\nAbout to write, into ${root}:\n`);
   listPlannedFiles(io.output, plan.files, plan.skipped, fileLabel);
+  for (const step of plan.manual) {
+    io.output(
+      `  ${step.name} is ${step.harness}'s own file — run this yourself:\n    ${step.command}\n`,
+    );
+  }
   io.output(`Nothing has been written yet.\n`);
 
   const confirmed = await confirmLoop(
@@ -1160,10 +1338,13 @@ async function removeFlow(
   harnessFlag: string | undefined,
 ): Promise<number> {
   const harnesses = harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...HARNESSES];
-  const removals = planRemove(io.cwd, harnesses);
+  const home = io.home ?? homedir();
+  const scope = resolveScope(io.scope, { cwd: io.cwd, home });
+  const root = scopeRoot(scope, { cwd: io.cwd, home });
+  const removals = planRemove(io.cwd, harnesses, { scope, home });
 
   if (removals.length === 0) {
-    io.output(`${CLI_NAME} hooks remove: nothing of smelt's found to remove in ${io.cwd}.\n`);
+    io.output(`${CLI_NAME} hooks remove: nothing of smelt's found to remove in ${root}.\n`);
     return 0;
   }
 

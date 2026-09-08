@@ -46,6 +46,10 @@ export const gemini: ShimmedHarnessProfile = {
   detect: ['.gemini'],
   detectHome: ['.gemini'],
   instructionFile: 'GEMINI.md',
+  // Verified 2026-09-09: user configuration lives in `~/.gemini/` — settings at
+  // `~/.gemini/settings.json` (geminicli.com/docs/resources/faq) and the global
+  // context file in the home directory beside it (.../docs/cli/gemini-md).
+  userInstructionFile: '.gemini/GEMINI.md',
   instructions: 'snippet',
   caveats: [
     'Gemini policy-engine allow rules are ignored in non-interactive runs (google-gemini/gemini-cli#20469) — verify hook behaviour in CI before relying on it',
@@ -59,6 +63,7 @@ export const gemini: ShimmedHarnessProfile = {
       matchers: ['read_file', 'run_shell_command'],
       entry: 'command-list',
       lifecycle: false,
+      user: { file: '.gemini/settings.json' },
     },
   ],
 };

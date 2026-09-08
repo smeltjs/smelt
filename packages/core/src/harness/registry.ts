@@ -163,6 +163,22 @@ export const JSON_HOOK_FILES: readonly string[] = [
   ...new Set(jsonHookSteps().map((step) => step.file)),
 ];
 
+/**
+ * The same files at **either** scope — the project spelling and, where a harness
+ * documents one, the user-level spelling. The predicate "is this file a JSON hook
+ * file?" is asked by name, and a name-keyed list that knew only the project spelling
+ * would answer no for `~/.claude/settings.json`; four of today's five happen to spell
+ * both the same way, which is exactly the kind of coincidence a derived list should
+ * not depend on.
+ */
+export const JSON_HOOK_FILE_NAMES: readonly string[] = [
+  ...new Set(
+    jsonHookSteps().flatMap((step) =>
+      step.user === undefined ? [step.file] : [step.file, step.user.file],
+    ),
+  ),
+];
+
 /** Guard-only files whose presence means the guard toggle was installed. */
 export const GUARD_ONLY_FILES: readonly string[] = [
   ...new Set(

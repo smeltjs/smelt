@@ -6,8 +6,10 @@ import { colorize } from '../lava.ts';
 import { CLI_NAME } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
+import { parseScope } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
+import type { InstallScope } from '../../harness/scope.ts';
 
 /**
  * `smelt doctor` — the read-only half of the install seam. The flow is
@@ -21,14 +23,16 @@ import type { Subcommand } from './subcommand.ts';
 export interface DoctorInvocation {
   readonly mode: 'doctor';
   readonly json: boolean;
+  /** Which install to read. Absent means detect — see `harness/scope.ts`. */
+  readonly scope?: InstallScope;
 }
 
 export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
   name: 'doctor',
-  flags: ['json'],
+  flags: ['scope', 'json'],
   refusal: `doctor reads installed state and reports; it writes nothing, so there is nothing to answer.`,
   usage: {
-    synopsis: ['doctor [--json]'],
+    synopsis: ['doctor [--scope <where>] [--json]'],
     section: {
       heading: 'DOCTOR',
       body:
@@ -50,7 +54,12 @@ export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
           `${positionals.slice(1).join(', ')}.`,
       );
     }
-    return { mode: 'doctor', json: values.json === true };
+    const scope = parseScope(values.scope);
+    return {
+      mode: 'doctor',
+      json: values.json === true,
+      ...(scope === undefined ? {} : { scope }),
+    };
   },
 
   /** Nothing to merge: doctor reads everything it reports. */
@@ -60,7 +69,7 @@ export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
 
   async run(resolved: DoctorInvocation, io: CliIo): Promise<number> {
     return runDoctor(
-      { json: resolved.json },
+      { json: resolved.json, ...(resolved.scope === undefined ? {} : { scope: resolved.scope }) },
       {
         output: (text) => io.stdout(colorize(text, io.color === true && !resolved.json)),
         cwd: io.cwd ?? process.cwd(),

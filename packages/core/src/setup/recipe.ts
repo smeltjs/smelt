@@ -47,6 +47,15 @@ export const SETUP_RECIPE = {
      * mcp-registration step kind generalizes this per harness.
      */
     register: 'claude mcp add smelt -- npx @smeltjs/mcp',
+    /**
+     * The same registration for the whole machine. Claude Code's user scope is stored
+     * under the top-level `mcpServers` key of `~/.claude.json` — a file Claude Code
+     * owns and rewrites, and whose docs say to manage it through `/config` and this
+     * CLI rather than by editing — so at user scope smelt prints this instead of
+     * writing a byte. Verified 2026-09-09 against code.claude.com/docs/en/mcp and
+     * .../mcp-quickstart ("Where servers are saved").
+     */
+    registerUser: 'claude mcp add --scope user smelt -- npx @smeltjs/mcp',
   },
 } as const;
 

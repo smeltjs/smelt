@@ -53,6 +53,10 @@ export const cursor: ShimmedHarnessProfile = {
       entry: 'bare-command',
       lifecycle: false,
       shape: { version: 1 },
+      // Verified 2026-09-09: cursor.com/docs/hooks documents `~/.cursor/hooks.json`
+      // as the global user hooks file. Cursor documents no home-level AGENTS.md, so
+      // the instruction layer stays project-only.
+      user: { file: '.cursor/hooks.json' },
     },
   ],
 };
