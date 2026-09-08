@@ -272,6 +272,16 @@ Homebrew, from smelt's own tap:
 brew install smeltjs/tap/smelt
 ```
 
+Upgrading from 0.6.0 or earlier on Homebrew: **re-run `smelt setup`**. Hooks written by
+those releases point at the versioned Cellar path `brew upgrade` deletes, and the guard
+was inert through the `opt` symlink besides — it exited 0 with empty stdout, which every
+harness reads as _allow_. A re-run rewrites both. To check one by hand without
+re-running setup:
+
+```sh
+node "$(readlink -f /opt/homebrew/opt/smelt/libexec/lib/node_modules/@smeltjs/core/dist/hooks/shims/claude-code.js)"
+```
+
 ### Updating — and the other machine
 
 An update is the same loop on every machine, forever:

@@ -1,6 +1,6 @@
 {
-  "guards": 35,
-  "mutations": 177,
+  "guards": 36,
+  "mutations": 179,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -44,6 +44,10 @@
     },
     {
       "guard": "packages/core/test/guards/init-wizard.test.ts",
+      "count": 2
+    },
+    {
+      "guard": "packages/core/test/guards/invocation.test.ts",
       "count": 2
     },
     {
