@@ -65,6 +65,18 @@ function stage(fetch: VoyageFetch, topK = 3) {
   return createVoyageRerankStage({ apiKey: 'sk-test-key', model: 'rerank-2.5', topK, fetch });
 }
 
+/** Never answers; the AbortController is the only thing that ends it. */
+const hangs: VoyageFetch = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => void reject(new Error('aborted')));
+  });
+
+/** Answers with a status and a body, so a refusal has something real to carry through. */
+const answers =
+  (status: number, body: string): VoyageFetch =>
+  () =>
+    Promise.resolve({ ok: false, status, text: () => Promise.resolve(body) });
+
 describe('the request smelt actually sends', () => {
   it('posts the documented body to the documented URL, with the key in a header', async () => {
     const { calls, fetch } = recorder([FIXTURE]);
@@ -172,10 +184,6 @@ describe('batching at Voyage’s documented ceiling', () => {
 
 describe('every refusal says which thing went wrong', () => {
   it('names the timeout, the duration, and that the request was aborted', async () => {
-    const hangs: VoyageFetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        init.signal.addEventListener('abort', () => void reject(new Error('aborted')));
-      });
     await expect(
       createVoyageRerankStage({
         apiKey: 'sk',
@@ -189,12 +197,7 @@ describe('every refusal says which thing went wrong', () => {
   });
 
   it('passes a non-2xx status and body through rather than returning nothing', async () => {
-    const failing: VoyageFetch = () =>
-      Promise.resolve({
-        ok: false,
-        status: 401,
-        text: () => Promise.resolve('{"detail":"Provided API key is invalid."}'),
-      });
+    const failing = answers(401, '{"detail":"Provided API key is invalid."}');
     await expect(stage(failing).rerank(candidates(1), 'q')).rejects.toThrow(
       /answered 401.*Provided API key is invalid/s,
     );
@@ -211,8 +214,7 @@ describe('every refusal says which thing went wrong', () => {
   });
 
   it('never puts the API key in an error', async () => {
-    const failing: VoyageFetch = () =>
-      Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('upstream boom') });
+    const failing = answers(500, 'upstream boom');
     const thrown = await stage(failing)
       .rerank(candidates(1), 'q')
       .then(() => undefined)

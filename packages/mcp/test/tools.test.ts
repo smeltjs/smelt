@@ -335,6 +335,77 @@ describe('smelt_file — the producer hint', () => {
   });
 });
 
+describe('smelt_file — the rerank opt-in', () => {
+  /**
+   * The server offers reranking without importing an adapter: it hands the config
+   * block to `@smeltjs/core`'s loader, exactly as the CLI does. So what is pinned here
+   * is that the config decides (not this surface), that the attribution reaches the
+   * report block a model reads, and that a refusal arrives as a tool error the model
+   * can act on rather than a dead server.
+   */
+
+  function withRerank(rerank: unknown): string {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, 'smelt.config.json'),
+      `${JSON.stringify({ smeltConfig: 1, rerank }, null, 2)}\n`,
+    );
+    return dir;
+  }
+
+  it('does nothing at all when the config names no reranker', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[1]).not.toContain('rerank');
+  });
+
+  it('loads a configured module stage and attributes it in the report block', async () => {
+    const dir = withRerank({ kind: 'module', path: './stage.mjs' });
+    writeFileSync(
+      join(dir, 'stage.mjs'),
+      `export default {
+         id: 'test',
+         async rerank(candidates) {
+           return candidates.slice(0, 1).map((c) => ({ ...c, score: 1 }));
+         },
+       };\n`,
+    );
+    const client = await connect(dir);
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[1]).toMatch(
+      /rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept\)/,
+    );
+  });
+
+  it('answers a misconfigured opt-in with a tool error naming what is missing', async () => {
+    // A refusal the model can read and repeat to its user. A resident server that
+    // exited at startup instead would say the same thing to nobody.
+    const client = await connect(withRerank({ kind: 'module', path: './gone.mjs' }));
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('./gone.mjs');
+  });
+
+  it('refuses to start on a rerank block it cannot parse, like every other key', async () => {
+    expect(() => createSmeltMcpServer({ cwd: withRerank({ kind: 'psychic' }) })).toThrow(
+      CliUsageError,
+    );
+  });
+});
+
 describe('smelt_retrieve_batch', () => {
   async function smeltedHashes(client: Client): Promise<{ input: string; hashes: string[] }> {
     const input = fixtureText(900);

@@ -149,9 +149,13 @@ the CLI reads for defaults from then on. Every step accepts `back`; re-running i
 your current answers and edits one choice at a time; **nothing is written until a final
 confirm, and no existing file is ever overwritten without an explicit per-file yes.**
 
-If you opt into a reranker, the wizard generates the adapter **into your project** — your
-file, your env var, your review — because a bundled reranker would ship your source to a
-third party. See [Reranking](#reranking-a-seam-not-a-feature).
+The reranker question has three answers: `none` (the default — nothing is loaded and
+nothing is called), a `module` of your own (the wizard writes a typed stub **into your
+project** and points the config at it), or `voyage` (the separately-installed
+`@smeltjs/rerank-voyage` adapter, keyed from an environment variable the wizard names and
+never reads). Either non-default answer is written down as a `rerank` block in your own
+config, because a reranker nobody opted into would ship your source to a third party. See
+[Reranking](#reranking-a-seam-not-a-feature).
 
 ## The library
 
@@ -717,13 +721,49 @@ const smelter = createSmelter({
 // without its tokenizer named is not a measurement.
 ```
 
-## Reranking: a seam, not a feature
+## Reranking: a seam, and an opt-in you write down
 
-There is no bundled reranker — a default reranker would ship every consumer's source to a
-third party, including the consumers who never read the changelog. The `RerankStage`
-interface is the whole offering: implement it in your code, with your key, so the
-outbound call is visible in your own diff. `smelt init` will generate the skeleton into
-your project if you want a head start.
+There is **no default reranker and never will be** — a default would ship every
+consumer's source to a third party, including the consumers who never read the changelog.
+With no `rerank` key in your `smelt.config.json`, nothing is loaded, nothing is imported
+and nothing is called. That is what a default install does, and the zero-network guard
+still walks the real import graph to prove it.
+
+What you can do is opt in, in a file you own ([ADR-0004](docs/adr/0004-rerank-config-seam.md)):
+
+```json
+{ "rerank": { "kind": "module", "path": "./smelt.rerank.ts" } }
+```
+
+```json
+{ "rerank": { "kind": "voyage", "model": "rerank-2.5", "apiKeyEnv": "VOYAGE_API_KEY", "topK": 8 } }
+```
+
+`module` loads a `RerankStage` of your own; `voyage` loads
+[`@smeltjs/rerank-voyage`](packages/rerank-voyage/), a **separate package you install
+yourself** and the only one in this repository that reaches the network. There is no
+`SMELT_RERANK_API_KEY` and no environment variable smelt reads that your config did not
+name. Every failure is a refusal that names what is missing — the path, the `topK` this
+kind needs, the environment variable, the uninstalled package — never a quiet fall back
+to an unranked run.
+
+**What a stage is asked, and what it may do.** When the planner has decided which regions
+to remove, the stage is handed _those regions_ and your focus terms, and its top-ranked
+answers are **spared** from the cut. It can only spare, never cut — so the worst a bad
+answer can do is cost you bytes, and bytes are already reported.
+
+Every run that reranks says so, on a line of its own beneath the focus line — this is its
+shape, not a measurement; the two counts are tallied per run and never estimated:
+
+```
+rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept)
+```
+
+The same three facts ride in the `--json` envelope (`result.rerank`) and in
+`smelt_file`'s report block, and `smelt doctor` says whether your key variable is set —
+presence only, never the value.
+
+Writing your own stage is unchanged:
 
 ```ts
 import type { RerankStage } from '@smeltjs/core';
@@ -755,7 +795,9 @@ The reasoning — _why_ breaking each produces a library that still looks like i
 is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#the-four-laws-and-why-each-one-is-load-bearing):
 
 1. **Zero network.** No external calls, in any code path, enforced by a guard that walks
-   the real import graph from every entrypoint the manifest advertises.
+   the real import graph from every entrypoint the manifest advertises — and that names
+   the one opt-in adapter package **forbidden** as an import, so it can only ever arrive
+   the way you chose it.
 2. **Every elision is explainable.** A named rule and a sentence a human can read in a
    diff. Never a model's opinion.
 3. **Every elision is reversible, and expansions are counted.** Reversibility without
