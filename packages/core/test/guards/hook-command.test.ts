@@ -10,6 +10,7 @@ import {
 } from '@guard/harness/hook-command';
 import type { HookCommand } from '@guard/harness/hook-command';
 import { OURS_TOKEN } from '@guard/harness/snippet';
+import { smeltInvocation } from '@guard/hooks/invocation';
 
 import type { GuardMutation } from './_mutations.ts';
 import { allSourceFiles, readSource } from './_source.ts';
@@ -42,6 +43,14 @@ const CWD = '/project';
 const SHIM = '/opt/smelt/dist/hooks/shims/claude-code.js';
 const BIN = '/opt/smelt/dist/cli/bin.js';
 
+/**
+ * The same two scripts as a Windows install spells them. `harness/paths.ts` hands an
+ * absolute path back untouched, so this is what a hook command on that machine holds —
+ * and a reader anchored on `/` alone called every one of them foreign.
+ */
+const WIN_SHIM = String.raw`C:\smelt\dist\hooks\shims\claude-code.js`;
+const WIN_BIN = String.raw`C:\smelt\dist\cli\bin.js`;
+
 /** Every kind, in every spelling a machine can produce. */
 const EVERY_COMMAND: readonly HookCommand[] = [
   { kind: 'guard', script: SHIM },
@@ -60,6 +69,14 @@ const EVERY_COMMAND: readonly HookCommand[] = [
   },
   { kind: 'lint', invocation: 'path', args: AGENTS_LINT_ARGS },
   { kind: 'lint', invocation: 'node', script: BIN, args: AGENTS_LINT_ARGS },
+  { kind: 'guard', script: WIN_SHIM },
+  {
+    kind: 'map',
+    invocation: 'node',
+    script: WIN_BIN,
+    args: `${MAP_ON_START_ARGS} --budget 8000 --cache .smelt/tags`,
+  },
+  { kind: 'lint', invocation: 'node', script: WIN_BIN, args: AGENTS_LINT_ARGS },
 ];
 
 describe('a hook command survives being written to a file and read back', () => {
@@ -70,6 +87,23 @@ describe('a hook command survives being written to a file and read back', () => 
         command,
       );
     }
+  });
+
+  it('the bare-name spelling is the name the invocation chose, not a second copy of it', () => {
+    // `renderHookCommand` writes the `kind: 'path'` prefix and `parseHookCommand` reads
+    // it back; both come from `SMELT_COMMAND_NAME`, and this is the assertion that says
+    // the ranking's own `command` is that same string.
+    const onPath = smeltInvocation({
+      env: { PATH: '/nowhere' },
+      fs: {
+        existsSync: () => false,
+        realpathSync: (path: string) => path,
+        statSync: () => ({ isFile: () => true, mode: 0o755 }),
+      },
+    });
+    expect(onPath.kind).toBe('path');
+    const written = renderHookCommand({ kind: 'stats', invocation: 'path', args: 'stats' }, CWD);
+    expect(written.startsWith(`${onPath.command} `)).toBe(true);
   });
 
   it('every lifecycle command carries the ownership token it is recognised by', () => {
@@ -90,6 +124,11 @@ describe('an entry that is not ours is foreign, and stays that way', () => {
       'node "/opt/other/other.js" stats',
       `node "/opt/other/other.js" ${MAP_ON_START_ARGS}`,
       'node "./node_modules/.bin/something"',
+      // The Windows spellings are read through a `/`-normalised copy, so the same
+      // ownership rule has to hold there and not merely the recognition.
+      String.raw`node "C:\other\other.js" stats`,
+      String.raw`node "C:\other\other.js"`,
+      String.raw`node "C:\smelt\dist\cli\bin.js"`,
     ]) {
       expect(
         parseHookCommand(foreign),
@@ -148,9 +187,16 @@ export const MUTATIONS: GuardMutation[] = [
     why: 'the reader confusing the two SessionStart hooks — the opening map and the instruction lint share one event key, so a reader that cannot tell them apart writes a re-run’s toggles back wrong and deletes the entry the user believed they had set',
   },
   {
+    id: 'hook-command-spawns-a-named-program',
+    file: 'harness/hook-command.ts',
+    find: 'spawnSync(process.execPath, [script], {',
+    replace: "spawnSync('node', [script], {",
+    why: 'the probe spawning a program by name instead of this very node — `node:child_process` is on the Law 1 allowlist under exactly that narrower ruling, and a name resolved through PATH is a program smelt did not choose and nobody classified',
+  },
+  {
     id: 'hook-command-accepts-a-foreign-script',
     file: 'harness/hook-command.ts',
-    find: '    if (!BIN_SCRIPT.test(script)) return undefined;',
+    find: '    if (!BIN_SCRIPT.test(posix)) return undefined;',
     replace: '    if (false) return undefined;',
     why: 'the parser calling any `node <script> stats` command smelt’s own — ownership is what decides which entries a re-run may replace, so a generous parser lets an upgrade silently delete another tool’s hook',
   },

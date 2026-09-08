@@ -221,9 +221,21 @@ export function stableScriptPath(realPath: string, fs: InvocationFs = NODE_FS): 
   return pathStability(realPath, fs).path;
 }
 
+/**
+ * The bare name a `kind: 'path'` invocation runs, and the one spelling of it.
+ *
+ * Written into hook commands by `harness/hook-command.ts` and read back by the same
+ * module's parser, so the name the ranking chose and the name a config file carries
+ * cannot come apart. (On Windows the *file* is `smelt.cmd`/`smelt.exe`; the name a
+ * shell resolves is still this one.)
+ */
+export const SMELT_COMMAND_NAME = 'smelt';
+
 /** `smelt.cmd`/`smelt.exe` on Windows, `smelt` everywhere else. */
 function executableNames(): readonly string[] {
-  return process.platform === 'win32' ? ['smelt.cmd', 'smelt.exe'] : ['smelt'];
+  return process.platform === 'win32'
+    ? [`${SMELT_COMMAND_NAME}.cmd`, `${SMELT_COMMAND_NAME}.exe`]
+    : [SMELT_COMMAND_NAME];
 }
 
 /**
@@ -367,7 +379,7 @@ export function smeltInvocation(options: SmeltInvocationOptions = {}): SmeltInvo
     const sameInstall = isSameFile(onPath, bin, fs);
     return {
       kind: 'path',
-      command: 'smelt',
+      command: SMELT_COMMAND_NAME,
       bin: onPath,
       stable: true,
       why: `\`smelt\` is on PATH (${onPath}) — a name no upgrade moves`,

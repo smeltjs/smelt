@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import process from 'node:process';
 
-import { smeltOnPath } from '../hooks/invocation.ts';
+import { DEFAULT_THRESHOLD_BYTES, GUARD_CONFIG_FILE_NAME } from '../hooks/guard-core.ts';
+import { SMELT_COMMAND_NAME, smeltOnPath } from '../hooks/invocation.ts';
 import type { InvocationEnv } from '../hooks/invocation.ts';
 import { asRecord } from '../hooks/shim.ts';
 import type { HarnessHookSchema } from '../hooks/shim.ts';
@@ -102,7 +103,8 @@ export const AGENTS_LINT_ARGS = 'agents lint .';
  */
 export function renderHookCommand(cmd: HookCommand, cwd: string): string {
   if (cmd.kind === 'guard') return nodeCommand(cwd, cmd.script);
-  const prefix = cmd.invocation === 'path' ? 'smelt' : nodeCommand(cwd, cmd.script ?? '');
+  const prefix =
+    cmd.invocation === 'path' ? SMELT_COMMAND_NAME : nodeCommand(cwd, cmd.script ?? '');
   return `${prefix} ${cmd.args}${HOOK_COMMAND_TAIL}`;
 }
 
@@ -111,6 +113,21 @@ const SHIM_SCRIPT = /(^|\/)hooks\/shims\/[^/]+\.js$/u;
 
 /** This package's own binary — the only script a lifecycle command may name. */
 const BIN_SCRIPT = /(^|\/)cli\/bin\.js$/u;
+
+/**
+ * The path with `\` read as `/`, for the two tests above — and **only** for them: the
+ * value keeps the spelling the config file actually carries, so the round trip holds.
+ *
+ * `harness/paths.ts` converts separators for a project-relative path and hands an
+ * absolute one back untouched, so on Windows every absolute script in a hook command
+ * is written with backslashes. Anchoring the two tests on `/` alone made
+ * `node "C:\smelt\dist\cli\bin.js" map . …` foreign — and the toggle reader that
+ * used to substring-match would then read the map toggle back as off and a re-run
+ * would delete the entry the user had set.
+ */
+function withForwardSlashes(path: string): string {
+  return path.split('\\').join('/');
+}
 
 /** `node <script> [args]`, in the three quotings a config file is written with. */
 const NODE_COMMAND = /^node\s+(?:"([^"]*)"|'([^']*)'|(\S+))\s*(.*)$/u;
@@ -123,8 +140,12 @@ const NODE_COMMAND = /^node\s+(?:"([^"]*)"|'([^']*)'|(\S+))\s*(.*)$/u;
  */
 const READLINK = /^\$\(\s*readlink\s+-f\s+(?:"([^"]*)"|'([^']*)'|([^)\s]+))\s*\)$/u;
 
-/** `smelt <args>` — the bare-name spelling, for a machine with `smelt` on PATH. */
-const SMELT_COMMAND = /^smelt\s+(.*)$/u;
+/**
+ * `smelt <args>` — the bare-name spelling, for a machine with `smelt` on PATH. Built
+ * from {@link SMELT_COMMAND_NAME}, the same constant `smeltInvocation` puts in
+ * `command`, so the reader cannot look for a name the ranking has stopped writing.
+ */
+const SMELT_COMMAND = new RegExp(`^${SMELT_COMMAND_NAME}\\s+(.*)$`, 'u');
 
 /**
  * The command a harness config carries, as a value — or `undefined` for an entry that
@@ -141,11 +162,12 @@ export function parseHookCommand(command: string): HookCommand | undefined {
   const node = NODE_COMMAND.exec(text);
   if (node !== null) {
     const script = unwrapReadlink(node[1] ?? node[2] ?? node[3] ?? '');
+    const posix = withForwardSlashes(script);
     const args = (node[4] ?? '').trim();
     if (args === '') {
-      return SHIM_SCRIPT.test(script) ? { kind: 'guard', script } : undefined;
+      return SHIM_SCRIPT.test(posix) ? { kind: 'guard', script } : undefined;
     }
-    if (!BIN_SCRIPT.test(script)) return undefined;
+    if (!BIN_SCRIPT.test(posix)) return undefined;
     const kind = verbKind(args);
     return kind === undefined ? undefined : { kind, invocation: 'node', script, args };
   }
@@ -314,9 +336,9 @@ export interface HookProbeIo {
 export const HOOK_PROBE_TIMEOUT_MS = 5000;
 
 /**
- * The size of the file the guard probe asks about — comfortably over the built-in
- * `DEFAULT_THRESHOLD_BYTES` (8 192), which is what applies in a scratch directory with
- * no `smelt.config.json` in it or above it.
+ * The size of the file the guard probe asks about — comfortably over
+ * `DEFAULT_THRESHOLD_BYTES` (8 192), which the probe **pins** in the scratch directory
+ * rather than relying on it being the default there.
  */
 export const HOOK_PROBE_FILE_BYTES = 9000;
 
@@ -330,8 +352,8 @@ const REASON_SENTINEL = ' smelt-probe-reason ';
  * own {@link HarnessHookSchema} — its read-tool name, its payload keys, its cwd key —
  * naming an oversized file, and the answer compared against the deny document that
  * schema wants back. The file is written into a fresh temp directory and the shim is
- * spawned *there*, so the built-in threshold and deny enforcement apply, the project's
- * config is not consulted, and no elision store is ever opened.
+ * spawned *there*, beside a `smelt.config.json` pinning the threshold and `deny`, so
+ * the project's config is not consulted and no elision store is ever opened.
  */
 export function probeHookCommand(
   cmd: HookCommand,
@@ -345,6 +367,51 @@ function resolveScript(script: string, cwd: string): string {
   return isAbsolute(script) ? script : join(cwd, script);
 }
 
+/**
+ * A fresh directory to run a probe in, with the guard's settings pinned inside it.
+ *
+ * The pin is not decoration. `findGuardConfigFile` walks up from the process cwd to
+ * the filesystem root, and the system temp directory is not always above nothing —
+ * on Windows it sits under the user's profile, where a `smelt.config.json` with
+ * `hooks.thresholdBytes: 100000` would make a working guard allow the probe's file
+ * and be reported `wired but inert`, costing `current` and printing a repair line for
+ * an install that is fine. Writing the file stops the walk here and makes the premise
+ * the probe rests on explicit instead of ambient.
+ */
+function probeScratchDir(): string {
+  const scratch = mkdtempSync(join(tmpdir(), 'smelt-hook-probe-'));
+  writeFileSync(
+    join(scratch, GUARD_CONFIG_FILE_NAME),
+    `${JSON.stringify({
+      smeltConfig: 1,
+      hooks: { thresholdBytes: DEFAULT_THRESHOLD_BYTES, enforcement: 'deny' },
+    })}\n`,
+  );
+  return scratch;
+}
+
+/** What a finished spawn says about itself, for a detail line. */
+function runTrailer(run: {
+  readonly status: number | null;
+  readonly signal: string | null;
+  readonly stderr: string;
+}): string {
+  const exit =
+    run.status === null ? `signal ${run.signal ?? 'unknown'}` : `exit ${String(run.status)}`;
+  const first = run.stderr.split('\n').find((line) => line.trim() !== '');
+  return first === undefined ? ` (${exit})` : ` (${exit}; stderr: ${first.trim()})`;
+}
+
+/** Timed out, or never started at all — two different things to tell somebody. */
+function runFailure(run: { readonly error?: Error }, script: string, timeoutMs: number): string {
+  const error = run.error;
+  /* v8 ignore next -- spawnSync only sets `error` on a failure, and this is one */
+  if (error === undefined) return `${script} failed to run`;
+  return (error as { readonly code?: string }).code === 'ETIMEDOUT'
+    ? `${script} did not answer within ${String(timeoutMs)}ms`
+    : `${script} could not be run: ${error.message}`;
+}
+
 function probeGuard(written: string, profile: ShimmedHarnessProfile, io: HookProbeIo): HookProbe {
   const script = resolveScript(written, io.cwd);
   if (!existsSync(script)) {
@@ -355,7 +422,7 @@ function probeGuard(written: string, profile: ShimmedHarnessProfile, io: HookPro
     };
   }
   const timeoutMs = io.timeoutMs ?? HOOK_PROBE_TIMEOUT_MS;
-  const scratch = mkdtempSync(join(tmpdir(), 'smelt-hook-probe-'));
+  const scratch = probeScratchDir();
   try {
     const oversized = join(scratch, 'probe.log');
     writeFileSync(oversized, 'x'.repeat(HOOK_PROBE_FILE_BYTES));
@@ -367,26 +434,25 @@ function probeGuard(written: string, profile: ShimmedHarnessProfile, io: HookPro
       timeout: timeoutMs,
     });
     if (run.error !== undefined) {
-      return {
-        status: 'inert',
-        script,
-        detail: `${script} did not answer within ${String(timeoutMs)}ms`,
-      };
+      return { status: 'inert', script, detail: runFailure(run, script, timeoutMs) };
     }
     if (run.stdout === '') {
+      // The exit code and the first stderr line ride along because the two ways to get
+      // here read identically otherwise: a shim that decided *allow*, and a shim that
+      // threw at import and never decided anything.
       return {
         status: 'inert',
         script,
         detail:
           `${script} allowed a ${String(HOOK_PROBE_FILE_BYTES)}-byte read — empty stdout is ` +
-          `an allow, so the hook is wired but not guarding`,
+          `an allow, so the hook is wired but not guarding${runTrailer(run)}`,
       };
     }
     if (!isDenyDocument(run.stdout, schema)) {
       return {
         status: 'inert',
         script,
-        detail: `${script} answered something other than ${profile.id}'s deny document`,
+        detail: `${script} answered something other than ${profile.id}'s deny document${runTrailer(run)}`,
       };
     }
     return {
@@ -417,15 +483,30 @@ function probeLifecycle(
   if (!existsSync(script)) {
     return { status: 'missing', script, detail: `${script} does not exist` };
   }
-  const run = spawnSync(process.execPath, [script, '--version'], {
-    encoding: 'utf8',
-    cwd: io.cwd,
-    timeout: io.timeoutMs ?? HOOK_PROBE_TIMEOUT_MS,
-  });
-  if (run.error !== undefined || run.status !== 0) {
-    return { status: 'inert', script, detail: `${script} did not answer \`--version\`` };
+  const timeoutMs = io.timeoutMs ?? HOOK_PROBE_TIMEOUT_MS;
+  // The same scratch directory the guard probe uses, for the same reason: a `--version`
+  // asked in the project would read the project, and this question is about the binary.
+  const scratch = probeScratchDir();
+  try {
+    const run = spawnSync(process.execPath, [script, '--version'], {
+      encoding: 'utf8',
+      cwd: scratch,
+      timeout: timeoutMs,
+    });
+    if (run.error !== undefined) {
+      return { status: 'inert', script, detail: runFailure(run, script, timeoutMs) };
+    }
+    if (run.status !== 0) {
+      return {
+        status: 'inert',
+        script,
+        detail: `${script} did not answer \`--version\`${runTrailer(run)}`,
+      };
+    }
+    return { status: 'fires', script, detail: `${script} answers \`--version\`` };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
-  return { status: 'fires', script, detail: `${script} answers \`--version\`` };
 }
 
 /**

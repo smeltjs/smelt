@@ -148,7 +148,11 @@ why }`, where `path` is the spelling to write. It is asked **per script actually
   `node other.js`. **The probe** is the module's second half and the reason `smelt
 doctor` can now say _verified_: `probeHookCommand` runs the command — for a guard,
   against a payload built from the harness's own `HarnessHookSchema` naming an
-  oversized file in a fresh temp directory — and answers `fires` / `inert` / `missing`.
+  oversized file in a fresh temp directory, beside a `smelt.config.json` pinning the
+  threshold so the walk up to the filesystem root cannot change the premise — and
+  answers `fires` / `inert` / `missing`. It reads **entries**, so the JSON hook files are
+  probed and the whole-owned guard-only files (Cline's, Hermes's, the opencode plugin)
+  are not: they carry no event-to-entry table, and doctor keeps saying plain `wired`.
   `wired` used to be a text fact, and the two defects Invocation fixed (an inert shim
   through a symlink, a keg path `brew upgrade` deleted) both leave that text exactly as
   it was; `inert` is the dangerous verdict, because empty stdout is how every harness

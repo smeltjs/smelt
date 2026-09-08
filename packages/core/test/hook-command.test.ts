@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -117,6 +125,25 @@ describe('parsing a hook command back', () => {
     );
   });
 
+  it('reads a Windows path, and hands the spelling back unchanged', () => {
+    // `harness/paths.ts` hands an absolute path back untouched, so a hook command on
+    // Windows carries backslashes. A reader anchored on `/` alone called these foreign,
+    // which turned a re-run's map/lint toggles off and deleted the entry the user set.
+    const shim = String.raw`C:\smelt\dist\hooks\shims\claude-code.js`;
+    const bin = String.raw`C:\smelt\dist\cli\bin.js`;
+    expect(parseHookCommand(`node "${shim}"`)).toEqual({ kind: 'guard', script: shim });
+    expect(
+      parseHookCommand(`node "${bin}" ${MAP_ON_START_ARGS} --budget 8000 # smelt:hooks`),
+    ).toEqual({
+      kind: 'map',
+      invocation: 'node',
+      script: bin,
+      args: 'map . --budget 8000',
+    });
+    // And ownership still decides: another tool's script under the same separators.
+    expect(parseHookCommand(String.raw`node "C:\other\other.js" stats`)).toBeUndefined();
+  });
+
   it('a `#` inside a path is not mistaken for the ownership comment', () => {
     const odd = '/opt/my#dir/dist/hooks/shims/grok.js';
     expect(parseHookCommand(`node "${odd}"`)).toEqual({ kind: 'guard', script: odd });
@@ -216,6 +243,44 @@ describe('probing what a hook command actually does', () => {
     expect(probe.detail).toContain('empty stdout is an allow');
   });
 
+  it('a `smelt.config.json` above the scratch directory cannot change the verdict', () => {
+    // The probe spawns under `tmpdir()`, and `findGuardConfigFile` walks up from there
+    // to the filesystem root — on Windows that path runs through the user's profile. A
+    // threshold set above the temp directory would make a working guard read `inert`.
+    // The probe pins its own config in the scratch directory, so the walk stops there.
+    const above = join(tmpdir(), 'smelt.config.json');
+    const had = existsSync(above);
+    if (!had) {
+      writeFileSync(
+        above,
+        `${JSON.stringify({ smeltConfig: 1, hooks: { thresholdBytes: 1_000_000 } })}\n`,
+      );
+    }
+    try {
+      const probe = probeHookCommand({ kind: 'guard', script: builtShim }, claudeCode(), {
+        cwd: dir,
+        env: envWithoutSmelt(),
+      });
+      expect(probe.status, probe.detail).toBe('fires');
+    } finally {
+      if (!had) rmSync(above, { force: true });
+    }
+  });
+
+  it('a shim that dies before deciding says so — not just "empty stdout"', () => {
+    // Empty stdout has two causes that read identically: a shim that decided *allow*,
+    // and a shim that crashed before deciding anything. The exit code and the first
+    // stderr line are what tell them apart. (A genuine import-time throw lands here
+    // too, with node's own first stderr line — its `<file>:<line>` header.)
+    mkdirSync(join(dir, 'hooks', 'shims'), { recursive: true });
+    const stub = join(dir, 'hooks', 'shims', 'claude-code.js');
+    writeFileSync(stub, "process.stderr.write('boom at import\\n');\nprocess.exit(1);\n");
+    const probe = probeHookCommand({ kind: 'guard', script: stub }, claudeCode(), { cwd: dir });
+    expect(probe.status).toBe('inert');
+    expect(probe.detail).toContain('exit 1');
+    expect(probe.detail).toContain('boom at import');
+  });
+
   it('a script that answers something else is inert too', () => {
     mkdirSync(join(dir, 'hooks', 'shims'), { recursive: true });
     const stub = join(dir, 'hooks', 'shims', 'claude-code.js');
@@ -247,6 +312,8 @@ describe('probing what a hook command actually does', () => {
     });
     expect(probe.status).toBe('inert');
     expect(probe.detail).toContain('did not answer within 250ms');
+    // A timeout and a spawn that never started are two different things to be told.
+    expect(probe.detail).not.toContain('could not be run');
   });
 
   it('the `path` form asks PATH, and nothing else', () => {
