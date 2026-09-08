@@ -127,6 +127,7 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
       input: io.initInput,
       output: (text) => io.stdout(colorize(text, io.color === true)),
       cwd: io.cwd ?? process.cwd(),
+      ...(io.home === undefined ? {} : { home: io.home }),
       version: io.version,
       ...(resolved.scope === undefined ? {} : { scope: resolved.scope }),
     });

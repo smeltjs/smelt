@@ -73,6 +73,7 @@ export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
       {
         output: (text) => io.stdout(colorize(text, io.color === true && !resolved.json)),
         cwd: io.cwd ?? process.cwd(),
+        ...(io.home === undefined ? {} : { home: io.home }),
         version: io.version,
       },
     );

@@ -159,6 +159,37 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   schema spells _allow_. Probing is a read, so ADR-0003 holds — doctor still writes no
   byte of the project, and the one thing it spawns is `process.execPath` (the narrower
   ruling under which `node:child_process` is on the Law 1 allowlist at all).
+- **InstallScope** (`src/harness/scope.ts`): where an install goes — `'project'` or
+  `'user'`. Every artefact the installer writes used to be a bare relative path joined
+  to `cwd`, at write time and, separately, at read time. That is right for a project and
+  wrong for the only way to get one config and one store for every project on a machine,
+  which is to install from `$HOME`: config discovery walks up, so a config at `~` is the
+  one every project below it finds. Run from there, the installer wrote `~/CLAUDE.md`,
+  `~/.mcp.json`, `~/AGENTS.md`, `~/GEMINI.md` and `~/opencode.json` — files no harness
+  reads at that level (Claude Code reads `~/.claude/CLAUDE.md`, Codex
+  `~/.codex/AGENTS.md`, Gemini `~/.gemini/GEMINI.md`, opencode
+  `~/.config/opencode/opencode.json`) — and doctor read from the same wrong places, so
+  the writer and the reader agreed the install was healthy while nothing was wired. The
+  user-level location is therefore a **per-harness fact**, `HarnessUserLocation` on the
+  profile beside the project path, and the seam is one resolver:
+  `locateStep(step, scope, {cwd, home})` → `{ path?, name?, skipped?, manual? }`. Project
+  scope returns exactly `join(cwd, step.file)`, so a project install is unchanged;
+  user scope returns the location that harness's own documentation names. `path` is
+  absent **exactly when** `skipped` is set, which is what makes the old defect
+  unreachable rather than merely unwritten: there is no path to fall back to, and the
+  compiler says so. `planInstall`, `planRemove`, `readInstalledState`, `presetToggles`,
+  doctor and the snippet all go through it. `manual` is the third answer — a location
+  that exists but is not smelt's to write, because the harness owns and rewrites the
+  file: Claude Code's user-scope MCP registration lives under the top-level `mcpServers`
+  key of `~/.claude.json`, so setup prints `claude mcp add --scope user …` and doctor
+  checks the key read-only. At user scope the config is `~/smelt.config.json` (decided,
+  not discovered) with the store at `~/.smelt/store`, and the marker block says "This
+  machine uses smelt" rather than "This project". Selection is `--scope` on `setup`,
+  `hooks install/remove` and `doctor`, defaulting to `user` when `cwd` realpaths to the
+  home directory; both receipts carry it. A harness that documents no user-level home
+  for an artefact is **project-only** and reported skipped with the reason — today
+  Hermes, KiloCode and Aider entirely, plus Grok's and Cursor's instruction layers and
+  Grok's hook file.
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
   bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
   built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from
@@ -395,14 +426,21 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0003 carry the reasonin
   (README fragments, site prompts, the `setup` verb) derives, or is guard-pinned against
   it. Prose is never the source.
 - **Setup** (`smelt setup`): the one-command, idempotent application of the recipe for
-  chosen harnesses — interactive when a TTY is present, flag-driven when an agent runs
-  it, and the only repair path for installed state. The `init` wizard remains the
+  chosen harnesses, at an **InstallScope** — interactive when a TTY is present,
+  flag-driven when an agent runs it, and the only repair path for installed state. From
+  the home directory it detects a machine-wide install, says so, and lets you flip it;
+  everywhere else it is the project's. The `init` wizard remains the
   deliberate sibling, not the repair path. _Avoid_: installer, `smelt init` (that is the
   careful wizard).
-- **InstalledState**: what smelt has written on this machine — hook entries (found by
-  their ownership marker), the config, the MCP registration, the binary version. `smelt
-doctor` reads it and never writes it; orphaned pieces are reported facts, never
-  silently cleaned.
+- **InstalledState**: what smelt has written for one **InstallScope** — hook entries
+  (found by their ownership marker), the config, the MCP registration, the binary
+  version. Every path it reads is resolved by `locateStep`, the same resolver the
+  installer wrote through, so a machine install is read back from `~/.claude/settings.json`
+  and a project install from `.claude/settings.json`; a reader with its own list of
+  names is how doctor came to agree with a writer that had moved. `smelt doctor` reads
+  it and never writes it — including the registrations that are the harness's own file
+  to rewrite, which it checks and names but never edits; orphaned pieces are reported
+  facts, never silently cleaned.
 - **SkillPack**: the opt-in, published teaching artifact an agent's owner installs by
   consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
   content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt

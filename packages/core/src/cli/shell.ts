@@ -145,6 +145,13 @@ export interface CliIo {
    */
   readonly cwd?: string;
   /**
+   * The home directory: harness detection, and — at `--scope user` — the root every
+   * install path is resolved against. Defaults to the real one; tests pass a temp
+   * directory, which is the only way a machine-wide install is testable without
+   * rewriting the developer's own `~/.claude/settings.json`.
+   */
+  readonly home?: string;
+  /**
    * Interactive input for the wizards — `init`, `hooks`, `agents split`, `setup` —
    * which read answers line by line, which the one-shot `stdin()` above cannot
    * provide. `bin.ts` passes the real stdin stream; tests pass a scripted one.

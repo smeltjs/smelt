@@ -292,6 +292,32 @@ stdout means it is inert** — that is the 0.6.0 bug, and `smelt setup` is the f
 (`realpath` ships with macOS 13+ and every Linux; on Linux `readlink -f` does the same,
 and on older macOS drop the substitution — the `opt` path works directly from 0.7.0 on.)
 
+### One project, or the whole machine
+
+Setup, `hooks install`/`remove` and `doctor` all take `--scope project|user`, and it
+defaults to `user` when you run them from your home directory and `project` everywhere
+else. The interactive wizards state what was detected and let you flip it.
+
+A **machine** install is the one to reach for when you want one `smelt.config.json` and
+one store behind every project: the config goes to `~/smelt.config.json`, which every
+project below it finds because discovery walks up, and the store to `~/.smelt/store`.
+Each harness file goes to that harness's **own documented user-level location** —
+`~/.claude/settings.json` and `~/.claude/CLAUDE.md`, `~/.codex/hooks.json` and
+`~/.codex/AGENTS.md`, `~/.gemini/settings.json` and `~/.gemini/GEMINI.md`,
+`~/.cursor/hooks.json`, `~/.config/opencode/`, `~/.cline/` — not the project spelling
+one directory up, which is a file nothing reads. A harness that documents no
+user-level home for a file is listed as skipped, with the reason; it is never guessed.
+
+```sh
+cd ~ && smelt setup --yes --scope user --harness claude-code
+smelt doctor --scope user
+```
+
+One step stays yours at machine scope: Claude Code's user-scope MCP registration lives
+in `~/.claude.json`, a file Claude Code owns and rewrites, so setup prints the command
+instead of editing it — `claude mcp add --scope user smelt -- npx @smeltjs/mcp` — and
+doctor checks the key read-only and names the command when it is missing.
+
 ### Updating — and the other machine
 
 An update is the same loop on every machine, forever:
@@ -321,7 +347,8 @@ _upgrade, doctor, setup_ is the whole recovery story, whether "the other machine
 laptop or a teammate's.
 
 Then tell your agent about it, in whatever standing-instructions file it reads
-(`CLAUDE.md`, `AGENTS.md`, a system prompt):
+(`CLAUDE.md`, `AGENTS.md`, a system prompt — or their user-level siblings,
+`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, if you want it everywhere):
 
 ```md
 Reading a big file or a long tool output? Pipe it through
@@ -330,6 +357,10 @@ raw. For orientation in an unfamiliar repo, `smelt map <dir> --budget 4000`. Eve
 elided region leaves a marker ending in `retrieve("hash")` — when you need those exact
 bytes back, run `smelt retrieve <hash>`.
 ```
+
+(The block `smelt setup` writes opens with "This project uses smelt" — or "This machine
+uses smelt" at `--scope user`, since a block in `~/.claude/CLAUDE.md` is loaded in every
+project on the machine.)
 
 The marker's `retrieve("hash")` **is** that command, and it is counted like any other
 retrieval — so at the end of a session, `smelt stats` prints the same honest numbers
