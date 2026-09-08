@@ -745,6 +745,22 @@ describe('the budget rung cuts around the focus, never through it', () => {
     const cut = elision.range.end - elision.range.start;
     expect(cut).toBe(BUDGET_RUNG_CUT_BYTES);
     expect(markerPricing('python').costBytes(elision.reason, cut)).toBe(BUDGET_RUNG_MARKER_BYTES);
+    // The escalation is stated on the elision: a rule id distinct from the first
+    // pass's plain `sibling-collapse`, so a reader of the report, the `--json`
+    // envelope or the per-rule ledger can tell this cut apart from an ordinary
+    // profitable one without knowing which pass produced it.
+    expect(elision.reason.rule).toBe('sibling-collapse-pressure');
+  });
+
+  it('stays silent under a budget the first pass already meets', async () => {
+    // The rung is an over-budget escalation, not a hunt for extra profitable cuts:
+    // the profitability floor is the only thing that runs once the plan already
+    // fits. The refused run here (a `VERSION = 1` statement plus three classes,
+    // priced whole) stays refused even though a sub-run of it — the same three
+    // classes the tighter budgets above cut — is profitable on its own, because
+    // nothing asked for it to be re-priced.
+    const plan = await planStructural(budgetInput(10_000));
+    expect(plan.elisions).toEqual([]);
   });
 
   it('keeps the focus-matched declaration whole, at every budget it is squeezed to', async () => {
@@ -878,6 +894,20 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    if (cut === undefined) refused.push(group);',
     replace: '    if (cut === undefined) refused.push(units);',
     why: 'the budget rung searching every unit in the file instead of the units of the run the first pass refused — under budget pressure the best-priced sub-run then swallows the focus-matched declaration, and the plan is smaller, reversible, labelled structural/v1, and missing the one thing the caller went looking for',
+  },
+  {
+    id: 'structural-budget-rung-ignores-budget',
+    file: 'plan/structural.ts',
+    find: '    if (currentBytes <= input.budgetBytes) break;',
+    replace: '    break;',
+    why: "the rung breaking out on its first iteration regardless of budget — planStructural goes back to never reading input.budgetBytes at all, and the review's own case (158 bytes against a 120-byte budget) returns to zero elisions, over budget, with the ten-byte profitable cut left on the table again",
+  },
+  {
+    id: 'structural-budget-rung-fires-under-budget',
+    file: 'plan/structural.ts',
+    find: '    if (currentBytes <= input.budgetBytes) break;',
+    replace: '    if (false) break;',
+    why: 'the over-budget check disabled — the rung re-prices every refused run even when the plan already fits, so a caller who never asked for the escalation gets a smaller, uglier plan (and a sibling-collapse-pressure rule id) than the one their budget already satisfied: the profitability floor stops being the only thing that runs under budget',
   },
   {
     id: 'structural-new-language-dropped',

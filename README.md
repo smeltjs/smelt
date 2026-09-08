@@ -475,7 +475,10 @@ Three things that look like bugs and are not:
   declarations whole — signature, doc comment, body — and collapses sibling runs into
   markers that name the kind and count from the parse tree. The Python survivor still
   parses; shebangs, Go build tags, Rust attributes and `#pragma once` stay pinned; a
-  marker is only planned when it costs fewer bytes than it removes.
+  marker is only planned when it costs fewer bytes than it removes. Over budget, a
+  pressure rung re-prices each refused run as its own best profitable sub-run — the
+  structural sibling of the lexical ladder below — and the escalation is stated on the
+  elision itself (`sibling-collapse-pressure` on `reason.rule`), never inferred.
 - **Lexical planner** — focus windows, head-tail, a context ladder under budget pressure.
   For logs, traces, diffs, and every other blob that is not code.
 - **Persistent store** — `DirectoryElisionStore`: one file per content hash, atomic

@@ -191,7 +191,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/test/guards/third-party.test.ts` | Attribution. Reruns the real generator and fails if the committed `THIRD-PARTY.md` differs; also proves the generator refuses an unattributed grammar. |
 | `packages/core/test/guards/persistent-store.test.ts` | Law 3 across a process boundary. A damaged blob is refused as `StoreCorruptionError`, never returned; the retrieval counters survive a restart; "we hold damaged bytes" stays distinct from "never existed". |
 | `packages/core/test/guards/cache-hygiene.test.ts` | Cache-prefix hygiene's promise: detect and warn, never rewrite — inputs stay unmutated, no export returns a "fixed" prompt, and no cache-hit-rate figure exists anywhere in `src`. |
-| `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, and a survivor that still parses in its own grammar. |
+| `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, a survivor that still parses in its own grammar, and the budget rung's over-budget escalation labelled by its own rule id, never silently. |
 | `packages/core/test/guards/structural-totality.test.ts` | Tests for every claimed language: each id in `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment case — claiming a language without tests goes red. |
 | `packages/core/test/guards/bench-results.test.ts` | The harness's honesty: `RESULTS.md` rows carry date + corpus commit + tier (and model where required), stay append-only, never say "up to"; network shapes confined to `tier2.mjs`/`tier3.mjs`; `bench/` never enters the published `files` list. |
 | `packages/core/test/guards/repo-map.test.ts` | The repo map's claims: the byte budget respected by construction, deterministic ranked output, content-hash cache invalidation, corrupt cache entries discarded loudly rather than trusted, and the walk counted call by call at the `RepoReader` seam — a symlink statted once and never read, an ignored path never statted. |
@@ -219,7 +219,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/test/guards/third-party.test.ts` | Attribution. Reruns the real generator and fails if the committed `THIRD-PARTY.md` differs; also proves the generator refuses an unattributed grammar. |
 | `packages/core/test/guards/persistent-store.test.ts` | Law 3 across a process boundary. A damaged blob is refused as `StoreCorruptionError`, never returned; the retrieval counters survive a restart; "we hold damaged bytes" stays distinct from "never existed". |
 | `packages/core/test/guards/cache-hygiene.test.ts` | Cache-prefix hygiene's promise: detect and warn, never rewrite — inputs stay unmutated, no export returns a "fixed" prompt, and no cache-hit-rate figure exists anywhere in `src`. |
-| `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, and a survivor that still parses in its own grammar. |
+| `packages/core/test/guards/structural.test.ts` | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, a survivor that still parses in its own grammar, and the budget rung's over-budget escalation labelled by its own rule id, never silently. |
 | `packages/core/test/guards/structural-totality.test.ts` | Tests for every claimed language: each id in `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment case — claiming a language without tests goes red. |
 | `packages/core/test/guards/bench-results.test.ts` | The harness's honesty: `RESULTS.md` rows carry date + corpus commit + tier (and model where required), stay append-only, never say "up to"; network shapes confined to `tier2.mjs`/`tier3.mjs`; `bench/` never enters the published `files` list. |
 | `packages/core/test/guards/repo-map.test.ts` | The repo map's claims: the byte budget respected by construction, deterministic ranked output, content-hash cache invalidation, corrupt cache entries discarded loudly rather than trusted, and the walk counted call by call at the `RepoReader` seam — a symlink statted once and never read, an ignored path never statted. |
@@ -495,6 +495,25 @@ by a mutation:
   because a maximal run is the better _explanation_: one marker naming everything it
   hid beats two naming halves of it, and trading that away is worth it to fit a budget
   and not worth it otherwise.
+
+  **The escalation is stated, not inferred.** A cut the rung mints carries
+  `sibling-collapse-pressure` on `ElisionReason.rule`, never the first pass's plain
+  `sibling-collapse` — the sentence a human reads stays the same shape a first-pass cut
+  of the same kind would earn, because `defaultMarker` renders `explanation` byte for
+  byte and a longer sentence would spend the same bytes the review's own case counts
+  on (its 92-byte cut prices against an 82-byte marker, ten bytes of room — the rule
+  id costs the marker nothing, since `defaultMarker` never renders it). A plan that
+  traded a maximal run's better explanation for a smaller cut under the same rule id
+  as an ordinary profitable one would have changed its own rules silently: the CLI
+  report's rule column, the `--json` envelope and the per-rule ledger (`ruleLedger()`
+  in `stats.ts`) all key off that one field, so a caller reading any of them can tell
+  an over-budget escalation from a first-pass cut without re-deriving which pass
+  produced it. `test/guards/structural.test.ts` pins two mutants against this: one that
+  makes the rung stop reading `budgetBytes` at all (the review's case goes back to zero
+  elisions, over budget), and one that lets it fire when the plan already fits — the
+  profitability floor `planLexical`'s ladder shares stays the only thing that runs
+  under budget; the rung is over-budget-only by construction, and both breaks turn
+  that into an accident.
 
 **Size, measured** (2026-09-02, `ls -l packages/core/grammars/` after `pnpm build`):
 the whole `grammars/` directory is 28,316,720 bytes ≈ 27.0 MiB, which is what
