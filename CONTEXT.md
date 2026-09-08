@@ -191,7 +191,20 @@ codebase-design glossary.
   the tags cache a caller named with `cacheDir`. Because it is injectable, the walk's
   claims are asserted by _counting calls_ — a symlink is statted once and never read
   (refused on `isSymlink`, not on the accident that an `lstat` of a link is neither
-  file nor directory), an ignored path is never statted at all.
+  file nor directory), an ignored path is never statted at all, and a file's `stat`
+  and `read` are adjacent calls for that one path — never a second whole-tree pass
+  over paths a first pass already vetted, which is what closes the stat-then-read
+  TOCTOU window this module actually controls (KOT-205 §6).
+- **CacheDiscard**: what `TagsCache.read()` in `src/repomap/cache.ts` returns for an
+  entry it could not hand back as tags — named honestly by _why_, the same "damaged,
+  never unknown" discipline the elision store applies to its own corruption. `'corrupt'`
+  is an entry fully read and found unparseable or wrongly shaped; `'unreadable'` is one
+  `readFileSync` itself refused (`EISDIR`, `EACCES`, anything but the plain `ENOENT` a
+  miss already answers as `undefined`) — a case that used to escape as a raw
+  `RepoMapIoError` and crash the whole map over one damaged cache entry the map never
+  needed (KOT-205 §5). Both discard the same way and both report `deleted` honestly:
+  `false` when the delete itself failed (an undeletable entry, e.g. a cache directory
+  that turned read-only mid-build), never claimed as gone when it is still there.
 - **Ops**: the operations seam under both front doors (`src/ops/`) — `smeltBlob`,
   `mapTree`, `retrieveBytes`, `readCounters` (`ops/verbs.ts`) as library functions over
   **already-resolved** inputs, returning data (text, the values a report needs, a

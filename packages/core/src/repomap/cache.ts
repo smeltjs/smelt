@@ -27,11 +27,22 @@ import type { LanguageId } from '../types.ts';
  * exact text. That is the whole invalidation story: edit a file and its key changes,
  * so the stale entry is simply never looked up again. Nothing needs a timestamp.
  *
- * A corrupt entry — unparseable JSON, or JSON of the wrong shape — is **discarded
- * loudly, never trusted**: the entry file is deleted, the tags are re-extracted from
- * source, and the caller's result carries a warning naming the file. Trusting a
- * damaged cache would silently drop symbols from the map, which is this project's
- * signature failure mode.
+ * A damaged entry is **discarded loudly, never trusted, and never fatal** — the entry
+ * file is deleted (best effort), the tags are re-extracted from source, and the
+ * caller's result carries a warning naming the file. Trusting a damaged cache would
+ * silently drop symbols from the map, which is this project's signature failure mode;
+ * crashing the whole map over one entry would be the overcorrection, since every tag
+ * here is re-derivable from the file's own bytes. Two ways an entry can be damaged, and
+ * `read()` names which one honestly rather than lumping them together — the same
+ * discipline the elision store already applies to "damaged" versus "never existed":
+ * **corrupt** (unparseable JSON, or JSON of the wrong shape — the entry was fully read
+ * and cannot be trusted) and **unreadable** (`readFileSync` itself refused — `EISDIR`
+ * because the entry path is now a directory, `EACCES` because the process lost
+ * permission, or anything else that is not a plain `ENOENT` miss). Both discard the
+ * same way and both report {@link CacheDiscard.deleted}, honestly, when the delete
+ * itself could not land — an undeletable entry (e.g. a cache directory that turned
+ * read-only mid-build) is offered for the same discard again on its next lookup, never
+ * silently treated as gone.
  *
  * **It is bounded, and the bound is a sweep.** The key is a content hash, so an edit
  * does not replace an entry — it mints a new one and orphans the old, which is
@@ -75,8 +86,34 @@ export function tagsCacheKey(language: LanguageId, content: string): string {
   return contentHash(`${TAGS_CACHE_FORMAT}/${String(TAGS_CACHE_VERSION)}\0${language}\0${content}`);
 }
 
+/**
+ * An entry `read()` could not hand back as tags — discarded, and named honestly by
+ * *why*, never lumped into one vague bucket. The distinction matters the way this
+ * repo's stores already distinguish "damaged" from "never existed": `'corrupt'` is an
+ * entry that was fully read and failed to parse or match the tags shape; `'unreadable'`
+ * is an entry `readFileSync` itself refused — the tags-cache path is a directory
+ * (`EISDIR`, e.g. another process or an editor left a directory where a `.json` file
+ * should be), the process lacks permission (`EACCES`), or anything else the filesystem
+ * can throw that is not a plain miss (`ENOENT`, which `read()` returns as `undefined`,
+ * never as a discard).
+ */
+export interface CacheDiscard {
+  readonly kind: 'corrupt' | 'unreadable';
+  /** The measured reason, never invented — an OS errno code or the parse/shape failure. */
+  readonly reason: string;
+  /**
+   * Whether `read()` actually deleted the entry file. `false` when the delete itself
+   * failed (an undeletable entry — e.g. a read-only cache directory): the file is left
+   * in place, still untrusted, and the next lookup for this key discards it again the
+   * same way. A `deleted: true` this call did not earn would be exactly the "we don't
+   * know" this repo's stores refuse to say about a damaged entry — `deleted` reports
+   * what happened, never a guess.
+   */
+  readonly deleted: boolean;
+}
+
 /** What `read()` reports about one lookup. */
-export type TagsCacheLookup = FileTags | 'corrupt' | undefined;
+export type TagsCacheLookup = FileTags | CacheDiscard | undefined;
 
 /**
  * An entry file's name, and the key inside it. Only a name of exactly this shape is
@@ -106,35 +143,54 @@ export class TagsCache {
   }
 
   /**
-   * The cached tags under `key`, `undefined` on a miss, `'corrupt'` when an entry
-   * existed but could not be trusted — in which case it has already been deleted, so
-   * the corruption is reported exactly once and never re-read.
+   * The cached tags under `key`: `undefined` on a plain miss, a {@link CacheDiscard}
+   * when an entry existed but could not be trusted or even be read.
+   *
+   * **Every non-`ENOENT` failure here is a discard, never a throw.** `ENOENT` is the
+   * only case this method treats as "nothing there" — a plain miss, answered by
+   * re-extraction exactly as a first build would. Anything else `readFileSync` can
+   * throw (`EISDIR` because the entry path is itself a directory, `EACCES` because the
+   * process cannot read it, a truncated read, anything the filesystem invents) used to
+   * escape through `fsCall` as a `RepoMapIoError` that crashed the whole map over one
+   * damaged cache entry the map does not even need — the tags are always re-derivable
+   * from the file's own bytes. So it is discarded exactly like a parse or shape
+   * failure: named by `reason`, deleted best-effort, reported once by the caller as a
+   * warning, and never re-read as truth.
    */
   read(key: string): TagsCacheLookup {
     const path = this.#entryPath(key);
-    const raw = fsCall('read the cache entry', path, (): string | undefined => {
-      try {
-        return readFileSync(path, 'utf8');
-      } catch (error) {
-        // Structural, not `NodeJS.ErrnoException`: this type reaches the shipped
-        // declarations, and an ambient namespace there breaks a consumer compiling
-        // with `skipLibCheck: false`.
-        if ((error as { code?: string }).code === 'ENOENT') return undefined;
-        throw error;
-      }
-    });
-    if (raw === undefined) return undefined;
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch (error) {
+      // Structural, not `NodeJS.ErrnoException`: this type reaches the shipped
+      // declarations, and an ambient namespace there breaks a consumer compiling
+      // with `skipLibCheck: false`.
+      const code = (error as { code?: string }).code;
+      if (code === 'ENOENT') return undefined; // a plain miss — nothing to discard
+      return {
+        kind: 'unreadable',
+        reason: describeReadFailure(error),
+        deleted: this.#discard(key),
+      };
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      this.#discard(key);
-      return 'corrupt';
+      return {
+        kind: 'corrupt',
+        reason: 'the entry is not valid JSON',
+        deleted: this.#discard(key),
+      };
     }
     const tags = validateEntry(parsed);
     if (tags === undefined) {
-      this.#discard(key);
-      return 'corrupt';
+      return {
+        kind: 'corrupt',
+        reason: 'the entry JSON does not match the tags shape',
+        deleted: this.#discard(key),
+      };
     }
     return tags;
   }
@@ -145,6 +201,14 @@ export class TagsCache {
    * are writing identical bytes (the key covers the content), so last-rename-wins is
    * harmless. No fsync: unlike the elision store, every entry here is derivable from
    * source, so losing one to a crash costs a re-parse, not a broken promise.
+   *
+   * **Best effort, same rule as {@link TagsCache.sweep}.** A write that cannot land —
+   * the cache directory turned read-only under the build, or `#discard` above just
+   * failed to remove a damaged entry at this exact key so the rename now lands on a
+   * directory instead of replacing a file — costs this one file a re-parse on the next
+   * build, never a build that crashed over an optimisation it does not need. This is
+   * the write-side half of the same fact `read()`'s discard rests on: a miss can only
+   * make a map slower, never wrong, and that has to hold whichever side fails.
    */
   write(key: string, tags: FileTags): void {
     const body = `${JSON.stringify({
@@ -155,10 +219,12 @@ export class TagsCache {
     })}\n`;
     const target = this.#entryPath(key);
     const temp = `${target}.tmp-${String(process.pid)}`;
-    fsCall('write the cache entry', target, () => {
+    try {
       writeFileSync(temp, body, 'utf8');
       renameSync(temp, target);
-    });
+    } catch {
+      // Not cached this build — see the doc comment above.
+    }
   }
 
   /**
@@ -209,15 +275,31 @@ export class TagsCache {
     return join(this.#entriesDir, `${key}.json`);
   }
 
-  /** Delete a corrupt entry so it can never be re-read as truth. Best effort. */
-  #discard(key: string): void {
+  /**
+   * Delete a damaged entry — corrupt content or unreadable — so it can never be
+   * re-read as truth. Best effort: reports whether the delete actually landed, so
+   * {@link CacheDiscard.deleted} can say so honestly rather than assuming success.
+   */
+  #discard(key: string): boolean {
     try {
       unlinkSync(this.#entryPath(key));
+      return true;
     } catch {
-      // Already gone, or undeletable — either way it will be overwritten by the
-      // rewrite that follows every discard.
+      // Already gone, or undeletable (e.g. the cache directory itself turned
+      // read-only mid-build). Either way the caller is told via `deleted: false` —
+      // never claimed as a success this call did not earn — and the entry is offered
+      // for discard again, the same way, on its next lookup.
+      return false;
     }
   }
+}
+
+/** The measured reason `read()` could not use an entry's bytes at all — never invented. */
+function describeReadFailure(error: unknown): string {
+  const code = (error as { code?: string } | null | undefined)?.code;
+  if (typeof code === 'string' && code !== '') return code;
+  if (error instanceof Error && error.message !== '') return error.message;
+  return String(error);
 }
 
 /** The parsed entry as `FileTags`, or `undefined` when its shape cannot be trusted. */
