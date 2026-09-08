@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 // of `src` and watch it go red. See scripts/mutate.mjs.
 import {
   AGENTS_LINT_ARGS,
+  isOursEntry,
   MAP_ON_START_ARGS,
   parseHookCommand,
   renderHookCommand,
@@ -129,6 +130,14 @@ describe('an entry that is not ours is foreign, and stays that way', () => {
       String.raw`node "C:\other\other.js" stats`,
       String.raw`node "C:\other\other.js"`,
       String.raw`node "C:\smelt\dist\cli\bin.js"`,
+      // And the case the token exists for: another CLI whose built binary happens to
+      // sit at `cli/bin.js` and whose Stop hook happens to be called `stats`. Without
+      // the tail there is nothing here that is smelt's, and a re-run must not touch it.
+      'node "/opt/foreign-cli/dist/cli/bin.js" stats',
+      `node "/opt/foreign-cli/dist/cli/bin.js" ${MAP_ON_START_ARGS}`,
+      'smelt stats',
+      `smelt ${AGENTS_LINT_ARGS}`,
+      'smelt stats 2>/dev/null || true',
     ]) {
       expect(
         parseHookCommand(foreign),
@@ -140,6 +149,33 @@ describe('an entry that is not ours is foreign, and stays that way', () => {
   it('a `smelt` command running a verb this preset does not wire does not parse', () => {
     expect(parseHookCommand('smelt retrieve deadbeef')).toBeUndefined();
     expect(parseHookCommand('smelt map')).toBeUndefined();
+  });
+
+  it('a tagged command still has to name this package’s own binary', () => {
+    // The two rules are independent and each needs its own witness. The token says the
+    // entry is smelt's to manage — `isOursEntry` claims it, and a re-run replaces it,
+    // which is right. What the *parser* refuses is to describe it as a lifecycle command
+    // of ours, because the script it names is a stranger's: `smelt doctor` would
+    // otherwise spawn whatever that path is, in the name of probing our own hook.
+    const tagged = `node "/opt/other/other.js" stats 2>/dev/null || true # ${OURS_TOKEN}`;
+    expect(parseHookCommand(tagged)).toBeUndefined();
+    expect(isOursEntry({ command: tagged })).toBe(true);
+  });
+
+  it('the ownership tail is what makes a lifecycle command ours, not the verb', () => {
+    // The guard kind names a shim, which is smelt's path by construction. The three
+    // lifecycle kinds name `cli/bin.js` or nothing at all, so the token is the whole of
+    // the evidence — the same command with and without it must answer differently.
+    const bin = 'node "/opt/foreign-cli/dist/cli/bin.js" stats';
+    expect(parseHookCommand(bin)).toBeUndefined();
+    expect(parseHookCommand(`${bin} 2>/dev/null || true # ${OURS_TOKEN}`)).toEqual({
+      kind: 'stats',
+      invocation: 'node',
+      script: '/opt/foreign-cli/dist/cli/bin.js',
+      args: 'stats',
+    });
+    // The guard kind is recognised on its path alone, tail or no tail.
+    expect(parseHookCommand(`node "${SHIM}"`)).toEqual({ kind: 'guard', script: SHIM });
   });
 });
 
@@ -185,6 +221,13 @@ export const MUTATIONS: GuardMutation[] = [
     find: "if (`${words[0] ?? ''} ${words[1] ?? ''}` === MAP_ON_START_ARGS) return 'map';",
     replace: "if (`${words[0] ?? ''} ${words[1] ?? ''}` === MAP_ON_START_ARGS) return 'lint';",
     why: 'the reader confusing the two SessionStart hooks — the opening map and the instruction lint share one event key, so a reader that cannot tell them apart writes a re-run’s toggles back wrong and deletes the entry the user believed they had set',
+  },
+  {
+    id: 'hook-command-lifecycle-tail-not-required',
+    file: 'harness/hook-command.ts',
+    find: '  if (!tagged) return undefined;',
+    replace: '  if (false) return undefined;',
+    why: 'the parser recognising a `stats`/`map`/`lint` command that never carried the `smelt:hooks` token — a lifecycle command names `cli/bin.js`, which another npm CLI\u2019s built binary could share, or no path at all, so dropping the token means a re-run of `hooks install` or `hooks remove` replaces or deletes a foreign Stop/SessionStart hook that merely looks like smelt\u2019s',
   },
   {
     id: 'hook-command-spawns-a-named-program',

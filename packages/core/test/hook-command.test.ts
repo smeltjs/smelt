@@ -1,9 +1,9 @@
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -24,6 +24,7 @@ import {
   probeHookCommand,
   renderHookCommand,
 } from '../src/harness/hook-command.ts';
+import { DEFAULT_THRESHOLD_BYTES } from '../src/hooks/guard-core.ts';
 import { harnessById } from '../src/harness/registry.ts';
 import type { ShimmedHarnessProfile } from '../src/harness/profile.ts';
 import { hasShim } from '../src/harness/profile.ts';
@@ -159,6 +160,12 @@ describe('parsing a hook command back', () => {
       'python /opt/smelt/dist/hooks/shims/claude-code.js',
       'echo hello',
       '',
+      // A lifecycle command that never carried the ownership token: `cli/bin.js` is a
+      // path another npm CLI's built binary could share, and `smelt stats` carries no
+      // path at all, so without the token there is nothing here that is smelt's.
+      'node "/opt/foreign-cli/dist/cli/bin.js" stats',
+      'smelt stats',
+      'smelt stats 2>/dev/null || true',
     ]) {
       expect(parseHookCommand(foreign), foreign).toBeUndefined();
     }
@@ -243,28 +250,33 @@ describe('probing what a hook command actually does', () => {
     expect(probe.detail).toContain('empty stdout is an allow');
   });
 
-  it('a `smelt.config.json` above the scratch directory cannot change the verdict', () => {
-    // The probe spawns under `tmpdir()`, and `findGuardConfigFile` walks up from there
-    // to the filesystem root — on Windows that path runs through the user's profile. A
-    // threshold set above the temp directory would make a working guard read `inert`.
-    // The probe pins its own config in the scratch directory, so the walk stops there.
-    const above = join(tmpdir(), 'smelt.config.json');
-    const had = existsSync(above);
-    if (!had) {
-      writeFileSync(
-        above,
-        `${JSON.stringify({ smeltConfig: 1, hooks: { thresholdBytes: 1_000_000 } })}\n`,
-      );
-    }
-    try {
-      const probe = probeHookCommand({ kind: 'guard', script: builtShim }, claudeCode(), {
-        cwd: dir,
-        env: envWithoutSmelt(),
-      });
-      expect(probe.status, probe.detail).toBe('fires');
-    } finally {
-      if (!had) rmSync(above, { force: true });
-    }
+  it('the probe pins the guard settings in the directory it runs the shim in', () => {
+    // `findGuardConfigFile` walks up from the process cwd to the filesystem root, and
+    // the system temp directory is not above nothing — on Windows it sits under the
+    // user's profile, where somebody's `hooks.thresholdBytes: 100000` would make a
+    // working guard allow the probe's file and be reported `wired but inert`. So the
+    // probe writes its own config into the scratch directory and the walk stops there.
+    //
+    // The stub hands back what it found, which is the only way to see a directory the
+    // probe creates and removes itself — and asserting on the file is what makes the
+    // pin a fact rather than a comment.
+    mkdirSync(join(dir, 'hooks', 'shims'), { recursive: true });
+    const stub = join(dir, 'hooks', 'shims', 'claude-code.js');
+    const captured = join(dir, 'seen-config.json');
+    writeFileSync(
+      stub,
+      `import { readFileSync, writeFileSync } from 'node:fs';\n` +
+        `writeFileSync(${JSON.stringify(captured)}, readFileSync('smelt.config.json', 'utf8'));\n`,
+    );
+    probeHookCommand({ kind: 'guard', script: stub }, claudeCode(), { cwd: dir });
+
+    const seen = JSON.parse(readFileSync(captured, 'utf8')) as {
+      hooks?: { thresholdBytes?: number; enforcement?: string };
+    };
+    expect(seen.hooks?.thresholdBytes).toBe(DEFAULT_THRESHOLD_BYTES);
+    expect(seen.hooks?.enforcement).toBe('deny');
+    // And the file the probe asks about is over that threshold, or the pin proves nothing.
+    expect(HOOK_PROBE_FILE_BYTES).toBeGreaterThan(DEFAULT_THRESHOLD_BYTES);
   });
 
   it('a shim that dies before deciding says so — not just "empty stdout"', () => {

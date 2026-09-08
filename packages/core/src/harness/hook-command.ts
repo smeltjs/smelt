@@ -85,7 +85,8 @@ export interface HookEntry {
  * `2>/dev/null || true` because a session hook that fails must never fail the session,
  * and the trailing shell comment tags the entry as this installer's: a bare
  * `cli/bin.js` substring would also match some other npm CLI's built binary, and a
- * `smelt <verb>` spelling carries no path at all to recognise.
+ * `smelt <verb>` spelling carries no path at all to recognise. It is not decoration —
+ * {@link parseHookCommand} refuses a lifecycle command that does not carry it.
  */
 export const HOOK_COMMAND_TAIL = ` 2>/dev/null || true # ${OURS_TOKEN}`;
 
@@ -152,13 +153,20 @@ const SMELT_COMMAND = new RegExp(`^${SMELT_COMMAND_NAME}\\s+(.*)$`, 'u');
  * is not ours.
  *
  * `undefined` is load-bearing: it is what tells the merge an entry belongs to somebody
- * else, so being generous here would let a re-run replace a foreign hook. A `node`
- * command must name one of *our* scripts — a shim (with no arguments) or this
- * package's binary (with arguments the verb table recognises) — and a bare `smelt`
- * command must run one of the three verbs this preset wires.
+ * else, so being generous here would let a re-run replace a foreign hook. The two kinds
+ * are recognised by different evidence, because they carry different amounts of it:
+ *
+ *  - a **guard** command names a shim, `<...>/hooks/shims/<harness id>.js`, and that
+ *    path is smelt's own by construction;
+ *  - a **lifecycle** command names `cli/bin.js` — a path another npm CLI's built binary
+ *    could share — or nothing at all (`smelt stats`). Neither is evidence, so for these
+ *    the `# smelt:hooks` tail **is part of the recognised shape**: a `stats`, `map` or
+ *    `lint` command without it is foreign. {@link renderHookCommand} always writes the
+ *    tail, so the round trip is unaffected, and the cost of being wrong here is a re-run
+ *    that deletes somebody else's `Stop` hook.
  */
 export function parseHookCommand(command: string): HookCommand | undefined {
-  const text = withoutTail(command);
+  const { text, tagged } = withoutTail(command);
   const node = NODE_COMMAND.exec(text);
   if (node !== null) {
     const script = unwrapReadlink(node[1] ?? node[2] ?? node[3] ?? '');
@@ -168,27 +176,51 @@ export function parseHookCommand(command: string): HookCommand | undefined {
       return SHIM_SCRIPT.test(posix) ? { kind: 'guard', script } : undefined;
     }
     if (!BIN_SCRIPT.test(posix)) return undefined;
-    const kind = verbKind(args);
+    const kind = lifecycleKind(args, tagged);
     return kind === undefined ? undefined : { kind, invocation: 'node', script, args };
   }
   const smelt = SMELT_COMMAND.exec(text);
   if (smelt === null) return undefined;
   const args = (smelt[1] ?? '').trim();
-  const kind = verbKind(args);
+  const kind = lifecycleKind(args, tagged);
   return kind === undefined ? undefined : { kind, invocation: 'path', args };
+}
+
+/** The command with its ownership tail taken off, and whether it carried one. */
+interface TaggedCommand {
+  readonly text: string;
+  /** True when the trailing shell comment carried {@link OURS_TOKEN}. */
+  readonly tagged: boolean;
 }
 
 /**
  * The command without its ownership tail. The shell comment is stripped only when it
  * carries {@link OURS_TOKEN}, so a `#` inside somebody's quoted path is left alone.
  */
-function withoutTail(command: string): string {
+function withoutTail(command: string): TaggedCommand {
   let text = command.trim();
   const hash = text.lastIndexOf('#');
-  if (hash !== -1 && text.slice(hash).includes(OURS_TOKEN)) text = text.slice(0, hash).trimEnd();
+  const tagged = hash !== -1 && text.slice(hash).includes(OURS_TOKEN);
+  if (tagged) text = text.slice(0, hash).trimEnd();
   if (text.endsWith('|| true')) text = text.slice(0, -'|| true'.length).trimEnd();
   if (text.endsWith('2>/dev/null')) text = text.slice(0, -'2>/dev/null'.length).trimEnd();
-  return text;
+  return { text, tagged };
+}
+
+/**
+ * The lifecycle kind these arguments are — **only** for a command that carried the
+ * ownership tail.
+ *
+ * The tail is the whole of the evidence here. `stats` on `Stop`, and a `map .` or
+ * `agents lint .` on `SessionStart`, are ordinary enough shapes that another tool could
+ * write one; the path a lifecycle command names is `cli/bin.js`, which another npm CLI's
+ * built binary could share; and the `smelt <verb>` spelling carries no path at all.
+ * Recognising one of these without the token would let a re-run replace or delete a
+ * foreign session hook that merely looks like ours.
+ */
+function lifecycleKind(args: string, tagged: boolean): 'stats' | 'map' | 'lint' | undefined {
+  if (!tagged) return undefined;
+  return verbKind(args);
 }
 
 function unwrapReadlink(script: string): string {
@@ -238,8 +270,11 @@ export function hookEntryCommands(entry: unknown): readonly string[] {
  * shared by the merge (which entries a re-run may replace), the toggle reader and
  * `cli/installed.ts`.
  *
- * A command the parser recognises is ours by construction. The token check behind it
- * catches an entry a user hand-edited past recognition but left tagged: a re-run
+ * A command the parser recognises is ours by construction — and the parser is where the
+ * standing rule lives that ownership is never decided on a substring as generic as
+ * `cli/bin.js`, which another npm CLI's built binary could share: a lifecycle command
+ * has to carry the `smelt:hooks` token to be recognised at all. The token check behind
+ * it catches an entry a user hand-edited past recognition but left tagged: a re-run
  * replacing that is right, and orphaning it is not.
  */
 export function isOursEntry(entry: unknown): boolean {
