@@ -21,6 +21,7 @@ import {
   buildRepoMap,
   DEFAULT_REPO_IGNORE,
   REPO_MAP_CACHE_CORRUPT_RULE,
+  REPO_MAP_CACHE_UNREADABLE_RULE,
   REPO_MAP_FOCUS_RULE,
   REPO_MAP_ID,
   REPO_MAP_PATH_ONLY_RULE,
@@ -89,13 +90,33 @@ import type { GuardMutation } from './_mutations.ts';
  *     did not use — and a miss may only make the next map slower, never different,
  *     which is also why a sweep that cannot even list its directory reports `0`
  *     rather than throwing away a map that was already computed.
- * 12. **The ranking's resolution limit is written down.** References bind by bare
- *     identifier, so same-name symbols share rank. That is Aider's design and not a
- *     bug — but undocumented it is a trap, so the behaviour and the sentences
- *     describing it are both pinned here.
+ * 12. **The ranking's resolution limit is written down, and its numbers are pinned.**
+ *     References bind by bare identifier, so same-name symbols across files — and two
+ *     definitions of one name in a single file, the overload/re-export shape — share
+ *     rank. That is Aider's design and not a bug (KOT-205 §3/§4): resolving properly
+ *     needs per-language import/scope resolution the map deliberately does not do.
+ *     Undocumented it is a trap, so the behaviour and the sentences describing it are
+ *     both pinned here — cross-file and same-file.
+ * 13. **A damaged cache entry is discarded by *why*, and neither side crashes the
+ *     map (KOT-205 §5).** `read()` used to let a non-`ENOENT` failure (`EISDIR`
+ *     because the entry path is now a directory, `EACCES` because the process lost
+ *     permission) escape uncaught and crash the whole map over one damaged entry it
+ *     did not need. It is discarded instead, named `'corrupt'` or `'unreadable'`
+ *     honestly rather than lumped together, and an entry the discard cannot even
+ *     delete is reported as undeleted rather than claimed gone — the write that
+ *     follows every discard is equally non-fatal.
+ * 14. **A file's `stat` and its `read` are adjacent, closing the scan's own
+ *     two-phase gap (KOT-205 §6).** The walk used to vet every path first and only
+ *     then, in a second pass over the finished list, read each one — so a path
+ *     already cleared as "not a symlink" could sit unread for as long as the rest of
+ *     the tree's scan, wide open to being swapped for a symlink escaping `root` in
+ *     the meantime. Reading a file in the same walk step that just vetted it closes
+ *     that window; what remains is the single `stat`-then-`read` pair itself, the
+ *     same residue any program accepts when it opens a path by name.
  *
- * Mutations for 2, 1, 4, 5, 7, 8, 9, 10, 11 and 12 live in the MUTATIONS export at
- * the bottom of this file; `pnpm mutate` proves each one turns this file red.
+ * Mutations for 1, 2, 4, 5, 7, 8, 9, 10, 11, 12, 13 and 14 live in the MUTATIONS
+ * export at the bottom of this file; `pnpm mutate` proves each one turns this file
+ * red.
  */
 
 const fixtureRoot = fileURLToPath(new URL('../fixtures/repomap-repo', import.meta.url));
@@ -576,6 +597,12 @@ describe('the repo map keeps its claims', () => {
         content: 'export function ignoredSymbol(): number {\n  return 3;\n}\n',
       },
     };
+    // Every file's `read` sits immediately after its own `stat` — never after some
+    // other file's `stat`, the way a whole-tree-scan-then-whole-tree-read design would
+    // order them. That adjacency is the TOCTOU fix (KOT-205 §6): the symlink refusal
+    // and the byte read happen in the same walk step, so nothing sits "vetted, not yet
+    // read" across the rest of the tree's scan. `deep.ts` sits deeper in the walk than
+    // `only.ts` but is read before it, because it is read where it is found.
     const EXPECTED_CALLS = [
       { op: 'list', path: '' },
       { op: 'stat', path: 'src' },
@@ -583,8 +610,8 @@ describe('the repo map keeps its claims', () => {
       { op: 'stat', path: 'src/nested' },
       { op: 'list', path: 'src/nested' },
       { op: 'stat', path: 'src/nested/deep.ts' },
-      { op: 'stat', path: 'src/only.ts' },
       { op: 'read', path: 'src/nested/deep.ts' },
+      { op: 'stat', path: 'src/only.ts' },
       { op: 'read', path: 'src/only.ts' },
     ];
 
@@ -841,6 +868,93 @@ describe('the repo map keeps its claims', () => {
     }
   });
 
+  it('discards an unreadable cache entry (EISDIR) loudly, never crashing the map (KOT-205 §5)', async () => {
+    const root = scratch('smelt-repomap-eisdir-');
+    const cacheDir = scratch('smelt-repomap-eisdir-cache-');
+    const content = 'export function survivor(): string {\n  return "here";\n}\n';
+    writeFileSync(join(root, 'only.ts'), content);
+
+    // A directory sits where the entry file should be — another process, an editor's
+    // autosave, or a half-finished `mkdir -p` can leave exactly this. `read()` used to
+    // let the resulting EISDIR escape uncaught through `fsCall` as a `RepoMapIoError`,
+    // crashing the whole map over one damaged cache entry it did not even need.
+    const key = tagsCacheKey('typescript', content);
+    mkdirSync(join(cacheDir, 'tags', `${key}.json`), { recursive: true });
+
+    const map = await buildRepoMap({ root, budgetBytes: BUDGET, cacheDir });
+    expect(map.cache!.discarded).toBe(1);
+    const warning = map.warnings.find((entry) => entry.rule === REPO_MAP_CACHE_UNREADABLE_RULE);
+    expect(warning, 'no unreadable-cache-entry warning was reported').toBeDefined();
+    expect(warning!.explanation).toContain('EISDIR');
+    expect(warning!.explanation).toContain('only.ts');
+    // `unlink` refuses a directory unconditionally (EPERM/EISDIR), regardless of
+    // permissions, so the discard itself cannot land here — the entry stays on disk,
+    // and the warning must say so honestly rather than claiming it was cleared.
+    expect(
+      warning!.explanation,
+      'a directory entry the discard could not remove was reported as deleted',
+    ).toContain('could not be deleted');
+    // The map still comes back, complete — re-extracted from source, not lost.
+    expect(map.entries.map((entry) => entry.name)).toContain('survivor');
+  });
+
+  it('discards an unreadable cache entry (EACCES) loudly, never crashing the map (KOT-205 §5)', async () => {
+    const root = scratch('smelt-repomap-eacces-');
+    const cacheDir = scratch('smelt-repomap-eacces-cache-');
+    const content = 'export function survivor(): string {\n  return "here";\n}\n';
+    writeFileSync(join(root, 'only.ts'), content);
+
+    const key = tagsCacheKey('typescript', content);
+    const entryDir = join(cacheDir, 'tags');
+    mkdirSync(entryDir, { recursive: true });
+    const entryPath = join(entryDir, `${key}.json`);
+    writeFileSync(entryPath, 'irrelevant — the read is refused before this is ever examined');
+    chmodSync(entryPath, 0o000);
+    try {
+      const map = await buildRepoMap({ root, budgetBytes: BUDGET, cacheDir });
+      expect(map.cache!.discarded).toBe(1);
+      const warning = map.warnings.find((entry) => entry.rule === REPO_MAP_CACHE_UNREADABLE_RULE);
+      expect(warning, 'no unreadable-cache-entry warning was reported').toBeDefined();
+      expect(warning!.explanation).toContain('EACCES');
+      expect(map.entries.map((entry) => entry.name)).toContain('survivor');
+    } finally {
+      chmodSync(entryPath, 0o644);
+    }
+  });
+
+  it('reports an undeletable cache entry honestly, and never crashes the write that follows (KOT-205 §5)', async () => {
+    const root = scratch('smelt-repomap-undeletable-');
+    const cacheDir = scratch('smelt-repomap-undeletable-cache-');
+    const content = 'export function survivor(): string {\n  return "here";\n}\n';
+    writeFileSync(join(root, 'only.ts'), content);
+
+    const key = tagsCacheKey('typescript', content);
+    const entryDir = join(cacheDir, 'tags');
+    mkdirSync(entryDir, { recursive: true });
+    const entryPath = join(entryDir, `${key}.json`);
+    writeFileSync(entryPath, 'not valid json, so read() will try to discard it');
+    // Read-and-execute, not write: `unlink` (the discard) and creating a new temp file
+    // (the rewrite `read()` triggers next) both need write permission on the
+    // *directory*, not the entry — so this blocks both without touching the entry
+    // file's own permissions.
+    chmodSync(entryDir, 0o555);
+    try {
+      const map = await buildRepoMap({ root, budgetBytes: BUDGET, cacheDir });
+      expect(map.cache!.discarded).toBe(1);
+      const warning = map.warnings.find((entry) => entry.rule === REPO_MAP_CACHE_CORRUPT_RULE);
+      expect(warning, 'no corrupt-cache-entry warning was reported').toBeDefined();
+      expect(
+        warning!.explanation,
+        'an entry this build could not delete was reported as if it had been',
+      ).toContain('could not be deleted');
+      // The map still comes back, complete — a write that cannot land is a slower
+      // build, never a crashed one.
+      expect(map.entries.map((entry) => entry.name)).toContain('survivor');
+    } finally {
+      chmodSync(entryDir, 0o755);
+    }
+  });
+
   it('binds references by bare identifier, and says so where a reader will meet it', async () => {
     // Aider's design, inherited on purpose, and judged not a bug: a reference tag is
     // a name, not a resolved symbol. Undocumented it is a trap, so both the behaviour
@@ -883,6 +997,42 @@ describe('the repo map keeps its claims', () => {
       expect(source).toContain('bare identifier');
     }
   });
+
+  it('doubles the rank share across two definitions of one name in a single file — overloads, not a defect (KOT-205 §4)', async () => {
+    const root = scratch('smelt-repomap-overloads-');
+    // tree-sitter has no duplicate-declaration check, so this parses as two separate
+    // `defs` named `handle` — the same tag shape a real TypeScript overload set (two
+    // signatures plus an implementation) or a re-export collision takes. The ranker
+    // must not silently start splitting a name's traffic across its definers: KOT-205
+    // §3/§4 kept that conflated on purpose (the alternative needs per-language
+    // import/scope resolution the map deliberately does not do — see the module doc
+    // on `rank.ts`), so both defs must see the SAME whole traffic, not a fraction of
+    // it, exactly as the doc comment's "overloads... double-count" says.
+    writeFileSync(
+      join(root, 'handlers.ts'),
+      'export function handle(): number {\n  return 1;\n}\n\n' +
+        'export function handle(): number {\n  return 2;\n}\n',
+    );
+    writeFileSync(
+      join(root, 'caller.ts'),
+      "import { handle } from './handlers.ts';\n\n" +
+        'export function callIt(): number {\n  return handle() + handle();\n}\n',
+    );
+
+    const map = await buildRepoMap({ root, budgetBytes: BUDGET });
+    const both = map.entries.filter((entry) => entry.name === 'handle');
+    expect(both.map((entry) => entry.line).toSorted((a, b) => a - b)).toEqual([1, 5]);
+    expect(both[0]!.refsIn, 'the guard is vacuous unless something references it').toBeGreaterThan(
+      0,
+    );
+    expect(both[0]!.refsIn).toBe(both[1]!.refsIn);
+    expect(both[0]!.refsInFiles).toBe(both[1]!.refsInFiles);
+    expect(both[0]!.rank).toBe(both[1]!.rank);
+    expect(
+      both[0]!.rank,
+      'the guard is vacuous unless cross-file traffic actually ranked it',
+    ).toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -915,9 +1065,64 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'repomap-corrupt-cache-trusted',
     file: 'repomap/cache.ts',
-    find: "    if (tags === undefined) {\n      this.#discard(key);\n      return 'corrupt';\n    }",
-    replace: '    if (tags === undefined) {\n      return { defs: [], refs: [] };\n    }',
+    find:
+      '    const tags = validateEntry(parsed);\n' +
+      '    if (tags === undefined) {\n' +
+      '      return {\n' +
+      "        kind: 'corrupt',\n" +
+      "        reason: 'the entry JSON does not match the tags shape',\n" +
+      '        deleted: this.#discard(key),\n' +
+      '      };\n' +
+      '    }',
+    replace:
+      '    const tags = validateEntry(parsed);\n' +
+      '    if (tags === undefined) {\n' +
+      '      return { defs: [], refs: [] };\n' +
+      '    }',
     why: 'a corrupt cache entry quietly trusted as empty tags instead of discarded loudly — symbols vanish from the map with no warning anywhere',
+  },
+  {
+    id: 'repomap-unreadable-cache-crashes',
+    file: 'repomap/cache.ts',
+    find:
+      "      if (code === 'ENOENT') return undefined; // a plain miss — nothing to discard\n" +
+      '      return {\n' +
+      "        kind: 'unreadable',\n" +
+      '        reason: describeReadFailure(error),\n' +
+      '        deleted: this.#discard(key),\n' +
+      '      };',
+    replace: "      if (code === 'ENOENT') return undefined;\n      throw error;",
+    why: 'a non-ENOENT cache-entry read failure (EISDIR because the entry path is now a directory, EACCES because the process lost permission) escapes uncaught again — fsCall wraps it into a RepoMapIoError that crashes the whole map over one damaged cache entry the map never needed, instead of the entry being discarded loudly and the build carrying on',
+  },
+  {
+    id: 'repomap-cache-discard-reported-as-deleted',
+    file: 'repomap/cache.ts',
+    find:
+      '      return {\n' +
+      "        kind: 'unreadable',\n" +
+      '        reason: describeReadFailure(error),\n' +
+      '        deleted: this.#discard(key),\n' +
+      '      };',
+    replace:
+      '      return {\n' +
+      "        kind: 'unreadable',\n" +
+      '        reason: describeReadFailure(error),\n' +
+      '        deleted: true,\n' +
+      '      };',
+    why: "an unreadable cache entry's delete result hardcoded to true — an undeletable entry (a read-only cache directory, say) is then claimed gone when it is still on disk, exactly the false 'we don't know, so assume the best' this repo's stores refuse to say about a damaged entry",
+  },
+  {
+    id: 'repomap-cache-write-crashes',
+    file: 'repomap/cache.ts',
+    find:
+      '    try {\n' +
+      "      writeFileSync(temp, body, 'utf8');\n" +
+      '      renameSync(temp, target);\n' +
+      '    } catch {\n' +
+      '      // Not cached this build — see the doc comment above.\n' +
+      '    }',
+    replace: "    writeFileSync(temp, body, 'utf8');\n    renameSync(temp, target);",
+    why: 'a cache write that cannot land (the cache directory turned read-only, or a damaged entry could not be deleted so the rename now targets a directory) throws instead of being treated as an optimisation that failed — a computed map is thrown away over housekeeping the map does not need to survive',
   },
   {
     id: 'repomap-refsout-per-definer',
@@ -950,6 +1155,51 @@ export const MUTATIONS: GuardMutation[] = [
     find: '      if (stat.isSymlink) continue;',
     replace: '      // symlink refusal removed',
     why: 'the walk stops refusing symlinks and leans on the accident that an lstat of a link is neither file nor directory — a reader whose stat resolves the link is then followed straight out of the root, and the call log shows the map reading a path it was never handed',
+  },
+  {
+    id: 'repomap-read-not-fused-with-stat',
+    file: 'repomap/map.ts',
+    find:
+      '  const found: ScannedFile[] = [];\n' +
+      '  const walk = (dir: string, relDir: string): void => {\n' +
+      "    const listed = fsCall('list the directory', dir, () => reader.list(dir));\n" +
+      '    for (const entry of listed.map((item) => item.name).toSorted()) {\n' +
+      "      const rel = relDir === '' ? entry : `${relDir}/${entry}`;\n" +
+      '      if (isIgnored(rel, ignore)) continue;\n' +
+      '      const full = join(dir, entry);\n' +
+      "      const stat = fsCall('stat', full, () => reader.stat(full));\n" +
+      '      if (stat === undefined) continue; // the reader has nothing there\n' +
+      '      if (stat.isSymlink) continue;\n' +
+      '      if (stat.isDirectory) walk(full, rel);\n' +
+      '      else if (stat.isFile) {\n' +
+      "        const bytes = fsCall('read the file', full, () => reader.read(full));\n" +
+      '        found.push({ rel, bytes });\n' +
+      '      }\n' +
+      '    }\n' +
+      '  };\n' +
+      "  walk(root, '');\n" +
+      '  return found;',
+    replace:
+      '  const vetted: { rel: string; full: string }[] = [];\n' +
+      '  const walk = (dir: string, relDir: string): void => {\n' +
+      "    const listed = fsCall('list the directory', dir, () => reader.list(dir));\n" +
+      '    for (const entry of listed.map((item) => item.name).toSorted()) {\n' +
+      "      const rel = relDir === '' ? entry : `${relDir}/${entry}`;\n" +
+      '      if (isIgnored(rel, ignore)) continue;\n' +
+      '      const full = join(dir, entry);\n' +
+      "      const stat = fsCall('stat', full, () => reader.stat(full));\n" +
+      '      if (stat === undefined) continue; // the reader has nothing there\n' +
+      '      if (stat.isSymlink) continue;\n' +
+      '      if (stat.isDirectory) walk(full, rel);\n' +
+      '      else if (stat.isFile) vetted.push({ rel, full });\n' +
+      '    }\n' +
+      '  };\n' +
+      "  walk(root, '');\n" +
+      '  return vetted.map(({ rel, full }) => ({\n' +
+      '    rel,\n' +
+      "    bytes: fsCall('read the file', full, () => reader.read(full)),\n" +
+      '  }));',
+    why: "the whole-tree scan and the per-file read split back into two phases — every path is stat-vetted first and only then, in a second pass over the finished list, read; a file swapped for a symlink escaping root between the two phases has its target's bytes read straight into the map past a symlink refusal that already ran and already said no (the TOCTOU the fused walk exists to close, KOT-205 §6)",
   },
   {
     id: 'repomap-default-ignores-build-output-dropped',
@@ -985,6 +1235,14 @@ export const MUTATIONS: GuardMutation[] = [
     find: ' * **What the ranking can and cannot resolve.** A reference binds to a definition **by',
     replace: ' * A reference binds to a definition **by',
     why: "the resolution limit deleted from the map's own module doc — a reader of buildRepoMap meets refsIn with nothing to tell them it counts a name rather than a symbol, and the one place the limit was stated for the module's own callers is gone",
+  },
+  {
+    id: 'repomap-rank-share-not-conflated',
+    file: 'repomap/rank.ts',
+    find: '      for (const def of definers) {\n        if (def.path === path) continue;\n        def.rank += (sourceRank * ref.count) / total;',
+    replace:
+      '      for (const def of definers) {\n        if (def.path === path) continue;\n        if (def !== definers[0]) continue;\n        def.rank += (sourceRank * ref.count) / total;',
+    why: "rank share silently stops being conflated across every definer of a name — only the first-encountered definition of a shared or overloaded name earns rank, the rest sit at zero — which is a worse, undocumented behaviour change smuggled in under the 'inherited from Aider' banner: KOT-205 §3/§4 kept the conflation on purpose (splitting it needs per-language import/scope resolution this map deliberately does not do), so any accidental partial split must be exactly as loud as a full one",
   },
   {
     id: 'grammar-load-error-unwrapped',

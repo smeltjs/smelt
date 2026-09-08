@@ -719,9 +719,17 @@ to _inclusion_: every symbol in the map carries a rule id and a sentence naming 
 definition site and the measured reference counts that ranked it. The tags cache is
 plain JSON keyed by content hash — Aider persists through SQLite, but this repo ships
 zero new runtime dependencies — and it lives **only** in a directory the caller
-explicitly hands in; a corrupt entry is deleted and reported as a warning in the result,
-never trusted. Guarded by `test/guards/repo-map.test.ts`, whose mutations prove that
-the budget, the tie-break, cache invalidation, the corrupt-entry discard, the symlink
+explicitly hands in; a damaged entry is deleted (best effort) and reported as a warning
+in the result, never trusted and never fatal — named honestly as **corrupt** (unparseable
+JSON, or the wrong shape) or **unreadable** (`readFileSync` itself refused: `EISDIR`, the
+entry path is now a directory; `EACCES`, permission lost; anything that is not a plain
+`ENOENT` miss), the same "damaged, not unknown" discipline the elision store already
+applies. Both a discard that cannot delete its own entry and a write that cannot land
+cost the next build a re-parse, never this one a crash — `read()` used to let a
+non-`ENOENT` failure escape through `fsCall` as a `RepoMapIoError` that crashed the whole
+map over one damaged cache entry the map never needed. Guarded by
+`test/guards/repo-map.test.ts`, whose mutations prove that the budget, the tie-break,
+cache invalidation, the corrupt-entry discard, the unreadable-entry discard, the symlink
 refusal, the default ignore list, the error wrap, the cache bound and the two statements
 of the resolution limit can each go red.
 
@@ -738,7 +746,19 @@ claims otherwise: `refsIn` and `refsInFiles` are honestly the references to, and
 files mentioning, the **name**, and each receipt says so. Anything that needs true
 binding — rename, call graph, dead-code detection — needs a different tool. The
 statement lives in the doc comments on `repomap/map.ts` and `repomap/rank.ts`, pinned
-by mutation `repomap-ranking-limit-undocumented`.
+by mutation `repomap-ranking-limit-undocumented`. It is a decision, not an oversight left
+unexamined: splitting rank shares per definer would mean per-language import/scope
+resolution — exactly the type-checker-per-language cost the paragraph above rules out —
+so the design stays Aider's, on Aider's own terms, and both halves of it are behaviour,
+not only prose. `test/guards/repo-map.test.ts` pins the cross-file half (two files that
+each define `shared`: identical `rank`, `refsIn`, `refsInFiles`) and, separately, the
+same-file half — two definitions of one name in a single file, matching how a real
+TypeScript overload set or a duplicated declaration parses (tree-sitter has no
+duplicate-declaration check; it emits one `defs` entry per declaration it sees): both
+definitions carry the same measured `refsIn`, so a caller reading the map meets the
+"each counts the whole traffic to it" sentence as a fact about the numbers, not only a
+warning in a doc comment. A change that split the shares — the alternative this section
+rejected — would turn both assertions red.
 
 **The default ignore list is `.git`, `node_modules`, `dist`, `build`, `out`,
 `coverage`.** The first two are object storage and other people's code; the rest are
@@ -792,6 +812,30 @@ refusal at all still skips it — the guarantee was true by accident. A stub rea
 `repomap-symlink-refusal-dropped` proves the refusal can now be watched failing.
 Read-only by construction: the interface has no writer, so the only bytes the map can
 put on disk are the tags cache the caller named.
+
+**The stat-then-read gap, and how far this closes it.** Refusing a symlink on
+`isSymlink` at scan time stops the walk from ever following one it has seen — but the
+scan used to run as two whole-tree phases: collect every vetted path first, then loop
+back over the finished list to read each one's bytes. A path cleared by its `stat` early
+in a large tree could sit unread for as long as the rest of the scan took, and nothing
+stops the filesystem from putting something else at that path in the meantime — a file
+swapped for a symlink escaping `root` would have its target's bytes read straight into
+the map, past a refusal that had already run and already said no (a genuine, if
+low-severity, TOCTOU: the audit's finding, KOT-205 §6). `scanFiles` now reads a file in
+the same walk step that just proved it is not a symlink — `stat` and `read` are adjacent
+calls for that one path, never separated by every other path's `stat` in the tree — which
+closes the gap this module actually controlled. What is left is the single
+`stat`-then-`read` pair itself: no injectable `RepoReader` can make that pair atomic
+without an `O_NOFOLLOW` open the interface does not expose, which is the same residual
+gap any program accepts when it opens a path by name on a POSIX filesystem, and is
+accepted here rather than closed, deliberately, because the root is a path the map's
+caller named and trusts — closing it fully would mean growing `RepoReader` to carry file
+descriptors, a change with no test that could tell "closed" from "still open" without a
+real concurrent writer racing the test process. `test/guards/repo-map.test.ts` proves the
+adjacency itself: a stub tree's full call log shows every file's `stat` immediately
+followed by its own `read`, with no other path's `stat` or `list` between them, and
+mutation `repomap-read-not-fused-with-stat` reverts to the two-phase scan and watches the
+adjacency assertion go red.
 
 **The front door: `smelt map`.**
 

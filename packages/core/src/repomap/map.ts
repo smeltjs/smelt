@@ -28,7 +28,10 @@ import type { FileTags } from './tags.ts';
  *    followed, so the walk cannot leave it; binary files are skipped; no network.
  *    The whole tree is read through one read-only seam, {@link RepoReader} — the
  *    default is `node:fs` and the interface has no writer, so the only bytes this
- *    module can write are the tags cache the caller asked for by name.
+ *    module can write are the tags cache the caller asked for by name. A file's
+ *    `stat` (the symlink check) and its `read` happen in the same walk step, never a
+ *    second pass over the whole tree after every path is already vetted — see
+ *    `scanFiles`'s own doc comment for the TOCTOU gap that closes.
  *  - **Every inclusion is explainable** (Law 2, applied to inclusion rather than
  *    elision): each symbol in the map carries a rule id and a sentence stating its
  *    definition site and the measured reference counts that ranked it.
@@ -36,8 +39,12 @@ import type { FileTags } from './tags.ts';
  *    path, name, and line. Two runs over the same tree are byte-identical.
  *  - **The budget is bytes**, same contract as the planners, and it is respected by
  *    construction: symbols are added in rank order until the next line would not fit.
- *  - **The cache lives only in a directory the caller explicitly hands in**, a corrupt
- *    entry is discarded loudly — a warning in the result — never trusted, and it is
+ *  - **The cache lives only in a directory the caller explicitly hands in**, and a
+ *    damaged entry — corrupt content or one `readFileSync` itself refused (`EISDIR`,
+ *    `EACCES`, anything but a plain miss) — is discarded loudly, named by which of the
+ *    two it was, never trusted and never fatal: a cache is an optimisation this map
+ *    does not need to survive, so a discard that cannot even delete its own entry, or
+ *    a write that cannot land, costs a re-parse next time and nothing else. It is also
  *    bounded: each build sweeps the entries it did not use, so the superseded
  *    pre-edit version of every file does not accumulate forever. The sweep is
  *    housekeeping and never fatal: it runs after the map is computed, so a cache it
@@ -97,6 +104,15 @@ export const REPO_MAP_PATH_ONLY_RULE = 'path-only';
 
 /** Rule id for the warning left behind when a corrupt cache entry is discarded. */
 export const REPO_MAP_CACHE_CORRUPT_RULE = 'cache-entry-corrupt';
+
+/**
+ * Rule id for the warning left behind when a cache entry that could not even be read
+ * (a directory where a `.json` file should be, a permission refusal, anything that is
+ * not a plain miss) is discarded. Distinct from {@link REPO_MAP_CACHE_CORRUPT_RULE} on
+ * purpose — the entry was never trusted either way, but *why* differs, and this
+ * project never lumps distinct failure reasons under one vague label.
+ */
+export const REPO_MAP_CACHE_UNREADABLE_RULE = 'cache-entry-unreadable';
 
 /**
  * The ignore list used when the caller supplies none.
@@ -284,9 +300,7 @@ export async function buildRepoMap(options: RepoMapOptions): Promise<RepoMap> {
   const parsed: FileTagsEntry[] = [];
   const pathOnlyPaths: string[] = [];
 
-  for (const rel of files) {
-    const path = join(root, ...rel.split('/'));
-    const bytes = fsCall('read the file', path, () => reader.read(path));
+  for (const { rel, bytes } of files) {
     if (bytes.includes(0)) {
       binarySkipped += 1;
       continue;
@@ -379,13 +393,16 @@ async function tagsFor(
   // survives the sweep whether it was a hit, a miss, or a discard-and-rewrite.
   liveKeys.add(key);
   const found = cache.read(key);
-  if (found === 'corrupt') {
+  if (found !== undefined && 'kind' in found) {
     counts.discarded += 1;
+    const deletedClause = found.deleted
+      ? 'the entry file was deleted so it cannot be read again'
+      : 'the entry file could not be deleted, so it will be discarded the same way again on its next lookup';
     warnings.push({
-      rule: REPO_MAP_CACHE_CORRUPT_RULE,
+      rule: found.kind === 'corrupt' ? REPO_MAP_CACHE_CORRUPT_RULE : REPO_MAP_CACHE_UNREADABLE_RULE,
       explanation:
-        `discarded a corrupt cache entry for ${rel} and re-extracted its tags from ` +
-        `source; the entry file was deleted so it cannot be read again`,
+        `discarded ${found.kind === 'corrupt' ? 'a corrupt' : 'an unreadable'} cache entry ` +
+        `for ${rel} (${found.reason}) and re-extracted its tags from source; ${deletedClause}`,
     });
   } else if (found !== undefined) {
     counts.hits += 1;
@@ -398,9 +415,15 @@ async function tagsFor(
   return tags;
 }
 
+/** One regular file the walk found and read, in the same step it vetted it. */
+interface ScannedFile {
+  readonly rel: string;
+  readonly bytes: Uint8Array;
+}
+
 /**
- * Walk the tree under `root`, depth-first in sorted order, returning `/`-separated
- * relative paths of every regular file that survives the ignore list.
+ * Walk the tree under `root`, depth-first in sorted order, reading every regular file
+ * that survives the ignore list as it is found.
  *
  * Symlinks are skipped outright — file or directory, in-root or out. Never following
  * one is the simplest true implementation of "never follow a symlink out of the
@@ -411,9 +434,29 @@ async function tagsFor(
  *
  * The ignore list is applied before the entry is statted, so an ignored path costs
  * nothing and is never even looked at.
+ *
+ * **A file is read in the same walk step that just proved it is not a symlink, never
+ * in a second pass over the whole tree afterward.** This used to be two phases: scan
+ * the entire tree collecting vetted paths, then loop back over every one of them to
+ * read its bytes — so a path this walk had already cleared could, on a large tree,
+ * sit unread for as long as the rest of the scan took. Nothing stops the filesystem
+ * from changing what is at that path in the meantime: a file swapped for a symlink
+ * escaping `root` between the two phases would have its target's bytes read straight
+ * into the map, past a symlink refusal that had already run and already said no. The
+ * two calls this makes for a file — `stat`, then `read` — are now adjacent in the walk
+ * for that one path, which closes the gap this module actually controls: the time
+ * between "the whole tree has been vetted" and "this one file that was vetted a while
+ * ago gets read". What is left is the single `stat`-then-`read` pair itself, which no
+ * injectable `RepoReader` can make atomic without an `O_NOFOLLOW` open this interface
+ * does not expose — an accepted, much narrower residue of the same class of race,
+ * identical to what opening any path by name always carries on a POSIX filesystem.
  */
-function scanFiles(reader: RepoReader, root: string, ignore: readonly string[]): readonly string[] {
-  const found: string[] = [];
+function scanFiles(
+  reader: RepoReader,
+  root: string,
+  ignore: readonly string[],
+): readonly ScannedFile[] {
+  const found: ScannedFile[] = [];
   const walk = (dir: string, relDir: string): void => {
     const listed = fsCall('list the directory', dir, () => reader.list(dir));
     for (const entry of listed.map((item) => item.name).toSorted()) {
@@ -424,7 +467,10 @@ function scanFiles(reader: RepoReader, root: string, ignore: readonly string[]):
       if (stat === undefined) continue; // the reader has nothing there
       if (stat.isSymlink) continue;
       if (stat.isDirectory) walk(full, rel);
-      else if (stat.isFile) found.push(rel);
+      else if (stat.isFile) {
+        const bytes = fsCall('read the file', full, () => reader.read(full));
+        found.push({ rel, bytes });
+      }
     }
   };
   walk(root, '');
