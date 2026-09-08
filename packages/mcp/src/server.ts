@@ -18,6 +18,7 @@ import {
   createRetrieveTool,
   formatReport,
   isStrategy,
+  loadRerankStage,
   mapTree,
   readBlob,
   readCounters,
@@ -508,6 +509,20 @@ async function handleSmeltFile(
   // config fills in, `lexical` fills last — and the built-in is named in one place.
   const { strategy } = resolveStrategy(optionalStrategy(args), resolved.defaultStrategy);
 
+  // The reranker opt-in, loaded from the same `smelt.config.json` the CLI reads and by
+  // the same loader — the config decides, this surface never does. With no `rerank`
+  // block (every default config) nothing is imported and nothing is called; with one,
+  // a refusal comes back through the CliUsageError path below as a tool error naming
+  // exactly what is missing.
+  const rerank =
+    resolved.rerank === undefined
+      ? undefined
+      : await loadRerankStage({
+          rerank: resolved.rerank.config,
+          configDir: resolved.rerank.dir,
+          env: process.env,
+        });
+
   // A relative path is resolved against the server's working directory, but the
   // refusal names the path as the model wrote it: echoing back an absolute path it
   // never typed answers a question nobody asked.
@@ -523,6 +538,7 @@ async function handleSmeltFile(
     ...(path === undefined ? {} : { path }),
     ...(focus === undefined ? {} : { focus }),
     ...(producer === undefined ? {} : { producer }),
+    ...(rerank === undefined ? {} : { rerank }),
   });
 
   // Two blocks: the payload, then the same report the CLI prints to stderr — built

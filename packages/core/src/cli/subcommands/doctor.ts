@@ -75,6 +75,9 @@ export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
         cwd: io.cwd ?? process.cwd(),
         ...(io.home === undefined ? {} : { home: io.home }),
         version: io.version,
+        // Read by name only, for the name the config's rerank.apiKeyEnv supplied, and
+        // only to report presence. See DoctorIo.env.
+        env: io.env ?? {},
       },
     );
   },

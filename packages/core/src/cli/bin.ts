@@ -178,6 +178,8 @@ try {
     stdin: readStdin,
     version: packageVersion(),
     cwd: process.cwd(),
+    // Read only by name, and only for a name a config file supplied — see CliIo.env.
+    env: process.env,
     // The lava renderer's switch: a real interactive terminal that has not been
     // told to keep its bytes plain. Piped output, agents and NO_COLOR all mean
     // exactly the bytes the wizards have always written.

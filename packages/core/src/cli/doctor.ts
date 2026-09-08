@@ -9,7 +9,13 @@ import { harnessById } from '../harness/registry.ts';
 import { resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
 
-import { CONFIG_FILE_NAME, CONFIG_VERSION } from './config.ts';
+import {
+  CONFIG_FILE_NAME,
+  CONFIG_VERSION,
+  VOYAGE_DEFAULT_KEY_ENV,
+  VOYAGE_DEFAULT_MODEL,
+} from './config.ts';
+import type { SmeltConfig } from './config.ts';
 import { readInstalledState } from './installed.ts';
 import type {
   InstalledBlock,
@@ -55,6 +61,12 @@ export interface DoctorIo {
   readonly home?: string;
   /** The running binary's version — what "current" is measured against. */
   readonly version: string;
+  /**
+   * The process environment. Read by *name* only, and only for the name the config's
+   * `rerank.apiKeyEnv` supplied — and only to report **presence**. Absent means an
+   * empty environment; doctor never falls back to `process.env` on its own.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface DoctorOptions {
@@ -109,6 +121,27 @@ export interface DoctorHookEntry {
   readonly probe: { readonly status: HookProbe['status']; readonly detail: string };
 }
 
+/**
+ * The reranker opt-in as doctor found it — the one part of installed state that can
+ * make smelt talk to somebody else's machine, so it is reported and never assumed.
+ *
+ * `keyEnv` is the environment variable *name* the config named, and `keySet` says only
+ * whether it holds anything. The value is never read into this receipt, never printed,
+ * and never logged: a doctor report is a thing people paste into issues.
+ */
+export interface DoctorRerank {
+  /** `'module'` or `'voyage'`, exactly as the config wrote it. */
+  readonly kind: 'module' | 'voyage';
+  /** `voyage/rerank-2.5`, or `module/./smelt.rerank.ts` — what a report line would say. */
+  readonly adapter: string;
+  /** The env var the `voyage` kind reads its key from. Absent for `module`. */
+  readonly keyEnv?: string;
+  /** Whether that variable is set. Presence only — never the value. */
+  readonly keySet?: boolean;
+  /** For `module`: whether the file the config points at exists. */
+  readonly moduleExists?: boolean;
+}
+
 /** One hook file, with every command of ours in it and its probe. */
 export interface DoctorHookFile {
   readonly file: string;
@@ -126,6 +159,8 @@ export interface DoctorReceipt {
   /** Which install this receipt is about. Always emitted; `project` is the old shape. */
   readonly scope: InstallScope;
   readonly config: DoctorConfig;
+  /** The reranker opt-in, when the config carries one. Absent means no reranker. */
+  readonly rerank?: DoctorRerank;
   readonly blocks: readonly DoctorBlock[];
   readonly hookFiles: readonly string[];
   readonly mcp: readonly DoctorMcp[];
@@ -177,6 +212,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
 
   // ── config detail + the store-directory orphan ──
   let config: DoctorConfig = { present: false, store: {} };
+  let rerank: DoctorRerank | undefined;
   if (state.config.present) {
     if (state.config.malformed === true || state.config.parsed === undefined) {
       config = { present: true, malformed: true, store: {} };
@@ -209,6 +245,26 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
           `the store directory (${parsed.store.path}) does not exist — retrieves across processes would fail`,
         );
         repair.push(`${CLI_NAME} setup${scopeFlag(scope)}`);
+      }
+
+      // The reranker opt-in. Doctor reads it for one reason: it is the only line in
+      // this file that can make a smelt run talk to another machine, and "is that
+      // switched on here, and does it have what it needs?" must be answerable without
+      // running anything. Presence of the key only — never the key.
+      rerank = readRerank(parsed.rerank, dirname(configPath), io.env ?? {});
+      if (rerank?.keySet === false) {
+        orphans.push(
+          `rerank is configured (${rerank.adapter}) but ${rerank.keyEnv ?? ''} is not set — ` +
+            `every run that would rerank refuses instead`,
+        );
+        repair.push(`export ${rerank.keyEnv ?? ''}=...`);
+      }
+      if (rerank?.moduleExists === false) {
+        orphans.push(
+          `rerank points at ${rerank.adapter.replace('module/', '')}, which does not exist — ` +
+            `every run that would rerank refuses instead`,
+        );
+        repair.push(`${CLI_NAME} init`);
       }
     }
   }
@@ -275,6 +331,15 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
         say(`  ${one.file}: ${one.server} not registered — run: ${one.manual}\n`);
       }
     }
+    if (rerank !== undefined) {
+      say(
+        `  rerank: ${rerank.adapter}` +
+          (rerank.keyEnv === undefined
+            ? ''
+            : ` — ${rerank.keyEnv} ${rerank.keySet === true ? 'set' : 'missing'}`) +
+          `\n`,
+      );
+    }
     for (const orphan of orphans) say(`  ORPHAN: ${orphan}\n`);
     if (behindBlocks.length > 0) {
       say(
@@ -300,6 +365,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       installed,
       scope,
       config,
+      ...(rerank === undefined ? {} : { rerank }),
       blocks,
       hookFiles: [...state.hookFiles],
       mcp: [...state.mcp],
@@ -319,6 +385,37 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
  */
 function scopeFlag(scope: InstallScope): string {
   return scope === 'user' ? ' --scope user' : '';
+}
+
+/**
+ * The `rerank` block as a receipt line — the one part of a config that can send bytes
+ * off the machine, read back as three facts and no more.
+ *
+ * `keySet` is a boolean over `env[name]`, and that is the whole of what doctor learns
+ * about a key. A doctor report is a thing people paste into issue trackers; a verb that
+ * printed even a prefix of a secret would be a verb that leaks one eventually.
+ */
+function readRerank(
+  configured: SmeltConfig['rerank'],
+  configDir: string,
+  env: Readonly<Record<string, string | undefined>>,
+): DoctorRerank | undefined {
+  if (configured === undefined) return undefined;
+  if (configured.kind === 'module') {
+    return {
+      kind: 'module',
+      adapter: `module/${configured.path}`,
+      moduleExists: existsSync(join(configDir, configured.path)),
+    };
+  }
+  const keyEnv = configured.apiKeyEnv ?? VOYAGE_DEFAULT_KEY_ENV;
+  const key = env[keyEnv];
+  return {
+    kind: 'voyage',
+    adapter: `voyage/${configured.model ?? VOYAGE_DEFAULT_MODEL}`,
+    keyEnv,
+    keySet: key !== undefined && key !== '',
+  };
 }
 
 /** The verdict over one block: whole-owned files carry no stamp to compare. */

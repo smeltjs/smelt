@@ -52,6 +52,10 @@ export {
   RETRIEVE_BATCH_TOOL_NAME,
   RETRIEVE_TOOL_NAME,
 } from './retrieve.ts';
+export { loadRerankStage, VOYAGE_PACKAGE } from './rerank/load.ts';
+export type { RerankLoad } from './rerank/load.ts';
+export { applyRerank } from './rerank/protect.ts';
+export type { RerankOutcome, RerankRequest } from './rerank/protect.ts';
 export { unconfiguredDistillStage, unconfiguredRerankStage } from './stages.ts';
 export { MemoryElisionStore } from './store.ts';
 export {
@@ -118,8 +122,16 @@ export {
   parseConfig,
   renderConfig,
   resolveStorePath,
+  VOYAGE_DEFAULT_KEY_ENV,
+  VOYAGE_DEFAULT_MODEL,
 } from './cli/config.ts';
-export type { ConfiguredStore, LoadedConfig, SmeltConfig, SmeltConfigStore } from './cli/config.ts';
+export type {
+  ConfiguredStore,
+  LoadedConfig,
+  SmeltConfig,
+  SmeltConfigRerank,
+  SmeltConfigStore,
+} from './cli/config.ts';
 export {
   MEASURE_STUB_FILE,
   measureStubSource,
@@ -146,6 +158,7 @@ export type {
   DoctorMcp,
   DoctorOptions,
   DoctorReceipt,
+  DoctorRerank,
 } from './cli/doctor.ts';
 export { retrieveStats, ruleLedger } from './stats.ts';
 export type { RawRetrieveCounters } from './stats.ts';

@@ -208,6 +208,11 @@ export interface SmeltResult {
   readonly elisions: readonly AppliedElision[];
   /** Present only when the caller supplied a {@link Measure}. Never invented. */
   readonly measured?: MeasuredSize;
+  /**
+   * Present only when the caller supplied a {@link RerankStage}. Never invented — an
+   * absent field means no reranker ran, which is what every default run does.
+   */
+  readonly rerank?: RerankAttribution;
 }
 
 /**
@@ -438,19 +443,59 @@ export interface RerankedCandidate extends RerankCandidate {
 /**
  * Relevance reranking — a *seam*, not a feature.
  *
- * Hosted rerankers are good and smelt will never bundle one, because bundling would
- * break Law 1: the moment smelt ships a default reranker, `smelt()` can make a network
- * call that the caller did not ask for and cannot see. A consumer that wants one
- * implements this interface, wires its own key, and owns the fact that its context now
- * leaves the machine. That decision must be legible in the consumer's own source.
+ * Hosted rerankers are good and smelt still bundles none in its default graph, because
+ * bundling would break Law 1: the moment a reranker ships as a default, `smelt()` can
+ * make a network call the caller did not ask for and cannot see. What ADR-0004 reopened
+ * is narrower than that — an **explicit config opt-in**, never a default: a consumer
+ * writes a `rerank` block into `smelt.config.json`, installs the adapter package
+ * themselves, and reads their own key out of their own environment. With no `rerank`
+ * key, nothing loads and nothing is called, exactly as before.
+ *
+ * A consumer wiring the stage programmatically implements this interface directly and
+ * owns the fact that its context now leaves the machine.
  */
 export interface RerankStage {
   readonly id: string;
+  /**
+   * The model this stage ranks with, when it names one — carried into the report and
+   * the `--json` receipt beside {@link id}.
+   *
+   * Optional, and required of nothing: a stage that ranks locally has no model to name.
+   * It exists for the same Law 4 reason {@link Measure} requires `id` — a relevance
+   * score without the ranker that produced it named is not a measurement, and
+   * `voyage/rerank-2.5` is a fact where `reranked` is a rumour.
+   */
+  readonly model?: string;
   /** May make network calls — that is the consumer's choice, made in the consumer's code. */
   rerank(
     candidates: readonly RerankCandidate[],
     query: string,
   ): Promise<readonly RerankedCandidate[]>;
+}
+
+/**
+ * What a {@link RerankStage} did to one run, as data — the outbound call made visible.
+ *
+ * Law 2 says every elision is explainable and Law 4 says no number is unmeasured. A
+ * stage that reaches the network on the caller's behalf owes both: **which** ranker ran,
+ * how many regions were sent to it, and how many of them it saved from the cut. Every
+ * surface renders this one value — the stderr report, the `--json` envelope (inside
+ * `result`, so the receipt and the report cannot disagree) and the `smelt_file` report
+ * block — so no front door assembles an attribution of its own.
+ *
+ * `candidates === 0` is a real answer, not a missing one: a run whose planner proposed
+ * nothing to cut, or one with no focus terms to rank against, still says the stage was
+ * configured and states that it had nothing to do.
+ */
+export interface RerankAttribution {
+  /** {@link RerankStage.id} — `'voyage'`, `'module/./smelt.rerank.ts'`. */
+  readonly adapter: string;
+  /** {@link RerankStage.model}, when the stage names one. Never invented. */
+  readonly model?: string;
+  /** Regions the planner proposed to elide, and the stage was asked to rank. */
+  readonly candidates: number;
+  /** Of those, how many the stage ranked highest and smelt therefore did **not** cut. */
+  readonly kept: number;
 }
 
 /**

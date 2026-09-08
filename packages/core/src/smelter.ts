@@ -8,6 +8,7 @@ import type { LexicalPlannerOptions } from './plan/lexical.ts';
 import { DEFAULT_STRATEGY, PLANNERS } from './plan/planners.ts';
 import type { Strategy } from './plan/planners.ts';
 import type { StructuralPlannerOptions } from './plan/structural.ts';
+import { applyRerank } from './rerank/protect.ts';
 import { createRetrieveTool } from './retrieve.ts';
 import { MemoryElisionStore } from './store.ts';
 import type {
@@ -16,6 +17,7 @@ import type {
   Measure,
   PlanInput,
   Planner,
+  RerankStage,
   RetrieveStats,
   RetrieveTool,
   SmeltResult,
@@ -50,6 +52,17 @@ export interface SmelterConfig {
    * The budget stays in bytes — see {@link Measure} and `docs/ARCHITECTURE.md` § "Decision 1".
    */
   readonly measure?: Measure;
+  /**
+   * A relevance reranker of your own, or one loaded from a `rerank` block in
+   * `smelt.config.json` (`loadRerankStage` in `rerank/load.ts`). Absent by default and
+   * absent on every run that did not ask for one: this is the config opt-in ADR-0004
+   * describes, never a default.
+   *
+   * It is asked which of the planner's proposed elisions to spare, and can only spare —
+   * see `rerank/protect.ts`. Supplying one means your process makes the stage's outbound
+   * call; `result.rerank` reports which stage ran and what it did.
+   */
+  readonly rerank?: RerankStage;
   readonly lexical?: LexicalPlannerOptions;
   readonly structural?: StructuralPlannerOptions;
   readonly json?: JsonPlannerOptions;
@@ -140,13 +153,29 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
         // the feedback loop; the shipped planners leave it unread (Decision 4).
         ...(store.ledger === undefined ? {} : { ruleHistory: store.ledger() }),
       };
-      const plan = await planner.plan(input);
+      const planned = await planner.plan(input);
+      // The rerank slot, and the only place it exists: between the decision and the
+      // cut. A configured stage is asked which of `planned.elisions` the task actually
+      // needs and those are spared — it can never add one (`rerank/protect.ts` carries
+      // the reasoning). With no stage configured nothing is called, nothing is awaited,
+      // and `result.rerank` is absent rather than an invented "none".
+      const reranked =
+        config.rerank === undefined
+          ? undefined
+          : await applyRerank({
+              stage: config.rerank,
+              plan: planned,
+              text,
+              query: (options.focus ?? []).join(' '),
+            });
+      const plan = reranked?.plan ?? planned;
       // The marker follows the *result's* language: it lands behind the language's
       // line-comment leader (see MARKER_LINE_COMMENT_LEADERS), because a bare marker
       // line breaks the survivor's syntax in every grammar tested. A caller-supplied
       // marker builder always wins.
       const marker = config.marker ?? markerForLanguage(plan.language);
-      return applyPlan(text, plan, store, { ...applyOptions, marker });
+      const result = applyPlan(text, plan, store, { ...applyOptions, marker });
+      return reranked === undefined ? result : { ...result, rerank: reranked.attribution };
     },
   };
 }

@@ -80,6 +80,66 @@ export interface SmeltConfigAgents {
   readonly budgetBytes?: number;
 }
 
+/**
+ * The `rerank` block — the **explicit opt-in** to a relevance reranker (ADR-0004).
+ *
+ * smelt's default graph is still network-free and always will be: with no `rerank` key
+ * nothing is loaded, nothing is imported and nothing is called. What this key adds is a
+ * way for a consumer to say *yes, with this adapter, under this key* in a file they
+ * wrote, so the outbound call is a line in their own repository rather than a default
+ * they would find out about from a changelog. Law 1 is unchanged; the guard still walks
+ * the real import graph and still refuses a transport in it.
+ *
+ * Two kinds, and the difference between them is who wrote the adapter:
+ *
+ * - `module` — an ESM file of the consumer's own, resolved against the config file (not
+ *   the cwd — the same rule `store.path` follows), default-exporting a `RerankStage`.
+ *   `smelt init` writes the stub it points at.
+ * - `voyage` — the `@smeltjs/rerank-voyage` package, which the consumer installs
+ *   themselves. It is not a dependency of `@smeltjs/core` and never will be: core loads
+ *   it by a computed specifier at runtime, so it is absent from the import graph the
+ *   zero-network guard walks, and a config naming it without the package installed is a
+ *   usage error naming the install command.
+ *
+ * `smeltConfig` does **not** bump for this key. The schema version exists so a *mismatch*
+ * is visible rather than half-understood (ADR-0003), and an additive optional key is not
+ * a mismatch: a config written by this build is still read by an older one — which
+ * refuses the unknown key loudly, which is exactly the behaviour that makes the strict
+ * parse worth having. A bump would break every config in the field to announce a key
+ * nobody set.
+ */
+export type SmeltConfigRerank =
+  | {
+      readonly kind: 'module';
+      /** Resolved relative to the directory holding the config file, not the cwd. */
+      readonly path: string;
+    }
+  | {
+      readonly kind: 'voyage';
+      /** Voyage's rerank model. Defaults to {@link VOYAGE_DEFAULT_MODEL}. */
+      readonly model?: string;
+      /**
+       * The environment variable holding the key — the *name*, never the value; smelt
+       * reads a config file, not a secret store. Defaults to
+       * {@link VOYAGE_DEFAULT_KEY_ENV}.
+       */
+      readonly apiKeyEnv?: string;
+      /**
+       * How many of the ranked candidates the stage returns, and therefore how many
+       * regions survive the cut. Optional in the schema because it is meaningless for
+       * the `module` kind; **required at load time** for this one, with the same
+       * reasoning `--budget` gives for having no default — a K smelt invented would
+       * silently decide how much of your context survives.
+       */
+      readonly topK?: number;
+    };
+
+/** Voyage's current rerank model, and the one the wizard writes. */
+export const VOYAGE_DEFAULT_MODEL = 'rerank-2.5';
+
+/** The environment variable `kind: "voyage"` reads its key from unless told otherwise. */
+export const VOYAGE_DEFAULT_KEY_ENV = 'VOYAGE_API_KEY';
+
 /** The parsed shape of `smelt.config.json`. Every field beyond the version is optional. */
 export interface SmeltConfig {
   readonly smeltConfig: typeof CONFIG_VERSION;
@@ -93,6 +153,11 @@ export interface SmeltConfig {
   readonly hooks?: SmeltConfigHooks;
   /** Settings for `smelt agents lint`. See {@link SmeltConfigAgents}. */
   readonly agents?: SmeltConfigAgents;
+  /**
+   * The reranker opt-in. Absent on every default config, and absent means *nothing
+   * happens*. See {@link SmeltConfigRerank}.
+   */
+  readonly rerank?: SmeltConfigRerank;
 }
 
 /** A config plus where it was found — the path matters for resolving `store.path`. */
@@ -168,7 +233,15 @@ export function parseConfig(text: string, path: string): SmeltConfig {
     );
   }
 
-  const known = ['smeltConfig', 'defaultBudgetBytes', 'strategy', 'store', 'hooks', 'agents'];
+  const known = [
+    'smeltConfig',
+    'defaultBudgetBytes',
+    'strategy',
+    'store',
+    'hooks',
+    'agents',
+    'rerank',
+  ];
   const unknown = Object.keys(fields).filter((key) => !known.includes(key));
   if (unknown.length > 0) {
     throw bad(
@@ -197,6 +270,7 @@ export function parseConfig(text: string, path: string): SmeltConfig {
   const store = parseStore(fields['store'], bad);
   const hooks = parseHooks(fields['hooks'], bad);
   const agents = parseAgents(fields['agents'], bad);
+  const rerank = parseRerank(fields['rerank'], bad);
 
   return {
     smeltConfig: CONFIG_VERSION,
@@ -205,6 +279,7 @@ export function parseConfig(text: string, path: string): SmeltConfig {
     ...(store === undefined ? {} : { store }),
     ...(hooks === undefined ? {} : { hooks }),
     ...(agents === undefined ? {} : { agents }),
+    ...(rerank === undefined ? {} : { rerank }),
   };
 }
 
@@ -237,6 +312,7 @@ export function renderConfig(config: SmeltConfig): string {
     ...(config.store === undefined ? {} : { store: renderStore(config.store) }),
     ...(config.hooks === undefined ? {} : { hooks: renderHooks(config.hooks) }),
     ...(config.agents === undefined ? {} : { agents: renderAgents(config.agents) }),
+    ...(config.rerank === undefined ? {} : { rerank: renderRerank(config.rerank) }),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
@@ -254,6 +330,17 @@ function renderHooks(hooks: SmeltConfigHooks): SmeltConfigHooks {
 
 function renderAgents(agents: SmeltConfigAgents): SmeltConfigAgents {
   return agents.budgetBytes === undefined ? {} : { budgetBytes: agents.budgetBytes };
+}
+
+/** Key order inside the block, like `store` and `hooks`: kind first, then its settings. */
+function renderRerank(rerank: SmeltConfigRerank): SmeltConfigRerank {
+  if (rerank.kind === 'module') return { kind: 'module', path: rerank.path };
+  return {
+    kind: 'voyage',
+    ...(rerank.model === undefined ? {} : { model: rerank.model }),
+    ...(rerank.apiKeyEnv === undefined ? {} : { apiKeyEnv: rerank.apiKeyEnv }),
+    ...(rerank.topK === undefined ? {} : { topK: rerank.topK }),
+  };
 }
 
 function parseStore(
@@ -354,6 +441,85 @@ function parseAgents(
     throw bad(`"agents".budgetBytes must be a whole number of bytes greater than zero.`);
   }
   return budget === undefined ? {} : { budgetBytes: budget as number };
+}
+
+/**
+ * The `rerank` block, parsed as strictly as every other — and strictly *because* of
+ * what it turns on.
+ *
+ * Every other key in this file decides how bytes are cut on the machine that runs
+ * smelt. This one can decide that regions of the caller's source are sent to a third
+ * party. A typo that parsed cleanly is bad everywhere in this file; here it is either a
+ * reranker the user believed was running and never was, or — with an unknown `kind`
+ * shrugged off — an opt-in nobody can audit by reading the file. So an unknown kind, a
+ * missing path and a malformed `topK` are all refusals, in the same shape as the rest.
+ */
+function parseRerank(
+  value: unknown,
+  bad: (why: string) => CliUsageError,
+): SmeltConfigRerank | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw bad(
+      `"rerank" must be an object like {"kind":"module","path":"./smelt.rerank.ts"} or ` +
+        `{"kind":"voyage","topK":8}.`,
+    );
+  }
+  const fields = value as Record<string, unknown>;
+  const kind = fields['kind'];
+
+  if (kind === 'module') {
+    const path = fields['path'];
+    if (typeof path !== 'string' || path === '') {
+      throw bad(
+        `"rerank" of kind "module" needs a non-empty "path" to an ESM file exporting a ` +
+          `RerankStage, relative to ${CONFIG_FILE_NAME}.`,
+      );
+    }
+    const extra = Object.keys(fields).filter((key) => key !== 'kind' && key !== 'path');
+    if (extra.length > 0) throw bad(`"rerank" of kind "module" takes only "kind" and "path".`);
+    return { kind: 'module', path };
+  }
+
+  if (kind === 'voyage') {
+    const extra = Object.keys(fields).filter(
+      (key) => !['kind', 'model', 'apiKeyEnv', 'topK'].includes(key),
+    );
+    if (extra.length > 0) {
+      throw bad(
+        `"rerank" of kind "voyage" takes only "kind", "model", "apiKeyEnv" and "topK", ` +
+          `got ${extra.map((k) => `"${k}"`).join(', ')}.`,
+      );
+    }
+    const model = fields['model'];
+    if (model !== undefined && (typeof model !== 'string' || model === '')) {
+      throw bad(`"rerank".model must be a non-empty string, e.g. "${VOYAGE_DEFAULT_MODEL}".`);
+    }
+    const apiKeyEnv = fields['apiKeyEnv'];
+    if (apiKeyEnv !== undefined && (typeof apiKeyEnv !== 'string' || apiKeyEnv === '')) {
+      throw bad(
+        `"rerank".apiKeyEnv must be the NAME of an environment variable, e.g. ` +
+          `"${VOYAGE_DEFAULT_KEY_ENV}" — never the key itself.`,
+      );
+    }
+    const topK = fields['topK'];
+    if (topK !== undefined && (typeof topK !== 'number' || !Number.isInteger(topK) || topK <= 0)) {
+      throw bad(`"rerank".topK must be a whole number of candidates greater than zero.`);
+    }
+    return {
+      kind: 'voyage',
+      ...(model === undefined ? {} : { model: model as string }),
+      ...(apiKeyEnv === undefined ? {} : { apiKeyEnv: apiKeyEnv as string }),
+      ...(topK === undefined ? {} : { topK: topK as number }),
+    };
+  }
+
+  throw bad(
+    `"rerank".kind must be "module" or "voyage", got ${JSON.stringify(kind)}. ` +
+      `"module" loads a RerankStage you wrote; "voyage" loads @smeltjs/rerank-voyage, ` +
+      `which you install yourself. There is no third kind and no default — a reranker ` +
+      `smelt turned on for you would send your code somewhere you never named.`,
+  );
 }
 
 /** `store.path` is relative to the config file, so the config works from any cwd. */

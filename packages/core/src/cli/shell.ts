@@ -165,6 +165,18 @@ export interface CliIo {
    * are exactly what they have always been; `bin.ts` computes it once.
    */
   readonly color?: boolean;
+  /**
+   * The process environment — passed in rather than read off `process`, so a verb that
+   * has to look at one is still a pure function over an injected pair.
+   *
+   * Only ever read by *name*, and only for a name a config file supplied: the `rerank`
+   * opt-in's `apiKeyEnv` (`smelt` loading the stage, `smelt doctor` reporting whether
+   * that variable is set). No smelt verb reads a variable of smelt's own invention —
+   * `SMELT_RERANK_API_KEY` does not exist and will not, because a key smelt picked up
+   * from an environment nobody pointed it at is exactly the "opt-in you never opted
+   * into" ADR-0004 refuses. Absent means an empty environment, never `process.env`.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 /**

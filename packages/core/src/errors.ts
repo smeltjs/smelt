@@ -178,3 +178,21 @@ function describeIoCause(cause: unknown): string {
 export class ContentKindError extends SmeltError {
   override readonly name = 'ContentKindError';
 }
+
+/**
+ * A configured {@link RerankStage} answered with something smelt cannot act on — a
+ * candidate id it was never sent, or the same id twice.
+ *
+ * It refuses rather than filtering the answer down to the parts it recognises, for the
+ * reason a store refuses a hash whose bytes no longer match: a reranker whose answer is
+ * quietly repaired is a reranker nobody can tell has broken. The stage is the
+ * consumer's own code (or the consumer's own adapter package), so the message names the
+ * stage and what it returned.
+ */
+export class RerankStageError extends SmeltError {
+  override readonly name = 'RerankStageError';
+
+  constructor(stageId: string, why: string) {
+    super(`smelt: the rerank stage "${stageId}" ${why}`);
+  }
+}

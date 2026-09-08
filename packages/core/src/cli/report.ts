@@ -3,7 +3,7 @@ import { overBudgetBytes } from '../agents/lint.ts';
 import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
 import type { ResolvedFocus } from '../ops/verbs.ts';
 import type { RepoMap } from '../repomap/map.ts';
-import type { SmeltResult } from '../types.ts';
+import type { RerankAttribution, SmeltResult } from '../types.ts';
 
 import { CONFIG_FILE_NAME } from './config.ts';
 import { CLI_NAME } from './shell.ts';
@@ -64,6 +64,8 @@ export function formatReport({
     const { input, output, unit, measure } = result.measured;
     lines.push(`in ${group(input)} → out ${group(output)} ${unit} (${measure})`);
   }
+
+  if (result.rerank !== undefined) lines.push(rerankLine(result.rerank));
 
   if (result.outputBytes > budgetBytes) {
     lines.push('');
@@ -134,6 +136,31 @@ export function formatReport({
 
 /** Introduces an elision's outline line. */
 const OUTLINE_LEADER = '↳ names:';
+
+/**
+ * The rerank line — the outbound call, printed where the reader is already looking.
+ *
+ * A configured reranker means regions of this input left the machine, and Law 2 says a
+ * reader must be able to see what happened to their bytes without reading the config.
+ * So the line names the adapter (and its model, when the stage names one) and states
+ * the two numbers that were actually measured: how many regions were offered to it, and
+ * how many of them it saved from the cut.
+ *
+ * `0 candidates` gets its own clause rather than being hidden, because "the stage was
+ * configured and had nothing to do" and "the stage never ran" look identical from a
+ * line that only prints numbers — and one of them is a misconfiguration.
+ *
+ * Built from {@link RerankAttribution} rather than from anything this module counts:
+ * the report keeps no tally of its own, here as everywhere else in this file.
+ */
+function rerankLine(rerank: RerankAttribution): string {
+  const adapter = rerank.model === undefined ? rerank.adapter : `${rerank.adapter}/${rerank.model}`;
+  const detail =
+    rerank.candidates === 0
+      ? '(0 candidates, 0 kept)   nothing to rank — no elision was proposed, or the run named no focus'
+      : `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept)`;
+  return `rerank  ${adapter}  ${detail}`;
+}
 
 /** What `smelt map` prints to stderr. */
 export interface MapReportInput {

@@ -15,8 +15,16 @@ import {
   findConfigFile,
   parseConfig,
   renderConfig,
+  VOYAGE_DEFAULT_KEY_ENV,
+  VOYAGE_DEFAULT_MODEL,
 } from './config.ts';
-import type { SmeltConfig, SmeltConfigHooks, SmeltConfigStore } from './config.ts';
+import type {
+  SmeltConfig,
+  SmeltConfigHooks,
+  SmeltConfigRerank,
+  SmeltConfigStore,
+} from './config.ts';
+import { VOYAGE_PACKAGE } from '../rerank/load.ts';
 
 /**
  * `smelt init` — the setup wizard.
@@ -78,8 +86,17 @@ interface WizardChoices {
   strategy: Strategy;
   /** Generate {@link MEASURE_STUB_FILE}? Never deletes an existing one. */
   measureStub: boolean;
-  /** Generate {@link RERANK_STUB_FILE}? Never deletes an existing one. */
-  rerankStub: boolean;
+  /**
+   * The reranker answer, and the one wizard choice that can make a later run talk to
+   * another machine — so it is written as an explicit `rerank` block in the config
+   * (ADR-0004) rather than left as a stub nothing loads.
+   *
+   * `'none'` writes no block and generates nothing, which is what every default run
+   * answers. `'module'` generates {@link RERANK_STUB_FILE} *and* points the config at
+   * it. `'voyage'` writes the config block for `@smeltjs/rerank-voyage` and prints the
+   * install command and the environment variable to set; it writes no key, ever.
+   */
+  rerank: RerankChoice;
   /**
    * An existing config's `hooks` block, carried through verbatim. This wizard never
    * edits it — `smelt hooks install` owns those choices — but a re-run that silently
@@ -87,6 +104,21 @@ interface WizardChoices {
    */
   hooks: SmeltConfigHooks | undefined;
 }
+
+/** The three answers the rerank step takes. See {@link WizardChoices.rerank}. */
+type RerankChoice = 'none' | 'module' | 'voyage';
+
+/**
+ * The `topK` the wizard writes for the `voyage` answer, and the only number in this
+ * file that is not the user's.
+ *
+ * It is written into the config as a **starting value the user can see and edit**, not
+ * as a default smelt applies: `loadRerankStage` has no default for `topK` and refuses a
+ * voyage block without one, exactly as `--budget` refuses. Eight is small enough that a
+ * first run is cheap and visible in the report's `(N candidates, M kept)` line, and it
+ * makes no claim about relevance — the wizard's copy says so.
+ */
+const WIZARD_VOYAGE_TOP_K = 8;
 
 type StepOutcome = 'ok' | 'back';
 
@@ -161,7 +193,7 @@ async function freshRun(io: InitIo, ask: Asker): Promise<number> {
     store: { kind: 'memory' },
     strategy: DEFAULT_STRATEGY,
     measureStub: false,
-    rerankStub: false,
+    rerank: 'none',
     hooks: undefined,
   };
 
@@ -304,7 +336,7 @@ async function editRun(
     store: config.store ?? { kind: 'memory' },
     strategy: config.strategy ?? DEFAULT_STRATEGY,
     measureStub: false,
-    rerankStub: false,
+    rerank: config.rerank === undefined ? 'none' : config.rerank.kind,
     hooks: config.hooks,
   };
 
@@ -347,8 +379,32 @@ function summary(choices: WizardChoices, dir: string): string {
     `  store:     ${choices.store.kind === 'memory' ? 'memory' : `directory (${choices.store.path})`}`,
     `  strategy:  ${choices.strategy}`,
     `  measure:   ${stubLine(MEASURE_STUB_FILE, choices.measureStub)}`,
-    `  rerank:    ${stubLine(RERANK_STUB_FILE, choices.rerankStub)}`,
+    `  rerank:    ${rerankLine(choices, dir)}`,
   ].join('\n');
+}
+
+/**
+ * What the rerank answer means, in the summary and in the confirm listing.
+ *
+ * It names the config block that will be written, not just the file — the whole point
+ * of the third answer is that the choice ends up somewhere a run actually reads, and a
+ * summary that said only "generate smelt.rerank.ts" would describe a stub nothing loads,
+ * which is what this wizard used to do.
+ */
+function rerankLine(choices: WizardChoices, dir: string): string {
+  switch (choices.rerank) {
+    case 'none':
+      return existsSync(join(dir, RERANK_STUB_FILE))
+        ? `none (${RERANK_STUB_FILE} exists, and no config points at it)`
+        : 'none';
+    case 'module':
+      return `module — generate ${RERANK_STUB_FILE} and point ${CONFIG_FILE_NAME} at it`;
+    case 'voyage':
+      return (
+        `voyage — ${CONFIG_FILE_NAME} names ${VOYAGE_DEFAULT_MODEL}, ` +
+        `key read from ${VOYAGE_DEFAULT_KEY_ENV}`
+      );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +529,18 @@ async function stepMeasure(
   }
 }
 
+/**
+ * The reranker question, and the only one whose answer can send bytes off the machine.
+ *
+ * Three answers, because ADR-0004 added the third: `none` (the default, and the answer
+ * that leaves smelt exactly as network-free as it has always been), `module` (your own
+ * stage, in your own file, with the config pointing at it), and `voyage` (the opt-in
+ * adapter package, which you install and key yourself).
+ *
+ * The copy states what each answer *does* and never what it saves — no relevance claim,
+ * no percentage, nothing measured. What it does say plainly is the consequence: with
+ * anything but `none`, regions of your files are sent to whatever the stage calls.
+ */
 async function stepRerank(
   io: InitIo,
   ask: Asker,
@@ -480,23 +548,31 @@ async function stepRerank(
   dir: string,
 ): Promise<StepOutcome> {
   const exists = existsSync(join(dir, RERANK_STUB_FILE));
+  const picks: readonly RerankChoice[] = ['none', 'module', 'voyage'];
   io.output(
-    `\nReranker — a RerankStage of your own. smelt never bundles one and never will: ` +
-      `an outbound call must live in your code, under your key, visible in your own ` +
-      `review (Law 1).\n` +
+    `\nReranker — a RerankStage that decides which regions a cut must spare. smelt ` +
+      `bundles none and loads none unless this config says so: with answer 1, nothing ` +
+      `is imported and nothing is called, which is what smelt has always done. With 2 ` +
+      `or 3, regions of your files are sent to whatever that stage calls, from your ` +
+      `process, under your key.\n` +
       `  1. none\n` +
-      `  2. generate ${RERANK_STUB_FILE}, a typed stub with the HTTP call sketched as a TODO\n` +
+      `  2. module  — generate ${RERANK_STUB_FILE}, a typed stub you fill in, and point ` +
+      `${CONFIG_FILE_NAME} at it\n` +
+      `  3. voyage  — use ${VOYAGE_PACKAGE}, which you install; the key is read from ` +
+      `${VOYAGE_DEFAULT_KEY_ENV} and never written here\n` +
       (exists ? `(${RERANK_STUB_FILE} already exists; it is never deleted from here.)\n` : ``),
   );
   for (;;) {
-    const answer = await ask(`rerank (1/2) [${choices.rerankStub ? '2' : '1'}] (or back)> `);
+    const current = String(picks.indexOf(choices.rerank) + 1);
+    const answer = await ask(`rerank (1/2/3) [${current}] (or back)> `);
     if (answer === 'back') return 'back';
-    const pick = answer === '' ? (choices.rerankStub ? '2' : '1') : answer;
-    if (pick === '1' || pick === '2') {
-      choices.rerankStub = pick === '2';
+    const pick = answer === '' ? current : answer;
+    const index = ['1', '2', '3'].indexOf(pick);
+    if (index >= 0) {
+      choices.rerank = picks[index]!;
       return 'ok';
     }
-    io.output(`1 for none, 2 to generate the stub, or back.\n`);
+    io.output(`1 for none, 2 for a module of your own, 3 for voyage, or back.\n`);
   }
 }
 
@@ -562,6 +638,18 @@ async function confirmAndWrite(
     io.output(`  wrote ${write.name}\n`);
   }
   io.output(`Done.\n`);
+  if (choices.rerank === 'voyage') {
+    // The two things the wizard deliberately did not do for them: install the adapter
+    // and supply a key. Printed at the moment they matter, and the key is named, never
+    // read and never written.
+    io.output(
+      `\nThe voyage reranker needs two things this wizard will not do for you:\n` +
+        `  npm install ${VOYAGE_PACKAGE}\n` +
+        `  export ${VOYAGE_DEFAULT_KEY_ENV}=...   (smelt reads the variable, never stores the key)\n` +
+        `Until both are in place, a run that would rerank refuses and says which is missing.\n` +
+        `\`${CLI_NAME} doctor\` reports whether ${VOYAGE_DEFAULT_KEY_ENV} is set.\n`,
+    );
+  }
   io.output(
     `Also: \`${CLI_NAME} hooks install\` wires the smelt guard into agent-harness ` +
       `hooks (Claude Code, Codex, and more) — it detects installed harnesses and asks ` +
@@ -579,7 +667,7 @@ function plannedWrites(choices: WizardChoices, dir: string): readonly PlannedWri
   };
   const writes = [plan(CONFIG_FILE_NAME, renderConfig(chosenConfig(choices)))];
   if (choices.measureStub) writes.push(plan(MEASURE_STUB_FILE, measureStubSource()));
-  if (choices.rerankStub) writes.push(plan(RERANK_STUB_FILE, rerankStubSource()));
+  if (choices.rerank === 'module') writes.push(plan(RERANK_STUB_FILE, rerankStubSource()));
   return writes;
 }
 
@@ -593,6 +681,7 @@ function chosenConfig(choices: {
   readonly budgetBytes: number | undefined;
   readonly store: SmeltConfigStore;
   readonly strategy: Strategy;
+  readonly rerank: RerankChoice;
   /** Carried through from an existing config; this wizard never edits it. */
   readonly hooks?: SmeltConfigHooks | undefined;
 }): SmeltConfig {
@@ -602,7 +691,35 @@ function chosenConfig(choices: {
     strategy: choices.strategy,
     store: choices.store,
     ...(choices.hooks === undefined ? {} : { hooks: choices.hooks }),
+    ...rerankBlock(choices.rerank),
   };
+}
+
+/**
+ * The `rerank` block a choice means — and `'none'` means **no key at all**, not
+ * `{"kind":"none"}`.
+ *
+ * An absent key is the whole of the opt-out: `parseConfig` returns `undefined`,
+ * `loadRerankStage` returns `undefined`, and no module is imported. A written-out "off"
+ * would be a switch someone could flip by editing one word, in a file smelt wrote
+ * without being asked to.
+ */
+function rerankBlock(choice: RerankChoice): { rerank?: SmeltConfigRerank } {
+  switch (choice) {
+    case 'none':
+      return {};
+    case 'module':
+      return { rerank: { kind: 'module', path: `./${RERANK_STUB_FILE}` } };
+    case 'voyage':
+      return {
+        rerank: {
+          kind: 'voyage',
+          model: VOYAGE_DEFAULT_MODEL,
+          apiKeyEnv: VOYAGE_DEFAULT_KEY_ENV,
+          topK: WIZARD_VOYAGE_TOP_K,
+        },
+      };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -656,12 +773,14 @@ export function rerankStubSource(): string {
   return `/**
  * Reranker stub — generated by \`smelt init\`.
  *
- * smelt itself makes zero network calls and never bundles a reranker (Law 1): the
- * moment one ships as a default, every consumer's source code leaves the machine and
- * they find out from a changelog, or never. So the outbound call lives HERE, in your
- * file, reading your env var, visible in your own review.
+ * smelt's own import graph makes zero network calls and bundles no reranker (Law 1):
+ * the moment one ships as a default, every consumer's source code leaves the machine
+ * and they find out from a changelog, or never. So the outbound call lives HERE, in
+ * your file, reading your env var, visible in your own review.
  *
- * Wire it into your own pipeline; smelt never calls this for you.
+ * \`smelt init\` also wrote a \`rerank\` block into smelt.config.json pointing at this
+ * file, so \`smelt\` and the MCP server load it. Delete that block and nothing here is
+ * ever imported — the opt-in is the config key, not this file's existence.
  */
 import type { RerankCandidate, RerankedCandidate, RerankStage } from /* your install */ '@smeltjs/core';
 
@@ -712,5 +831,9 @@ export const rerank: RerankStage = {
     );
   },
 };
+
+// What smelt.config.json's {"kind":"module"} loads. The named \`rerank\` above is
+// accepted too, so either spelling works when you import this from your own code.
+export default rerank;
 `;
 }
