@@ -132,6 +132,29 @@ why }`, where `path` is the spelling to write. It is asked **per script actually
   the `why` says "nothing here proves an upgrade moves it — nor that it keeps it" and
   never that anything is replaced in place. `smelt hooks install` and `smelt setup`
   print the unstable ones (`smelt.setup.v1`'s optional `notes`).
+- **HookCommand**: what one entry in a harness's hook config _says_, as a value, and
+  both directions over it (`src/harness/hook-command.ts`). A guard command is
+  `{ kind: 'guard', script }`; the three lifecycle commands are
+  `{ kind: 'stats' | 'map' | 'lint', invocation: 'path' | 'node', script?, args }` —
+  the Invocation's two spellings, carried rather than re-derived. `renderHookCommand`
+  is the only writer and `parseHookCommand` the only reader, and
+  `parseHookCommand(renderHookCommand(c, cwd))` equalling `c` is a guard, because the
+  string used to have one writer and _three_ substring readers (the ownership check the
+  merge runs, the toggle reader that tells the opening map from the instruction lint,
+  and `cli/installed.ts`'s per-file "is this ours"), each carrying its own needle.
+  `undefined` is load-bearing: it means **foreign**, and a re-run may only ever replace
+  entries it can prove are its own — which is why the parser accepts three quotings and
+  the `$(readlink -f …)` workaround people have on disk today, and refuses
+  `node other.js`. **The probe** is the module's second half and the reason `smelt
+doctor` can now say _verified_: `probeHookCommand` runs the command — for a guard,
+  against a payload built from the harness's own `HarnessHookSchema` naming an
+  oversized file in a fresh temp directory — and answers `fires` / `inert` / `missing`.
+  `wired` used to be a text fact, and the two defects Invocation fixed (an inert shim
+  through a symlink, a keg path `brew upgrade` deleted) both leave that text exactly as
+  it was; `inert` is the dangerous verdict, because empty stdout is how every harness
+  schema spells _allow_. Probing is a read, so ADR-0003 holds — doctor still writes no
+  byte of the project, and the one thing it spawns is `process.execPath` (the narrower
+  ruling under which `node:child_process` is on the Law 1 allowlist at all).
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
   bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
   built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from

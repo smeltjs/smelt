@@ -302,8 +302,13 @@ smelt doctor
 
 Doctor reads installed state and **never writes**: which release wrote the instruction
 blocks, whether the config parses and its store directory exists, whether the MCP
-registration is intact, and which pieces are orphans. Exit 0 means current. When
-anything is behind, the report ends with the exact repair command, which is always:
+registration is intact, and which pieces are orphans. It also **runs** each hook it
+finds, against an oversized file in a temporary directory, and says what happened —
+`wired (verified)`, `wired but inert` (the command ran and allowed the read, which is
+exactly what a shim reached through a symlink does) or `wired but missing` (the script
+is gone, which is what `brew upgrade` leaves behind). Exit 0 means current. When
+anything is behind or not firing, the report ends with the exact repair command, which
+is always:
 
 ```sh
 smelt setup
@@ -522,7 +527,8 @@ Three things that look like bugs and are not:
   as such. Every included symbol can say why it ranked.
 - **The setup surface** — `smelt setup` applies the whole recipe in one command (config,
   hooks preset, MCP registration, a proven round trip), `smelt doctor` reads installed
-  state back and names exactly what is behind, and the version-stamped instruction
+  state back — running every hook it finds, so `wired` is a fact about behaviour and not
+  about text — and names exactly what is behind, and the version-stamped instruction
   blocks make "is this machine current?" answerable from pure shell. The recipe's facts
   live as data; the skill pack (`npx skills add smeltjs/smelt`) and this README render
   from it or are guard-pinned to it.
