@@ -291,8 +291,13 @@ export interface RuleLedgerEntry {
 }
 
 /**
- * Local, content-addressed storage for elided bytes. No network, no eviction in v1 —
- * evicting is how "reversible" quietly becomes "reversible for a while".
+ * Local, content-addressed storage for elided bytes. No network, and **nothing on this
+ * interface evicts** — evicting on smelt's own initiative is how "reversible" quietly
+ * becomes "reversible for a while". The one eviction that exists is a method on
+ * {@link DirectoryElisionStore} and not on this interface (`prune`, behind
+ * `smelt store prune`): a user asks for it, the store journals it, and a later
+ * `retrieve` of the evicted hash says so. Putting it here would offer eviction to every
+ * adapter — including one an agent's tool could reach.
  */
 export interface ElisionStore {
   /**

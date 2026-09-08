@@ -191,7 +191,7 @@ import { DirectoryElisionStore } from '@smeltjs/core';
 
 const smelter = createSmelter({
   defaultBudgetBytes: 8_000,
-  store: new DirectoryElisionStore('.smelt/store'), // content-addressed, crash-safe, no eviction
+  store: new DirectoryElisionStore('.smelt/store'), // content-addressed, crash-safe, prune-only
 });
 // A smelt_retrieve in a later turn — or a later process — still gets its bytes back.
 // Retrieval counters survive restarts, so expansionRate stays meaningful across a session.
@@ -576,8 +576,13 @@ Three things that look like bugs and are not:
   For logs, traces, diffs, and every other blob that is not code.
 - **Persistent store** — `DirectoryElisionStore`: one file per content hash, atomic
   no-clobber writes, bytes re-verified against their hash on every read, counters in an
-  append-only journal. No eviction, ever — a store that can forget turns "reversible"
-  into "reversible, usually".
+  append-only journal. No _automatic_ eviction, ever — no cap, no LRU, no TTL, nothing
+  that deletes because a store was opened: a store that can forget by itself turns
+  "reversible" into "reversible, usually". The one deletion is `smelt store prune
+--older-than 30d`, which you type: it journals every eviction before it unlinks, so a
+  later `smelt retrieve` of a pruned hash says `EvictedHashError` with the date rather
+  than "it was never elided", and the counters do not move — `elisionsStored` keeps
+  counting what went, so a prune cannot flatter the expansion rate. `--dry-run` first.
 - **Cache-prefix hygiene** — `findPrefixDivergence` and `detectCacheBreakers` report the
   byte offset where two prompt prefixes diverge and the silent cache-breakers worth
   fixing (timestamps/UUIDs in system prompts, unsorted JSON keys, varying tool sets).

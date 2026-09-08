@@ -197,7 +197,7 @@ describe('the persistent store keeps Law 3 across restarts', () => {
     expect(() => store.retrieve('../outside/secret')).toThrow(/no stored content/);
   });
 
-  it('still holds everything ever put — there is no eviction to survive', () => {
+  it('still holds everything ever put — nothing evicts but the prune verb', () => {
     const root = newRoot();
     const store = new DirectoryElisionStore(root);
     const hashes = Array.from({ length: 50 }, (_, i) =>
