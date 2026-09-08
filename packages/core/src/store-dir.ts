@@ -53,6 +53,30 @@ const LOG_LINE = /^(hit|miss|corrupt) ("(?:[^"\\]|\\.)*")$/;
  */
 const PUT_LINE = /^put ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/;
 
+/**
+ * A `tmp/` entry `#writeTemp` could have written: the pid that wrote it, then a hyphen,
+ * then the 16 hex characters of `randomBytes(8).toString('hex')`. `#sweepStaleTemp`
+ * matches only this shape — see its doc comment for why the pid is what makes a safe
+ * sweep possible at all.
+ */
+const TEMP_FILE = /^(\d+)-[0-9a-f]{16}$/;
+
+/**
+ * Whether a process with this pid is running right now — `kill(pid, 0)` sends no
+ * signal, only asks the kernel. `ESRCH` is the one answer that means "no such
+ * process"; anything else (it exists, or `EPERM` because it exists under another
+ * user) is read as alive, the conservative direction for a check that decides whether
+ * to delete someone else's in-flight file.
+ */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: string }).code !== 'ESRCH';
+  }
+}
+
 /** See {@link MemoryElisionStoreOptions} in `store.ts` — same escape hatch, same reason. */
 export interface DirectoryElisionStoreOptions {
   /**
@@ -122,6 +146,13 @@ export interface DirectoryElisionStoreOptions {
  *   the winner — identical content dedupes, different content under one hash is a
  *   {@link HashCollisionError}. Journal appends use `O_APPEND`. Tested with two real
  *   processes in `test/store-dir.test.ts`.
+ * - **A crash's leaked temp files are swept, not accumulated.** A blob's staging file
+ *   in `tmp/` outlives its writer only when the process dies between the `fsync` and
+ *   the `finally`'s own cleanup — see `#putBlob`. Every later construction of a
+ *   store over the same directory sweeps `tmp/` for entries whose pid is provably dead
+ *   (`#sweepStaleTemp`) and deletes them, named on `process.emitWarning`
+ *   (`SmeltStaleTempDiscard`); a file whose writer might still be running is left
+ *   alone rather than raced.
  *
  * ## No eviction
  *
@@ -171,6 +202,62 @@ export class DirectoryElisionStore implements ElisionStore {
     mkdirSync(this.#blobsDir, { recursive: true });
     mkdirSync(this.#tmpDir, { recursive: true });
     this.#claimFormat(markerPath);
+    this.#sweepStaleTemp();
+  }
+
+  /**
+   * Delete `tmp/` entries left by a process that crashed between writing (and
+   * `fsync`ing) a staged blob and its own `unlinkSync(tmpPath)` — see the class doc's
+   * Durability section, and `#putBlob`'s own `finally`. A leaked temp file costs
+   * nothing but disk (`tmp/` is never read by any other path — {@link readBlob} only
+   * ever looks in `blobs/`), but nothing ever reclaimed it before now, so a directory
+   * that outlived a few crashes accumulated forever.
+   *
+   * The bar is the same one {@link TagsCache} states for its own leftovers
+   * (`src/repomap/cache.ts`, `ENTRY_FILE`): reclaiming an entry safely needs a
+   * liveness test, not an invented number — "a temp file older than N seconds" would
+   * be a threshold this code made up, and could delete a slow write still in
+   * progress. `#writeTemp` names every entry `<pid>-<hex>`, and a PID *is* a real
+   * liveness test: `process.kill(pid, 0)` sends no signal and only asks the kernel
+   * whether that process exists. `ESRCH` means it does not — provably orphaned, safe
+   * to delete. Anything else (the process exists, or exists under another user and
+   * answers `EPERM`) is left alone; the file might be mid-write right now. A name that
+   * does not match the `<pid>-<hex>` shape at all is left alone too — this store never
+   * writes another shape into `tmp/`, so it is not this store's to touch.
+   *
+   * Best-effort like every other sweep in this codebase: a failure to list or delete
+   * postpones the cleanup to the next open rather than failing construction over
+   * leftover disk. Every actual discard is named on `process.emitWarning`, the same
+   * way a lost counter is (`SmeltCounterWriteFailure`) — a silent delete of bytes
+   * nobody asked for would be exactly the kind of quiet loss this project refuses.
+   */
+  #sweepStaleTemp(): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(this.#tmpDir);
+    } catch {
+      return; // cannot list tmp/ right now — try again on the next open
+    }
+    for (const entry of entries) {
+      const match = TEMP_FILE.exec(entry);
+      if (match === null) continue; // not this store's naming — never touched
+      const pid = Number(match[1]);
+      if (processAlive(pid)) continue; // might be mid-write; never race a live writer
+      const path = join(this.#tmpDir, entry);
+      try {
+        unlinkSync(path);
+      } catch {
+        continue; // gone already, or undeletable right now — next open tries again
+      }
+      process.emitWarning(
+        `smelt: discarded stale temp file "${entry}" in ${this.#tmpDir} — its writer ` +
+          `(pid ${String(pid)}) is no longer running, so the file was leaked by a ` +
+          `crash between writing and cleanup. The blob it staged is safe: a publish ` +
+          `only reaches blobs/ after an atomic link, so this file was never referenced ` +
+          `by name and nothing is reachable through it.`,
+        'SmeltStaleTempDiscard',
+      );
+    }
   }
 
   put(content: string, reason?: ElisionReason): string {

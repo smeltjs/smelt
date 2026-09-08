@@ -1033,6 +1033,47 @@ describe('the repo map keeps its claims', () => {
       'the guard is vacuous unless cross-file traffic actually ranked it',
     ).toBeGreaterThan(0);
   });
+
+  /**
+   * php, kotlin and bash ship `defKinds: {}` in the language table (`RepoMapFacts`'s
+   * own doc comment says why: php's `name` nodes, kotlin's field-less declarations
+   * and bash's `word` function names are not the identifier-shaped nodes the
+   * extraction walk reads, so they are omitted rather than guessed at). This proves
+   * what that omission actually does downstream, rather than trusting the comment: a
+   * file in one of these languages produces zero definitions and falls into the
+   * *same* `path-only` bucket `language === 'unknown'` uses (`REPO_MAP_PATH_ONLY_RULE`
+   * in `map.ts`) — the map says so, honestly, rather than rendering a
+   * structurally-supported-looking file that happens to have found nothing.
+   */
+  it('renders php, kotlin and bash files path-only — defKinds is empty by design, and the map says so', async () => {
+    const root = scratch('smelt-repomap-path-only-lang-');
+    writeFileSync(
+      join(root, 'greet.php'),
+      '<?php\nfunction greet($name) {\n  return "hello " . $name;\n}\n',
+    );
+    writeFileSync(
+      join(root, 'Greet.kt'),
+      'class Greeter {\n  fun greet(name: String): String {\n    return "hello $name"\n  }\n}\n',
+    );
+    writeFileSync(join(root, 'greet.sh'), 'greet() {\n  echo "hello $1"\n}\n');
+
+    const map = await buildRepoMap({ root, budgetBytes: BUDGET });
+    for (const rel of ['greet.php', 'Greet.kt', 'greet.sh']) {
+      const entry = map.pathOnly.find((e) => e.path === rel);
+      expect(entry, `${rel} did not land in path-only`).toBeDefined();
+      expect(entry!.reason.rule).toBe(REPO_MAP_PATH_ONLY_RULE);
+      // And it never doubled up as a (name-less, rank-less) regular entry either.
+      expect(map.entries.some((e) => e.path === rel)).toBe(false);
+    }
+    // Non-vacuity, and the reason the walk found nothing to define: extractTags
+    // itself returns zero defs for each language directly, not merely "the map
+    // happened to render them that way this time".
+    expect((await extractTags('function greet($name) { return $name; }', 'php')).defs).toEqual([]);
+    expect(
+      (await extractTags('class Greeter { fun greet(): String { return "" } }', 'kotlin')).defs,
+    ).toEqual([]);
+    expect((await extractTags('greet() {\n  echo hi\n}', 'bash')).defs).toEqual([]);
+  });
 });
 
 /**

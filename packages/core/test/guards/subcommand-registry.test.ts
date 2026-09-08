@@ -162,14 +162,23 @@ async function capture(argv: readonly string[]): Promise<{ code: number; stdout:
 }
 
 describe('every verb refuses every flag it does not own — the whole cross product', () => {
+  // `SUBCOMMANDS[verb]?.flags ?? []`, not a bare index: this line runs at collection
+  // time (it builds the `it.each` table below), outside any `it()` body — an
+  // unguarded index throwing here crashes the whole file before a single test runs
+  // (vitest reports "no tests", not a red assertion), which is exactly the CRASHED
+  // failure mode `scripts/mutate.mjs` now distinguishes from a caught mutation. A verb
+  // the registry dropped is still asserted — loudly, as a real failed test — by
+  // `'carries exactly the shipped verbs — no more, no fewer'` above; this line's job
+  // is only to keep collection itself from crashing when that happens.
   const foreign = (Object.keys(SHIPPED) as Verb[]).flatMap((verb) =>
-    VERB_FLAGS.filter((flag) => !SUBCOMMANDS[verb].flags.includes(flag)).map(
+    VERB_FLAGS.filter((flag) => !(SUBCOMMANDS[verb]?.flags.includes(flag) ?? false)).map(
       (flag) => [verb, flag] as const,
     ),
   );
 
   it('owns exactly the flags the shipped CLI documents, verb by verb', () => {
     for (const [verb, flags] of Object.entries(OWNED) as [Verb, readonly VerbFlag[]][]) {
+      expect(SUBCOMMANDS[verb], verb).toBeDefined();
       expect([...SUBCOMMANDS[verb].flags].toSorted(), verb).toEqual([...flags].toSorted());
     }
   });
@@ -314,8 +323,11 @@ describe('the round trip refuses every flag it cannot honour, rather than ignori
 });
 
 describe('every verb accepts every flag it does own', () => {
+  // Same reasoning as the cross-product `foreign` table above: this runs at
+  // collection time, so a dropped verb must not throw here — it is asserted, loudly,
+  // by 'carries exactly the shipped verbs — no more, no fewer'.
   const owned = (Object.keys(SHIPPED) as Verb[]).flatMap((verb) =>
-    SUBCOMMANDS[verb].flags.map((flag) => [verb, flag] as const),
+    (SUBCOMMANDS[verb]?.flags ?? []).map((flag) => [verb, flag] as const),
   );
 
   it.each(owned)('`smelt %s` does not refuse its own --%s', (verb, flag) => {

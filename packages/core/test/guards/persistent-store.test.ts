@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -209,6 +210,27 @@ describe('the persistent store keeps Law 3 across restarts', () => {
     }
     expect(reopened.stats().elisionsStored).toBe(50);
   });
+
+  it('sweeps a temp file a dead process leaked, and leaves a live one alone', () => {
+    const root = newRoot();
+    mkdirSync(join(root, 'tmp'), { recursive: true });
+
+    // A pid guaranteed dead by the time this line returns: spawnSync blocks until the
+    // child has already exited, so its temp file is exactly what a crash between
+    // #writeTemp's fsync and its own cleanup would leak.
+    const deadPid = spawnSync(process.execPath, ['-e', '0']).pid;
+    if (deadPid === undefined) throw new Error('spawnSync did not report a pid');
+    const leaked = `${String(deadPid)}-aaaaaaaaaaaaaaaa`;
+    const inFlight = `${String(process.pid)}-bbbbbbbbbbbbbbbb`; // this test process: alive
+    writeFileSync(join(root, 'tmp', leaked), 'orphaned by a crash');
+    writeFileSync(join(root, 'tmp', inFlight), 'a write this process has not finished yet');
+
+    const opened = new DirectoryElisionStore(root); // construction sweeps tmp/
+    expect(opened).toBeInstanceOf(DirectoryElisionStore);
+
+    expect(existsSync(join(root, 'tmp', leaked))).toBe(false);
+    expect(existsSync(join(root, 'tmp', inFlight))).toBe(true);
+  });
 });
 
 /**
@@ -236,5 +258,12 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    return this.peek(hash) !== undefined;',
     replace: '    return this.#readBlob(hash) !== undefined;',
     why: 'has() back to an existence check that skips the hash — a corrupt blob answers true and then throws StoreCorruptionError on the next line, so the consumer that checked first was told a lie by the call whose job was to prevent that throw',
+  },
+  {
+    id: 'law3-dir-store-stale-temp-not-swept',
+    file: 'store-dir.ts',
+    find: '    this.#claimFormat(markerPath);\n    this.#sweepStaleTemp();',
+    replace: '    this.#claimFormat(markerPath);',
+    why: 'construction no longer sweeps tmp/ — a temp file a crashed process leaked accumulates on every later open instead of being discarded',
   },
 ];
