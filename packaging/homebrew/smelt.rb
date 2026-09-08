@@ -14,7 +14,11 @@ class Smelt < Formula
   # ship inside the tarball; no native build, no postinstall download. node is
   # :recommended, not required: `--without-node` builds against whatever node is
   # already on PATH, which must clear the engines floor in packages/core/package.json
-  # (^20.19.0 || >=22.12.0). install below never references Formula["node"]
+  # (^20.19.0 || >=22.12.0) — and, because Homebrew builds run under superenv, which
+  # resets PATH to the Homebrew prefix bin plus the standard system directories, that
+  # node must live somewhere superenv keeps (e.g. /usr/local/bin or the Homebrew
+  # prefix), not just on a shell profile's PATH — a version-manager shim (nvm, volta,
+  # fnm) is invisible to the build. install below never references Formula["node"]
   # directly — plain "npm" resolves to Homebrew's node when it is installed, and to
   # PATH's node otherwise, so both builds share the one code path.
   depends_on "node" => :recommended

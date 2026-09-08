@@ -289,7 +289,10 @@ brew install smeltjs/tap/smelt
 
 The formula pulls Homebrew's own `node` by default. To use the Node already on your
 PATH instead, `brew install --without-node smeltjs/tap/smelt` — that Node must clear
-smelt's engines floor, `^20.19.0 || >=22.12.0`.
+smelt's engines floor, `^20.19.0 || >=22.12.0`, and must live where Homebrew's build
+environment can see it (e.g. `/usr/local/bin` or the Homebrew prefix), since a
+version-manager shim (nvm, volta, fnm) that only your shell's `PATH` knows about is
+invisible to the build.
 
 Upgrading from 0.6.0 or earlier on Homebrew: **re-run `smelt setup`**. Hooks written by
 those releases point at the versioned Cellar path `brew upgrade` deletes, and the guard
