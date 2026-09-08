@@ -15,6 +15,7 @@ import { SNIPPET_END_MD, SNIPPET_START_MD } from '@guard/harness/snippet';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
 
 import type { GuardMutation } from './_mutations.ts';
+import { packageRoot } from './_source.ts';
 
 /**
  * DOCTOR GUARD — the update story's first command, and the promises that make it one.
@@ -72,6 +73,45 @@ async function setupWith(cwd: string, version: string): Promise<void> {
     cwd,
   });
   expect(code, `setup failed:\n${stdout}`).toBe(EXIT.ok);
+  useBuiltScripts(cwd);
+}
+
+/**
+ * Re-point every script `setup` just wrote at this package's **built** `dist`.
+ *
+ * Setup derives those paths from where its own code was loaded from, which under the
+ * mutation runner is a scratch copy of `src` with no `dist` beside it — so every probe
+ * would answer `missing`, every scenario would go red, and every mutation aimed at this
+ * guard would be caught for a reason that has nothing to do with it. The wiring under
+ * test is what the file *says*; where the package happens to live is not.
+ *
+ * `HooksChoices.distDir` is the seam for exactly this, one layer down — but these
+ * scenarios drive `runCli(['setup', …])` end to end, and nothing on `SetupOptions`
+ * reaches `planInstall`'s choices. So the substitution happens here, on the bytes setup
+ * wrote, and the built paths are spelled out rather than derived through
+ * `shimScriptPath(profile, distDir)`: a path derived through `@guard/harness/paths` is
+ * a path the mutation under test may have changed, which is the dependence this helper
+ * exists to remove. If a later PR threads a `distDir` onto `SetupOptions`, this should
+ * become an injection instead.
+ */
+function useBuiltScripts(cwd: string): void {
+  const path = join(cwd, '.claude', 'settings.json');
+  if (!existsSync(path)) return;
+  const settings = JSON.parse(readFileSync(path, 'utf8')) as {
+    hooks: Record<string, { hooks?: { command: string }[] }[]>;
+  };
+  const shim = join(packageRoot(), 'dist', 'hooks', 'shims', 'claude-code.js');
+  const bin = join(packageRoot(), 'dist', 'cli', 'bin.js');
+  for (const entries of Object.values(settings.hooks)) {
+    for (const entry of entries) {
+      for (const one of entry.hooks ?? []) {
+        one.command = one.command
+          .replace(/node "[^"]*hooks\/shims\/claude-code\.js"/u, `node "${shim}"`)
+          .replace(/node "[^"]*cli\/bin\.js"/u, `node "${bin}"`);
+      }
+    }
+  }
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 describe('smelt doctor reads installed state back', () => {
