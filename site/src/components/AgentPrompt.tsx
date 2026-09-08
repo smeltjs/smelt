@@ -42,7 +42,7 @@ From now on: read big files through \`smelt <file> --budget ${budget} --focus <w
   codex: `Set up smelt (https://github.com/smeltjs/smelt) in this project so oversized files and tool outputs stop flooding your context window:
 
 1. Install the CLI: \`${installGlobal}\` (or use \`${oneShot}\` everywhere a step says \`smelt\`).
-2. Run \`${setupLine.replace('HARNESS', 'codex')}\` — one command: it writes smelt.config.json, wires the guard hooks preset, and proves the loop with a real smelt → retrieve round trip. The JSON receipt names every file written and every check, and the exit code says whether setup is complete.
+2. Run \`${setupLine.replace('HARNESS', 'codex')}\` — one command: it writes smelt.config.json, wires the guard hooks preset, registers the MCP server (TOML, \`.codex/config.toml\`), and proves the loop with a real smelt → retrieve round trip. The JSON receipt names every file written and every check, and the exit code says whether setup is complete.
 3. Re-run \`smelt doctor\` — it reads installed state back and exits 0 when everything agrees with the binary.
 4. Verify the round trip on a real file:
    - \`smelt <a large file in this repo> --budget ${budget} --focus <a symbol the task cares about>\`
@@ -54,7 +54,7 @@ From now on: read big files through \`smelt <file> --budget ${budget} --focus <w
 
 1. Install the CLI: \`${installGlobal}\` — the store and config live with the project either way.
 2. Run \`smelt init\` and choose a directory store (e.g. \`${storeDir}\`). The MCP server discovers the same store through \`smelt.config.json\`, so \`smelt retrieve <hash>\` from a shell and the model's \`smelt_retrieve\` hit one store and move one set of counters.
-3. Add the server — Claude Code shown; setup writes this file for you when run with --harness claude-code, and Codex and Grok TOML snippets are in packages/mcp/README.md:
+3. Add the server — Claude Code shown; \`smelt setup\`/\`smelt hooks install\` write this automatically for Claude Code, opencode, Codex and Grok, and packages/mcp/README.md has the exact bytes for any other client:
    \`${mcpRegister}\`
 4. Teach the agent the CLI without touching any config files: \`${skillInstall}\`.
 5. Use the five tools: \`smelt_file\` to shrink a file under a byte budget with a focus (its report lists the names behind each marker), \`repo_map\` for orientation in an unfamiliar tree, \`smelt_retrieve\` to get elided bytes back, \`smelt_retrieve_batch\` when several markers matter at once (one call, every call re-bills the conversation), \`smelt_stats\` to watch the expansion rate and the per-rule ledger.

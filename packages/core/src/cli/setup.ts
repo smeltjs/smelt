@@ -404,9 +404,18 @@ async function confirm(
       fileFate,
     );
   }
+  const mcpApplied = choices.harnesses.some((profile) =>
+    profile.install.some(
+      (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
+    ),
+  );
   say(
     `  mcp ${
-      choices.registerMcp ? `(manual step: ${SETUP_RECIPE.mcp.register})` : '(skipped)'
+      !choices.registerMcp
+        ? '(skipped)'
+        : mcpApplied
+          ? `(applied beside your existing servers: ${SETUP_RECIPE.mcp.register})`
+          : `(manual step: ${SETUP_RECIPE.mcp.register})`
     }\nNothing has been written yet.\n`,
   );
   const confirmed = await confirmLoop(
@@ -517,11 +526,14 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
     notes.push(...plan.notes);
   }
 
-  // ── mcp: applied where a profile carries the registration, handed over as the
-  //    exact command where none does (no harness named, or a TOML harness) — never
-  //    pretending it ran something it did not ──
+  // ── mcp: applied where a profile carries either registration step (JSON or TOML),
+  //    handed over as the exact command where none does (no harness named, or a
+  //    harness whose registration this preset does not yet know) — never pretending
+  //    it ran something it did not ──
   const mcpApplied = choices.harnesses.some((profile) =>
-    profile.install.some((step) => step.kind === 'mcp-registration'),
+    profile.install.some(
+      (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
+    ),
   );
   const mcp: SetupReceipt['mcp'] = !choices.registerMcp
     ? { status: 'skipped' }
@@ -578,7 +590,7 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
     say(
       `MCP registration stays in your hands (no selected harness carries it):\n` +
         `  ${mcp.command}\n` +
-        `Codex and Grok spell it in TOML — packages/mcp/README.md has both.\n`,
+        `packages/mcp/README.md has the mechanism for every harness surveyed.\n`,
     );
   }
   for (const check of checks) {

@@ -1,5 +1,6 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
+import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import type { ShimmedHarnessProfile } from './profile.ts';
 
 /**
@@ -18,6 +19,11 @@ import type { ShimmedHarnessProfile } from './profile.ts';
  *    is read-only to hooks, so there is no `rewrite` here — under
  *    `hooks.enforcement: "rewrite"` this harness falls back to the deny, whose reason
  *    still carries the exact replacement pipeline.
+ *
+ * MCP registration is TOML, `.grok/config.toml` (project) or `~/.grok/config.toml`
+ * (user), `[mcp_servers.<name>]` with `command`/`args` — verified 2026-09-08 per
+ * <https://docs.x.ai/build/settings/reference>, the same shape Codex's config reference
+ * documents, so `text/toml-edit.ts` serves both.
  */
 const HOOKS: HarnessHookSchema = {
   readTools: ['Read', 'read_file', 'ReadFile'],
@@ -36,10 +42,7 @@ export const grok: ShimmedHarnessProfile = {
   detectHome: ['.grok'],
   instructionFile: 'AGENTS.md',
   instructions: 'snippet',
-  caveats: [
-    'deny-only hooks: input rewrite is not supported, so rewrite mode falls back to deny',
-    'MCP registration is manual for Grok (TOML) — packages/mcp/README.md has the snippet; setup does not edit TOML',
-  ],
+  caveats: ['deny-only hooks: input rewrite is not supported, so rewrite mode falls back to deny'],
   hooks: HOOKS,
   install: [
     {
@@ -49,6 +52,12 @@ export const grok: ShimmedHarnessProfile = {
       matchers: ['Read', 'Bash'],
       entry: 'command-list',
       lifecycle: false,
+    },
+    {
+      kind: 'toml-mcp-registration',
+      file: '.grok/config.toml',
+      path: ['mcp_servers', 'smelt'],
+      entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },
   ],
 };

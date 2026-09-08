@@ -314,7 +314,11 @@ describe('the other tiers write what their matrix row supports', () => {
   it('codex: an existing config.toml with its own [features] table is skipped, never broken', async () => {
     mkdirSync(join(dir, '.codex'), { recursive: true });
     writeFileSync(join(dir, '.codex/config.toml'), '[features]\nsomething = true\n');
-    const { output } = await hooks('install', 'codex', DEFAULT_ANSWERS);
+    // Declining the [features] marker block doesn't excuse the *separate*
+    // mcp_servers.smelt registration step, which also targets this pre-existing
+    // file and asks its own per-file consent — decline that too, so this test's own
+    // claim ("skipped, never broken") stays literally true.
+    const { output } = await hooks('install', 'codex', [...DEFAULT_ANSWERS, 'no']);
     expect(output).toContain('SKIPPED');
     expect(readFileSync(join(dir, '.codex/config.toml'), 'utf8')).toBe(
       '[features]\nsomething = true\n',

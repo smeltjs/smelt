@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,7 +18,7 @@ import type { GuardMutation } from './_mutations.ts';
 
 /**
  * MCP-REGISTRATION GUARD — the registration is a profile fact, applied and removed
- * byte-faithfully.
+ * byte-faithfully, in whichever format the harness reads.
  *
  * Before the `mcp-registration` step kind, registering the server was the one setup
  * act no profile could express: the command existed in four retyped places, setup
@@ -32,8 +32,12 @@ import type { GuardMutation } from './_mutations.ts';
  *      directions;
  *   3. the written entry is the recipe's command, split — never a second spelling;
  *   4. a container that is not a JSON object is skipped loudly, never merged into;
- *   5. the TOML harnesses (codex, grok) declare no registration step and say in
- *      their caveats that it is manual — the honest absence.
+ *   5. Codex and Grok (KOT-258) carry the *TOML* sibling step kind,
+ *      `toml-mcp-registration`, over `text/toml-edit.ts` — the same recipe command,
+ *      the same byte-faithful contract, no "manual" caveat left standing now that
+ *      setup can honestly apply it. Codex's `.codex/config.toml` also carries the
+ *      unrelated `[features] hooks = true` marker block on the *same file*; the two
+ *      steps must compose, not clobber each other.
  */
 
 function scratch(label: string): string {
@@ -152,25 +156,34 @@ describe('the mcp-registration step kind', () => {
     }
   });
 
-  it('the TOML harnesses declare no registration and say so in their caveats', () => {
+  it('Codex and Grok declare the TOML registration, and carry no manual caveat', () => {
     for (const profile of [codex, grok]) {
       expect(
-        profile.install.some((step) => step.kind === 'mcp-registration'),
-        `${profile.id} must not claim a JSON registration it cannot edit byte-faithfully`,
-      ).toBe(false);
+        profile.install.some((step) => step.kind === 'toml-mcp-registration'),
+        `${profile.id} must declare its TOML registration as a step, not a caveat`,
+      ).toBe(true);
       expect(
         profile.caveats.some((line) => line.includes('MCP registration is manual')),
-        `${profile.id} carries no manual-MCP caveat`,
-      ).toBe(true);
+        `${profile.id} still says it is manual after KOT-258`,
+      ).toBe(false);
     }
-    // And every other profile either carries the step or is honest by absence — the
-    // registry is the only list, so this walks it rather than a hand-typed set.
+    // And every other profile either carries one of the two step kinds or is honest
+    // by absence — the registry is the only list, so this walks it rather than a
+    // hand-typed set.
     for (const profile of HARNESSES) {
-      const declared = profile.install.some((step) => step.kind === 'mcp-registration');
-      if (declared) {
+      const jsonForm = profile.install.some((step) => step.kind === 'mcp-registration');
+      const tomlForm = profile.install.some((step) => step.kind === 'toml-mcp-registration');
+      expect(jsonForm && tomlForm, `${profile.id} declares both forms at once`).toBe(false);
+      if (jsonForm) {
         expect(
           ['claude-code', 'opencode'],
-          `${profile.id} declares a registration without an adapter in this guard`,
+          `${profile.id} declares a JSON registration without an adapter in this guard`,
+        ).toContain(profile.id);
+      }
+      if (tomlForm) {
+        expect(
+          ['codex', 'grok'],
+          `${profile.id} declares a TOML registration without an adapter in this guard`,
         ).toContain(profile.id);
       }
     }
@@ -184,6 +197,90 @@ describe('the mcp-registration step kind', () => {
       const removal = planRemove(cwd, [claudeCode]).find((one) => one.name === '.mcp.json');
       expect(removal, 'nothing of ours to remove, yet a removal was planned').toBeUndefined();
       expect(readFileSync(join(cwd, '.mcp.json'), 'utf8')).toBe(theirs);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the toml-mcp-registration step kind (Codex, Grok)', () => {
+  it('applies the recipe command to Grok’s .grok/config.toml and removes it whole', () => {
+    const cwd = scratch('grok-roundtrip');
+    try {
+      const plan = planInstall(cwd, { ...CHOICES, harnesses: [grok] });
+      const planned = plan.files.find((file) => file.name === '.grok/config.toml');
+      expect(planned, 'planInstall planned no .grok/config.toml').toBeDefined();
+      expect(planned!.content).toContain('[mcp_servers.smelt]');
+      expect(planned!.content).toContain(`command = "${SETUP_RECIPE.mcp.run.split(' ')[0]}"`);
+      const dir = join(cwd, '.grok');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'config.toml'), planned!.content);
+
+      const removal = planRemove(cwd, [grok]).find((one) => one.name === '.grok/config.toml');
+      expect(removal, 'planRemove planned nothing for .grok/config.toml').toBeDefined();
+      expect(removal!.action).toBe('delete');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps every foreign byte of a shared Grok config, both directions', () => {
+    const cwd = scratch('grok-foreign');
+    try {
+      const dir = join(cwd, '.grok');
+      mkdirSync(dir, { recursive: true });
+      const theirs =
+        '# grok settings\n' +
+        '[mcp_servers.other]\n' +
+        'command = "uvx"\n' +
+        'args = ["some-server"]\n';
+      writeFileSync(join(dir, 'config.toml'), theirs);
+
+      const plan = planInstall(cwd, { ...CHOICES, harnesses: [grok] });
+      const planned = plan.files.find((file) => file.name === '.grok/config.toml')!;
+      expect(planned.content).toContain('# grok settings');
+      expect(planned.content).toContain(
+        '[mcp_servers.other]\ncommand = "uvx"\nargs = ["some-server"]',
+      );
+      expect(planned.content).toContain('[mcp_servers.smelt]');
+      writeFileSync(join(dir, 'config.toml'), planned.content);
+
+      const removal = planRemove(cwd, [grok]).find((one) => one.name === '.grok/config.toml')!;
+      expect(removal.action).toBe('modify');
+      writeFileSync(join(dir, 'config.toml'), removal.content ?? '');
+      expect(readFileSync(join(dir, 'config.toml'), 'utf8')).toBe(theirs);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('Codex’s [features] marker block and its TOML registration compose on one file', () => {
+    // .codex/config.toml carries two independent install steps for codex: the
+    // `hooks = true` marker block and the mcp_servers.smelt table. Without
+    // planInstall/planRemove layering each step on the previous step's own output
+    // (rather than re-reading stale disk bytes), the second step to touch this file
+    // would silently discard the first — see `currentContent`/`currentText` in
+    // `cli/hooks.ts`.
+    const cwd = scratch('codex-compose');
+    try {
+      const plan = planInstall(cwd, { ...CHOICES, harnesses: [codex] });
+      const planned = plan.files.find((file) => file.name === '.codex/config.toml');
+      expect(planned, 'planInstall planned no .codex/config.toml').toBeDefined();
+      expect(planned!.content).toContain('[features]');
+      expect(planned!.content).toContain('hooks = true');
+      expect(planned!.content).toContain('[mcp_servers.smelt]');
+      expect(planned!.content).toContain(`command = "${SETUP_RECIPE.mcp.run.split(' ')[0]}"`);
+
+      const dir = join(cwd, '.codex');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'config.toml'), planned!.content);
+
+      const removal = planRemove(cwd, [codex]).find((one) => one.name === '.codex/config.toml');
+      expect(removal, 'planRemove planned nothing for .codex/config.toml').toBeDefined();
+      // Both steps' bytes are gone once both removals are applied — nothing of
+      // either edit survives, but the file itself needn't be empty in general (it
+      // is here, since nothing else was ever in it).
+      expect(removal!.action).toBe('delete');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

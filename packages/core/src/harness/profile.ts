@@ -1,5 +1,6 @@
 import { shimFromSchema } from '../hooks/shim.ts';
 import type { HarnessHookSchema, ShimAdapter } from '../hooks/shim.ts';
+import type { TomlValue } from '../text/toml-edit.ts';
 
 /**
  * Everything smelt knows about one agent harness, in one place.
@@ -155,10 +156,14 @@ export type HarnessFileContent = (ctx: HarnessInstallContext) => string;
  * One artefact `hooks install` writes. The kind is also the un-write: `json-hooks` is
  * merged in and strip-merged out, `marker-block` is upserted and stripped,
  * `own-file` is written and deleted, `mcp-registration` is nested-merged in and
- * lifted back out.
+ * lifted back out, `toml-mcp-registration` is table-inserted in and table-removed out.
  */
 export type HarnessInstallStep =
-  HarnessJsonHooks | HarnessMarkerBlock | HarnessOwnFile | HarnessMcpRegistration;
+  | HarnessJsonHooks
+  | HarnessMarkerBlock
+  | HarnessOwnFile
+  | HarnessMcpRegistration
+  | HarnessTomlMcpRegistration;
 
 /**
  * A JSON settings/hooks file the harness reads. Our entries are merged in
@@ -226,8 +231,9 @@ export interface HarnessOwnFile {
  * entry is merged in byte-faithfully beside any other servers the user registered,
  * and on `remove` it is lifted back out; a container this install created empty is
  * removed with it, so a file that never carried the key round-trips byte-identical.
- * Harnesses whose registration is TOML (Codex, Grok) do not declare this step — a
- * hand-edit into TOML is exactly the edit `text/json-edit.ts` exists to refuse.
+ * A harness whose registration is TOML declares {@link HarnessTomlMcpRegistration}
+ * instead — a hand-edit into TOML with this step's JSON editor is exactly the edit
+ * `text/json-edit.ts` exists to refuse.
  */
 export interface HarnessMcpRegistration {
   readonly kind: 'mcp-registration';
@@ -237,6 +243,25 @@ export interface HarnessMcpRegistration {
   readonly path: readonly [string, string];
   /** The server entry as a JSON value — the bytes are the editor's. */
   readonly entry: (ctx: HarnessInstallContext) => unknown;
+}
+
+/**
+ * An MCP server registration inside a **TOML** config the harness reads — Codex's
+ * `.codex/config.toml` and Grok's `.grok/config.toml`, both `[mcp_servers.<name>]`
+ * with `command`/`args` (`text/toml-edit.ts` has the cited shapes). The table is
+ * merged in byte-faithfully beside any other servers the user registered — header
+ * form or dotted-key form, comments and inline tables elsewhere in the file
+ * untouched — and on `remove` it is lifted back out. {@link HarnessMcpRegistration}'s
+ * sibling for the one harness family that spells its config in TOML rather than JSON.
+ */
+export interface HarnessTomlMcpRegistration {
+  readonly kind: 'toml-mcp-registration';
+  /** Project-relative path of the config file. */
+  readonly file: string;
+  /** The container key, then the server's name: `['mcp_servers', 'smelt']`. */
+  readonly path: readonly [string, string];
+  /** The server entry as a TOML table's body — string/number/boolean/string-array. */
+  readonly entry: (ctx: HarnessInstallContext) => Readonly<Record<string, TomlValue>>;
 }
 
 /**

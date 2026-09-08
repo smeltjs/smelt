@@ -1,5 +1,6 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
+import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import type { ShimmedHarnessProfile } from './profile.ts';
 import { SNIPPET_END_HASH, SNIPPET_START_HASH } from './snippet.ts';
 
@@ -60,6 +61,12 @@ ${SNIPPET_END_HASH}
 `;
 }
 
+// The registration's bytes come from the SetupRecipe's run command (MCP_RUN_ARGS,
+// derived once beside the fact it comes from) — TOML per <https://developers.openai.com/codex/config-reference>,
+// cross-checked against codex-rs's `McpServerTransportConfig::Stdio` struct (`command`,
+// `args`, `env`), so the CLI command the README teaches and the file setup writes
+// cannot disagree.
+
 export const codex: ShimmedHarnessProfile = {
   id: 'codex',
   name: 'Codex CLI',
@@ -71,7 +78,6 @@ export const codex: ShimmedHarnessProfile = {
   instructions: 'snippet',
   caveats: [
     'project-level Codex hooks run only once the project is trusted (features.hooks; see docs/research/2026-09-02-agent-enforcement.md § 3)',
-    'MCP registration is manual for Codex (TOML) — packages/mcp/README.md has the snippet; setup does not edit TOML',
   ],
   hooks: HOOKS,
   install: [
@@ -93,6 +99,12 @@ export const codex: ShimmedHarnessProfile = {
         contains: '[features]',
         why: 'already has a [features] table — add `hooks = true` to it yourself',
       },
+    },
+    {
+      kind: 'toml-mcp-registration',
+      file: '.codex/config.toml',
+      path: ['mcp_servers', 'smelt'],
+      entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },
   ],
 };
