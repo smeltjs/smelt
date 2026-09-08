@@ -1,0 +1,63 @@
+{
+  "name": "@smeltjs/rerank-voyage",
+  "version": "0.1.0",
+  "description": "The opt-in Voyage AI reranker adapter for smelt. The one package in the workspace that reaches the network — install it only if you want that.",
+  "license": "Apache-2.0",
+  "author": "mong-x",
+  "homepage": "https://github.com/smeltjs/smelt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/smeltjs/smelt.git",
+    "directory": "packages/rerank-voyage"
+  },
+  "bugs": "https://github.com/smeltjs/smelt/issues",
+  "keywords": [
+    "smelt",
+    "rerank",
+    "voyage",
+    "voyageai",
+    "relevance",
+    "context",
+    "llm"
+  ],
+  "private": false,
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node ../../scripts/inline-declaration-map-sources.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.includes('pnpm')) { console.error('Publish with pnpm publish, not npm publish: npm leaves the workspace:^ range un-substituted.'); process.exit(1); }\""
+  },
+  "peerDependencies": {
+    "@smeltjs/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@smeltjs/core": "workspace:*",
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

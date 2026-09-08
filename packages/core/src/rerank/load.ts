@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { CliUsageError } from '../errors.ts';
+import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
 import type { RerankCandidate, RerankStage } from '../types.ts';
 import { CLI_NAME } from '../cli/shell.ts';
 import { CONFIG_FILE_NAME, VOYAGE_DEFAULT_KEY_ENV, VOYAGE_DEFAULT_MODEL } from '../cli/config.ts';
@@ -18,13 +19,14 @@ import type { SmeltConfigRerank } from '../cli/config.ts';
  *
  * - **No stage is ever the default.** `undefined` in, `undefined` out. A tree with no
  *   `rerank` key never reaches a line below the first `if`.
- * - **The adapter is never in smelt's import graph.** {@link VOYAGE_PACKAGE} is a
- *   *value*, and the `import()` below takes that value rather than a literal — so the
- *   zero-network walk (which follows literal specifiers) sees data, not an edge, and
- *   the guard's ruling classifies a static import of it as *forbidden*. That is the
- *   honest arrangement, and `test/guards/no-network.test.ts` pins both halves: the
- *   package must appear in this file and nowhere else, and a static import of it must
- *   go red.
+ * - **The adapter is never in smelt's import graph.** {@link RERANK_VOYAGE_PACKAGE} is
+ *   a *value*, owned by `net/policy.ts` where Law 1 is written down, and the `import()`
+ *   below takes that value rather than a literal — so the zero-network walk (which
+ *   follows literal specifiers) sees data, not an edge, and the guard's ruling
+ *   classifies any import of that name as *forbidden*. That is the honest arrangement
+ *   rather than a hidden one, and `test/guards/no-network.test.ts` pins both halves
+ *   with mutations: a static import of the package must go red, and so must spelling
+ *   the `import()` below with a literal.
  * - **Every refusal names the thing to fix.** A missing module names the path a config
  *   line points at; a missing package names the install command; a missing key names
  *   the *variable*, never its value; a missing `topK` names the key. None of them
@@ -35,14 +37,6 @@ import type { SmeltConfigRerank } from '../cli/config.ts';
  * the reason every seam in this repository takes its inputs: the front doors pass their
  * own env, and a test passes a literal.
  */
-
-/**
- * The opt-in adapter package, as a value.
- *
- * Spelled once, here. It is a computed specifier on purpose — see the module docblock —
- * and the guard holds it to being the only occurrence in `src`.
- */
-export const VOYAGE_PACKAGE = '@smeltjs/rerank-voyage';
 
 /** What a front door hands this module: the block, where it was written, and the env. */
 export interface RerankLoad {
@@ -160,12 +154,12 @@ async function loadVoyageStage(
 
   let module: VoyageModule;
   try {
-    module = (await import(VOYAGE_PACKAGE)) as VoyageModule;
+    module = (await import(RERANK_VOYAGE_PACKAGE)) as VoyageModule;
   } catch (cause) {
     throw usage(
-      `install ${VOYAGE_PACKAGE} to use rerank.kind "voyage" — it is not a dependency of ` +
+      `install ${RERANK_VOYAGE_PACKAGE} to use rerank.kind "voyage" — it is not a dependency of ` +
         `@smeltjs/core and never will be, because a bundled adapter would put a network ` +
-        `client in smelt's own import graph. \`npm install ${VOYAGE_PACKAGE}\`. ` +
+        `client in smelt's own import graph. \`npm install ${RERANK_VOYAGE_PACKAGE}\`. ` +
         `(${cause instanceof Error ? cause.message : String(cause)})`,
     );
   }

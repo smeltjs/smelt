@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
+import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
 import { DEFAULT_STRATEGY, STRATEGIES } from '../plan/planners.ts';
 import type { Strategy } from '../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../plan/structural.ts';
@@ -24,7 +25,6 @@ import type {
   SmeltConfigRerank,
   SmeltConfigStore,
 } from './config.ts';
-import { VOYAGE_PACKAGE } from '../rerank/load.ts';
 
 /**
  * `smelt init` — the setup wizard.
@@ -558,7 +558,7 @@ async function stepRerank(
       `  1. none\n` +
       `  2. module  — generate ${RERANK_STUB_FILE}, a typed stub you fill in, and point ` +
       `${CONFIG_FILE_NAME} at it\n` +
-      `  3. voyage  — use ${VOYAGE_PACKAGE}, which you install; the key is read from ` +
+      `  3. voyage  — use ${RERANK_VOYAGE_PACKAGE}, which you install; the key is read from ` +
       `${VOYAGE_DEFAULT_KEY_ENV} and never written here\n` +
       (exists ? `(${RERANK_STUB_FILE} already exists; it is never deleted from here.)\n` : ``),
   );
@@ -644,7 +644,7 @@ async function confirmAndWrite(
     // read and never written.
     io.output(
       `\nThe voyage reranker needs two things this wizard will not do for you:\n` +
-        `  npm install ${VOYAGE_PACKAGE}\n` +
+        `  npm install ${RERANK_VOYAGE_PACKAGE}\n` +
         `  export ${VOYAGE_DEFAULT_KEY_ENV}=...   (smelt reads the variable, never stores the key)\n` +
         `Until both are in place, a run that would rerank refuses and says which is missing.\n` +
         `\`${CLI_NAME} doctor\` reports whether ${VOYAGE_DEFAULT_KEY_ENV} is set.\n`,

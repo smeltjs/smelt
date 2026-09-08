@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertNoNetwork,
+  importSpecifiers,
   readManifest,
   walkImportGraph,
   type Classification,
@@ -16,10 +17,12 @@ import {
   FORBIDDEN_GLOBALS,
   FORBIDDEN_NODE_MODULES,
   FORBIDDEN_PACKAGES,
+  OPT_IN_RERANK_PACKAGES,
+  RERANK_VOYAGE_PACKAGE,
 } from '@guard/net/policy';
 
 import type { GuardMutation } from './_mutations.ts';
-import { guardSrcRoot, packageRoot } from './_source.ts';
+import { allSourceFiles, guardSrcRoot, packageRoot, readSource } from './_source.ts';
 
 /**
  * ZERO-NETWORK GUARD — Law 1.
@@ -59,6 +62,25 @@ function classify(edge: Edge): Classification {
   }
   if (FORBIDDEN_PACKAGES.includes(specifier)) {
     return { kind: 'forbidden', why: `"${specifier}" is an HTTP/WebSocket client` };
+  }
+  // The opt-in rerank bucket (ADR-0004). smelt may know these packages' names — they
+  // are *data* in `net/policy.ts`, handed to `import()` by `rerank/load.ts` when a
+  // consumer's own config asks for one — and may never depend on them. So the name is
+  // forbidden as an *edge*, which is a stronger statement than leaving it
+  // unclassified: an unclassified import says "nobody has decided about this", and
+  // this one is decided.
+  if (
+    OPT_IN_RERANK_PACKAGES.some((name) => specifier === name || specifier.startsWith(`${name}/`))
+  ) {
+    return {
+      kind: 'forbidden',
+      why:
+        `"${specifier}" is an opt-in rerank adapter and it reaches the network. It is ` +
+        `loaded at runtime by a computed specifier when a consumer's own smelt.config.json ` +
+        `asks for it, and imported by nothing — see OPT_IN_RERANK_PACKAGES in ` +
+        `src/net/policy.ts. An import of it would put a network client in the default ` +
+        `graph, which is the whole thing ADR-0004 did not reopen.`,
+    };
   }
   if (ALLOWED_NODE_BUILTINS.includes(specifier)) return { kind: 'allowed-builtin' };
   if (ALLOWED_PACKAGES.includes(specifier)) return { kind: 'allowed-package' };
@@ -114,6 +136,36 @@ describe('Law 1 — zero network', () => {
     ).toEqual([]);
   });
 
+  it('never imports an opt-in rerank adapter, and rules that it may not', () => {
+    // Two halves, and the guard needs both. The *ruling*: any spelling of the name is
+    // forbidden, so the mutations below have something to go red against — asserted
+    // directly, because a walk with no such edge in it proves nothing about what the
+    // ruling would say. The *fact*: the walk found no such edge.
+    for (const name of OPT_IN_RERANK_PACKAGES) {
+      expect(classify({ from: 'index.ts', specifier: name }).kind).toBe('forbidden');
+      expect(classify({ from: 'index.ts', specifier: `${name}/sub.js` }).kind).toBe('forbidden');
+    }
+    expect(OPT_IN_RERANK_PACKAGES).toContain(RERANK_VOYAGE_PACKAGE);
+    expect(ALLOWED_PACKAGES).not.toContain(RERANK_VOYAGE_PACKAGE);
+
+    // Every file, not only the walked ones, and every import spelling the walker knows
+    // — including `import('literal')`, which is exactly what `rerank/load.ts` must not
+    // become. A computed specifier is not an import; a literal one is.
+    const importers = allSourceFiles().filter((file) =>
+      importSpecifiers(readSource(file)).some((specifier) =>
+        OPT_IN_RERANK_PACKAGES.some(
+          (name) => specifier === name || specifier.startsWith(`${name}/`),
+        ),
+      ),
+    );
+    expect(
+      importers,
+      'an opt-in rerank adapter is imported by name. It reaches the network; smelt does ' +
+        'not. Load it through the constant in src/net/policy.ts, which `import()` takes ' +
+        'as a value — or accept that this package now depends on a network client.',
+    ).toEqual([]);
+  });
+
   it('refuses a remote resource path', () => {
     expect(ALLOWED_URL_SCHEMES).toEqual(['file:']);
     expect(() => assertLocalResource('https://example.invalid/tree-sitter-rust.wasm')).toThrow(
@@ -132,6 +184,20 @@ describe('Law 1 — zero network', () => {
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'law1-opt-in-reranker-statically-imported',
+    file: 'stages.ts',
+    find: "import { NotImplementedError } from './errors.ts';",
+    replace: "import '@smeltjs/rerank-voyage';\nimport { NotImplementedError } from './errors.ts';",
+    why: 'the opt-in rerank adapter imported into the default graph — the package exists precisely because it reaches the network, so an edge to it makes "zero network" false for every consumer who never wrote a rerank block',
+  },
+  {
+    id: 'law1-opt-in-reranker-import-spelled-literally',
+    file: 'rerank/load.ts',
+    find: 'await import(RERANK_VOYAGE_PACKAGE)',
+    replace: "await import('@smeltjs/rerank-voyage')",
+    why: 'the loader spelling its dynamic import with a literal instead of the policy constant — behaviourally identical, and the difference is the entire honesty of the arrangement: a literal is an edge the walk follows and a bundler resolves, so the adapter would be back in the graph while nothing about the running code changed',
+  },
   {
     id: 'law1-node-https-import',
     file: 'plan/lexical.ts',

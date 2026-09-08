@@ -13,6 +13,7 @@ import {
   FORBIDDEN_GLOBALS,
   FORBIDDEN_NODE_MODULES,
   FORBIDDEN_PACKAGES,
+  OPT_IN_RERANK_PACKAGES,
 } from '@smeltjs/core';
 
 import type { GuardMutation } from './_mutations.ts';
@@ -86,6 +87,23 @@ function classify(edge: Edge): Classification {
         `Allowed: ${ALLOWED_SDK_SUBPATHS.join(', ')}.`,
     };
   }
+  // The opt-in rerank bucket, imported from the core's policy module so the two
+  // packages cannot drift on which adapters are network-reaching. This server offers
+  // reranking through `smelt_file` and still imports no adapter: it hands the config
+  // block to the core's `loadRerankStage`, which loads by computed specifier. So the
+  // name is forbidden here for the same reason and with the same force.
+  if (
+    OPT_IN_RERANK_PACKAGES.some((name) => specifier === name || specifier.startsWith(`${name}/`))
+  ) {
+    return {
+      kind: 'forbidden',
+      why:
+        `"${specifier}" is an opt-in rerank adapter and it reaches the network. This ` +
+        `server reranks by asking @smeltjs/core to load one from the consumer's own ` +
+        `config; it imports none, and an edge here would put a network client in a ` +
+        `stdio-local server's graph.`,
+    };
+  }
   if (specifier === '@smeltjs/core') return { kind: 'allowed-package' };
   if (ALLOWED_MCP_BUILTINS.includes(specifier)) return { kind: 'allowed-builtin' };
   return { kind: 'unclassified' };
@@ -149,6 +167,13 @@ describe('Law 1 for @smeltjs/mcp — zero network, stdio-local', () => {
  * `scripts/mutate.mjs`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'mcp-law1-opt-in-reranker-statically-imported',
+    file: 'store.ts',
+    find: "import { dirname } from 'node:path';",
+    replace: "import '@smeltjs/rerank-voyage';\nimport { dirname } from 'node:path';",
+    why: 'the opt-in rerank adapter imported into the stdio-local server — the server reranks by asking the core to load one from the consumer\u2019s config, so an edge here is a network client this package never vetted and a second, silent way for one to arrive',
+  },
   {
     id: 'mcp-law1-node-https-import',
     file: 'server.ts',

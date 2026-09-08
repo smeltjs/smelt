@@ -52,9 +52,14 @@ function scratch(label: string): string {
   return mkdtempSync(join(tmpdir(), `smelt-doctor-${label}-`));
 }
 
-function doctor(cwd: string, version: string, json = true): { code: number; stdout: string } {
+function doctor(
+  cwd: string,
+  version: string,
+  json = true,
+  env: Readonly<Record<string, string | undefined>> = {},
+): { code: number; stdout: string } {
   let stdout = '';
-  const code = runDoctor({ json }, { output: (text) => void (stdout += text), cwd, version });
+  const code = runDoctor({ json }, { output: (text) => void (stdout += text), cwd, version, env });
   return { code, stdout };
 }
 
@@ -208,6 +213,52 @@ describe('smelt doctor reads installed state back', () => {
       const second = doctor(cwd, '9.9.9');
       const parsed = receiptOf(second.stdout);
       expect(parsed.orphans.join('\n')).toContain('store directory');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the rerank opt-in, and whether its key variable is set — presence only', () => {
+    // The one config key that can make a smelt run talk to another machine, so
+    // "is that on here, and does it have what it needs?" must be answerable without
+    // running anything. And a doctor report is a thing people paste into issues: the
+    // variable is named, its *value* is never read into the receipt or the prose.
+    const cwd = scratch('opt-in');
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          defaultBudgetBytes: 4000,
+          rerank: { kind: 'voyage', model: 'rerank-2.5', apiKeyEnv: 'VOYAGE_API_KEY', topK: 8 },
+        })}\n`,
+      );
+
+      const missing = doctor(cwd, '9.9.9', false, {});
+      expect(missing.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY missing');
+      expect(receiptOf(doctor(cwd, '9.9.9', true, {}).stdout).rerank).toEqual({
+        kind: 'voyage',
+        adapter: 'voyage/rerank-2.5',
+        keyEnv: 'VOYAGE_API_KEY',
+        keySet: false,
+      });
+
+      const present = doctor(cwd, '9.9.9', false, { VOYAGE_API_KEY: 'sk-super-secret' });
+      expect(present.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY set');
+      expect(present.stdout).not.toContain('sk-super-secret');
+      const receipt = receiptOf(
+        doctor(cwd, '9.9.9', true, { VOYAGE_API_KEY: 'sk-super-secret' }).stdout,
+      );
+      expect(receipt.rerank?.keySet).toBe(true);
+      expect(JSON.stringify(receipt)).not.toContain('sk-super-secret');
+
+      // And absent means absent: no key, no line, no receipt field.
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({ smeltConfig: 1, defaultBudgetBytes: 4000 })}\n`,
+      );
+      expect(doctor(cwd, '9.9.9', false).stdout).not.toContain('rerank');
+      expect(receiptOf(doctor(cwd, '9.9.9').stdout).rerank).toBeUndefined();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -403,5 +454,13 @@ export const MUTATIONS: GuardMutation[] = [
     find: '/<!-- smelt:hooks written-by @smeltjs\\/core (\\d+\\.\\d+\\.\\d+)(?:[-+][^>]*)? -->/u',
     replace: '/<!-- never-matches -->/u',
     why: 'the reader forgetting the writer\u2019s format — write and read are two ends of one fact, and a reader that matches nothing reports every stamped block as unversioned',
+  },
+  {
+    kind: 'src',
+    id: 'doctor-prints-the-rerank-key-instead-of-its-presence',
+    file: 'cli/doctor.ts',
+    find: "    keySet: key !== undefined && key !== '',",
+    replace: '    keySet: key as unknown as boolean,',
+    why: 'the API key itself reaching the receipt in place of a boolean — a doctor report is a thing people paste into issue trackers, and the presence-only rule is the only thing between a config opt-in and a leaked key',
   },
 ];

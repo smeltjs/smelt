@@ -29,6 +29,8 @@ export {
   FORBIDDEN_GLOBALS,
   FORBIDDEN_NODE_MODULES,
   FORBIDDEN_PACKAGES,
+  OPT_IN_RERANK_PACKAGES,
+  RERANK_VOYAGE_PACKAGE,
 } from './net/policy.ts';
 export type { LocalResource } from './net/policy.ts';
 export { clearGrammarCache, grammarPath, loadGrammar, WASM_BY_LANGUAGE } from './plan/grammar.ts';
@@ -52,7 +54,7 @@ export {
   RETRIEVE_BATCH_TOOL_NAME,
   RETRIEVE_TOOL_NAME,
 } from './retrieve.ts';
-export { loadRerankStage, VOYAGE_PACKAGE } from './rerank/load.ts';
+export { loadRerankStage } from './rerank/load.ts';
 export type { RerankLoad } from './rerank/load.ts';
 export { applyRerank } from './rerank/protect.ts';
 export type { RerankOutcome, RerankRequest } from './rerank/protect.ts';

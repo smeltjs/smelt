@@ -51,6 +51,7 @@ const FULL: SmeltConfig = {
   store: { kind: 'directory', path: '.smelt/store' },
   hooks: { thresholdBytes: 2048, enforcement: 'rewrite' },
   agents: { budgetBytes: 2000 },
+  rerank: { kind: 'voyage', model: 'rerank-2.5', apiKeyEnv: 'VOYAGE_API_KEY', topK: 8 },
 };
 
 /** Every shape a config can take, one field at a time and all of them at once. */
@@ -69,6 +70,18 @@ const CONFIGS: readonly (readonly [string, SmeltConfig])[] = [
   ['hooks enforcement only', { smeltConfig: CONFIG_VERSION, hooks: { enforcement: 'deny' } }],
   ['empty agents block', { smeltConfig: CONFIG_VERSION, agents: {} }],
   ['agents budget only', { smeltConfig: CONFIG_VERSION, agents: { budgetBytes: 1 } }],
+  [
+    'rerank module',
+    { smeltConfig: CONFIG_VERSION, rerank: { kind: 'module', path: './smelt.rerank.ts' } },
+  ],
+  ['rerank voyage, defaults left out', { smeltConfig: CONFIG_VERSION, rerank: { kind: 'voyage' } }],
+  [
+    'rerank voyage, every field',
+    {
+      smeltConfig: CONFIG_VERSION,
+      rerank: { kind: 'voyage', model: 'rerank-2.5-lite', apiKeyEnv: 'MY_KEY', topK: 32 },
+    },
+  ],
   ['every field', FULL],
 ];
 
@@ -110,10 +123,12 @@ describe('config.ts owns both directions: parseConfig(renderConfig(c)) === c', (
       'store',
       'hooks',
       'agents',
+      'rerank',
     ]);
     // The same fields handed over in a different order still render identically:
     // the writer imposes the order, callers do not carry it.
     const shuffled: SmeltConfig = {
+      rerank: { kind: 'voyage', model: 'rerank-2.5', apiKeyEnv: 'VOYAGE_API_KEY', topK: 8 },
       agents: { budgetBytes: 2000 },
       hooks: { enforcement: 'rewrite', thresholdBytes: 2048 },
       store: { kind: 'directory', path: '.smelt/store' },
@@ -200,5 +215,12 @@ export const MUTATIONS: GuardMutation[] = [
     find: 'PLANNERS[config.strategy ?? DEFAULT_STRATEGY](config)',
     replace: "PLANNERS[config.strategy ?? 'structural'](config)",
     why: 'a call site defaults to something other than DEFAULT_STRATEGY — the constant and what a caller who names no strategy actually gets have come apart, which is exactly the drift the four hand-typed copies used to allow',
+  },
+  {
+    id: 'config-writer-rerank-block-write-only',
+    file: 'cli/config.ts',
+    find: '    ...(config.rerank === undefined ? {} : { rerank: renderRerank(config.rerank) }),\n',
+    replace: '',
+    why: 'the writer stops emitting the one key that can send a caller\u2019s source to a third party — `smelt init` would report writing a reranker, the file would carry none, and the totality leg (which reads the key set out of the reader\u2019s own refusal) is what notices without anyone remembering to update this guard',
   },
 ];
