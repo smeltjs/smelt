@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
-import { nodeCommand, portablePath, shimScriptPath, smeltBinPath } from '../harness/paths.ts';
+import {
+  guardCoreScriptPath,
+  nodeCommand,
+  portablePath,
+  shimScriptPath,
+  smeltBinPath,
+} from '../harness/paths.ts';
 import { hasShim, TIER_HONESTY } from '../harness/profile.ts';
 import type {
   HarnessInstallContext,
@@ -29,7 +35,7 @@ import {
 } from '../harness/snippet.ts';
 import { DEFAULT_SUGGESTION_BUDGET_BYTES, DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import type { EnforcementMode } from '../hooks/guard-core.ts';
-import { smeltInvocation } from '../hooks/invocation.ts';
+import { pathStability, smeltInvocation } from '../hooks/invocation.ts';
 import type { SmeltInvocation } from '../hooks/invocation.ts';
 import {
   editJsonProperty,
@@ -146,14 +152,14 @@ function commandEntry(matcher: string | undefined, command: string): unknown {
  * @throws {Error} when a profile declares a JSON hook file but ships no shim — a
  *   registry bug, pinned by `test/guards/harness-registry.test.ts`, not a user error.
  */
-function shimCommand(profile: HarnessProfile, cwd: string): string {
+function shimCommand(profile: HarnessProfile, cwd: string, distDir?: string): string {
   /* v8 ignore next 5 -- unreachable: pinned by the harness-registry guard */
   if (!hasShim(profile)) {
     throw new Error(
       `smelt: harness "${profile.id}" wires a hook command but ships no shim script.`,
     );
   }
-  return nodeCommand(cwd, shimScriptPath(profile));
+  return nodeCommand(cwd, shimScriptPath(profile, distDir));
 }
 
 /**
@@ -363,6 +369,13 @@ export interface HooksChoices {
    * is what lets a test see both spellings of a lifecycle hook without a global PATH.
    */
   invocation?: SmeltInvocation;
+  /**
+   * The package `dist` the shim and guard-core paths are named under. Defaults to
+   * this install's own; a caller passes one to plan for a layout that is not the
+   * running one — which is how the stability reporting below is exercised without a
+   * Homebrew machine.
+   */
+  distDir?: string;
 }
 
 interface InstallPlan {
@@ -397,15 +410,29 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   const skipped: SkippedFile[] = [];
   const notes: string[] = [];
 
-  // Every command this plan writes down has to still work tomorrow. Where it cannot
-  // promise that — a versioned Homebrew keg with no `opt` alias resolving to it — the
-  // plan says so out loud rather than writing a path that dies at the next upgrade.
+  // Every path this plan writes down has to still be there tomorrow. The verdict is
+  // taken per **script actually named** — the guard shim, the guard core the opencode
+  // plugin imports, and the CLI binary the lifecycle hooks run — never from the
+  // invocation value: that one is stable whenever `smelt` is on PATH, and an earlier
+  // cut of this reported the lifecycle hooks fine while writing the guard hook, the
+  // security-relevant one, as a bare Cellar path with nothing said.
   const invocation = choices.invocation ?? smeltInvocation();
-  if (!invocation.stable) {
+  const written: string[] = [];
+  if (invocation.script !== undefined) written.push(invocation.script);
+  for (const profile of choices.harnesses) {
+    if (hasShim(profile)) written.push(shimScriptPath(profile, choices.distDir));
+    else written.push(guardCoreScriptPath(choices.distDir));
+  }
+  const said = new Set<string>();
+  for (const script of written) {
+    const stability = pathStability(script);
+    if (stability.stable || said.has(stability.why)) continue;
+    said.add(stability.why);
     notes.push(
-      `hook command uses an unstable path (${invocation.why}) — re-run setup after upgrading`,
+      `hook command uses an unstable path (${stability.why}) — re-run setup after upgrading`,
     );
   }
+  if (invocation.caveat !== undefined) notes.push(invocation.caveat);
 
   /**
    * A step's base text: the previous step's planned output for this same path when
@@ -446,6 +473,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     lintOnStart: choices.lintOnStart,
     thresholdBytes: choices.thresholdBytes,
     budgetBytes,
+    ...(choices.distDir === undefined ? {} : { distDir: choices.distDir }),
   };
   const snippet = instructionSnippet(choices.thresholdBytes, budgetBytes, choices.writtenBy);
 
@@ -497,7 +525,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
         case 'json-hooks':
           planJsonHooks(
             step.file,
-            jsonHookEvents(step, ctx, shimCommand(profile, cwd), invocation),
+            jsonHookEvents(step, ctx, shimCommand(profile, cwd, choices.distDir), invocation),
             step.shape ?? {},
           );
           break;

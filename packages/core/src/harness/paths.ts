@@ -21,18 +21,18 @@ import type { ShimmedHarnessProfile } from './profile.ts';
  * shim script on disk: a path for a harness that ships none would name a file the
  * build never produced.
  */
-export function shimScriptPath(profile: ShimmedHarnessProfile): string {
-  return stableShimPath(profile.id);
+export function shimScriptPath(profile: ShimmedHarnessProfile, distDir?: string): string {
+  return distDir === undefined ? stableShimPath(profile.id) : stableShimPath(profile.id, distDir);
 }
 
 /** The guard core as a module: what the opencode plugin imports at hook time. */
-export function guardCoreScriptPath(): string {
-  return stableGuardCorePath();
+export function guardCoreScriptPath(distDir?: string): string {
+  return distDir === undefined ? stableGuardCorePath() : stableGuardCorePath(distDir);
 }
 
 /** The `smelt` binary — quoted into the stats and map hook commands. */
-export function smeltBinPath(): string {
-  return stableBinPath();
+export function smeltBinPath(distDir?: string): string {
+  return distDir === undefined ? stableBinPath() : stableBinPath(distDir);
 }
 
 /** Inside the project, a project-relative path travels with the repo; outside, absolute. */

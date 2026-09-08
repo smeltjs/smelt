@@ -33,7 +33,7 @@ function clineHookSource(ctx: HarnessInstallContext): string {
 # smelt:hooks v1 — Cline PreToolUse hook. EXPERIMENTAL tier: schema mapped from the
 # capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, Cline row),
 # not yet smoke-tested against the real binary. Written by \`smelt hooks install\`.
-exec ${nodeCommand(ctx.cwd, shimScriptPath(cline))}
+exec ${nodeCommand(ctx.cwd, shimScriptPath(cline, ctx.distDir))}
 `;
 }
 

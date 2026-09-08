@@ -110,14 +110,28 @@ codebase-design glossary.
   prints. It owns three facts nobody else may re-derive: `isSameFile` (realpath both
   sides — node realpaths the ESM main entry, so `isMainModule`'s old string compare said
   "not main" through any symlink and the guard exited 0 with empty stdout, which every
-  harness schema reads as _allow_); `stableScriptPath` (a Homebrew keg path rewritten to
-  the `<prefix>/opt/<name>` alias when that alias resolves to this keg — `brew upgrade`
-  deletes the keg, and the prefix is derived from the path, never hard-coded); and
-  `smeltOnPath` (a stat per PATH directory, never a spawn). It imports **node builtins
-  only**, like its sibling `guard-core.ts`, which reads it — and reads it _lazily_, when
-  a deny reason is rendered rather than at module load, so the command reflects the
+  harness schema reads as _allow_); `pathStability` (below); and `smeltOnPath` (a stat
+  per PATH directory, never a spawn). Rung 1 also carries a `caveat` when the `smelt` it
+  found does not realpath to this install's own bin — the ranking does not move, but a
+  machine with two smelts must not look like a machine with one. It imports **node
+  builtins only**, like its sibling `guard-core.ts`, which reads it — and reads it
+  _lazily_, when a deny reason is rendered rather than at module load (memoised per
+  process, the memo bypassed by any injected call), so the command reflects the
   environment the hook actually runs in and a test can inject `env` and `fs` instead of
   the real machine. `harness/paths.ts` keeps its exported names and delegates.
+- **PathStability** (`pathStability(path)` in `src/hooks/invocation.ts`): the verdict on
+  one path smelt is about to write into somebody else's config file — `{ path, stable,
+why }`, where `path` is the spelling to write. It is asked **per script actually
+  named** — the guard shim, the guard core the opencode plugin imports, `cli/bin.js` —
+  never of the invocation value, which is stable whenever `smelt` is on PATH: judging
+  the value reported the lifecycle hooks fine while writing the guard hook, the
+  security-relevant one, as a bare Cellar path with nothing said. Unstable means a
+  recognised **version-bearing segment**: a Homebrew keg with no `opt` alias resolving to
+  it, a `/.pnpm/<name>@<version>/` store entry, a `/versions/node/<v>/` tree. Stable is
+  deliberately the weaker claim — nothing here can know a packaging manager's policy, so
+  the `why` says "nothing here proves an upgrade moves it — nor that it keeps it" and
+  never that anything is replaced in place. `smelt hooks install` and `smelt setup`
+  print the unstable ones (`smelt.setup.v1`'s optional `notes`).
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
   bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
   built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from

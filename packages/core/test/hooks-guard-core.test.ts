@@ -15,8 +15,10 @@ import {
   searchPattern,
   shellQuote,
   simpleCommandWords,
+  smeltCliCommand,
 } from '../src/hooks/guard-core.ts';
 import type { GuardSettings } from '../src/hooks/guard-core.ts';
+import type { InvocationFs } from '../src/hooks/invocation.ts';
 import { parseConfig } from '../src/cli/config.ts';
 import { renderConfigWithHooks } from '../src/cli/hooks.ts';
 import { packageRoot } from './guards/_source.ts';
@@ -379,6 +381,42 @@ describe('parseGuardRequest', () => {
     expect(parseGuardRequest('{"tool":1,"input":{}}')).toBeUndefined();
     expect(parseGuardRequest('{"tool":"Read"}')).toBeUndefined();
     expect(parseGuardRequest('{"tool":"Read","input":{"path":5}}')).toBeUndefined();
+  });
+});
+
+describe('smeltCliCommand — the command a deny reason quotes', () => {
+  /** A machine with an executable `smelt` in one PATH directory, and nothing else. */
+  const withSmelt: InvocationFs = {
+    existsSync: () => false,
+    realpathSync: (path) => path,
+    statSync: (path) => {
+      if (path !== '/fake/bin/smelt') throw new Error('ENOENT');
+      return { isFile: () => true, mode: 0o755 };
+    },
+  };
+  const withoutSmelt: InvocationFs = {
+    existsSync: () => false,
+    realpathSync: (path) => path,
+    statSync: () => {
+      throw new Error('ENOENT');
+    },
+  };
+
+  it('names the bare `smelt` where one is on PATH, and node the sibling bin where none is', () => {
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withSmelt })).toBe('smelt');
+    // From the source tree the sibling cli/bin.js does not exist, so the last-resort
+    // bare name is what remains — the built tree is covered by the dist cases below.
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withoutSmelt })).toBe('smelt');
+  });
+
+  it('memoises the uninjected answer, and an injected call neither reads nor writes it', () => {
+    // One rendered deny reason asks three times; the answer cannot change inside a
+    // hook process. What must not happen is a fixture leaking into the memo (or the
+    // memo answering a fixture), which is what the second half pins.
+    const first = smeltCliCommand();
+    expect(smeltCliCommand()).toBe(first);
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withSmelt })).toBe('smelt');
+    expect(smeltCliCommand(), 'the injected call must not have overwritten the memo').toBe(first);
   });
 });
 

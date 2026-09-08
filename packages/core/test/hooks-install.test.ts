@@ -444,9 +444,18 @@ describe('the lifecycle hooks take the invocation this machine has', () => {
     stable: true,
     why: 'test fixture',
   };
-  const KEG = '/opt/homebrew/Cellar/smelt/0.6.0/libexec/lib/node_modules/@smeltjs/core/dist';
+  /**
+   * A keg under a prefix that does not exist, so `<prefix>/opt/smelt` cannot resolve
+   * to it on any machine — the "unstable" verdict without a Homebrew fixture, and
+   * without the developer's own `/opt/homebrew/opt/smelt` deciding the outcome.
+   */
+  const BROKEN_KEG_DIST =
+    '/opt/nonexistent-brew/Cellar/smelt/0.0.0-fixture/libexec/lib/node_modules/@smeltjs/core/dist';
 
-  function planWith(invocation: SmeltInvocation): {
+  function planWith(
+    invocation: SmeltInvocation,
+    distDir?: string,
+  ): {
     settings: string;
     notes: readonly string[];
   } {
@@ -459,6 +468,7 @@ describe('the lifecycle hooks take the invocation this machine has', () => {
       enforcement: 'deny',
       thresholdBytes: 8192,
       invocation,
+      ...(distDir === undefined ? {} : { distDir }),
     });
     const settings = plan.files.find((file) => file.name === '.claude/settings.json');
     expect(settings, 'the claude-code plan must write .claude/settings.json').toBeDefined();
@@ -489,15 +499,36 @@ describe('the lifecycle hooks take the invocation this machine has', () => {
   it('an unstable path is written *and said out loud* — the plan never hides it', () => {
     const { settings, notes } = planWith({
       kind: 'node',
-      command: `node "${KEG}/cli/bin.js"`,
-      script: `${KEG}/cli/bin.js`,
-      bin: `${KEG}/cli/bin.js`,
+      command: `node "${BROKEN_KEG_DIST}/cli/bin.js"`,
+      script: `${BROKEN_KEG_DIST}/cli/bin.js`,
+      bin: `${BROKEN_KEG_DIST}/cli/bin.js`,
       stable: false,
       why: 'a versioned path that the next upgrade deletes',
     });
     expect(settings).toContain('/Cellar/');
     expect(notes.join('\n')).toContain('hook command uses an unstable path');
     expect(notes.join('\n')).toContain('re-run setup after upgrading');
+  });
+
+  it('the guard shim path is judged on its own, not on the invocation value', () => {
+    // The defect this case exists for: `stable` is true whenever `smelt` is on PATH,
+    // so judging the *invocation* left the guard hook — the security-relevant one —
+    // written as a bare keg path with nothing said about it.
+    const { settings, notes } = planWith(ON_PATH, BROKEN_KEG_DIST);
+    expect(ON_PATH.stable, 'the invocation itself is stable — that is the trap').toBe(true);
+    expect(settings).toContain('/opt/nonexistent-brew/Cellar/smelt/0.0.0-fixture/');
+    expect(notes.join('\n')).toContain('hook command uses an unstable path');
+    expect(notes.join('\n')).toContain('re-run setup after upgrading');
+    // And the stable case stays quiet: no note invented for an ordinary install.
+    expect(planWith(ON_PATH).notes.join('\n')).not.toContain('unstable path');
+  });
+
+  it('a PATH `smelt` that is not this install is written down as a note', () => {
+    const { notes } = planWith({
+      ...ON_PATH,
+      caveat: 'the `smelt` on PATH (/usr/local/bin/smelt) does not resolve to this install',
+    });
+    expect(notes.join('\n')).toContain('does not resolve to this install');
   });
 
   it('presetToggles reads its own toggles back from both spellings', () => {

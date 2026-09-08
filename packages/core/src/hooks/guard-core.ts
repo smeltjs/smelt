@@ -21,6 +21,7 @@ export {
 } from './focus-terms.ts';
 export {
   isSameFile,
+  pathStability,
   smeltInvocation,
   smeltOnPath,
   stableBinPath,
@@ -28,7 +29,12 @@ export {
   stableScriptPath,
   stableShimPath,
 } from './invocation.ts';
-export type { InvocationFs, SmeltInvocation, SmeltInvocationOptions } from './invocation.ts';
+export type {
+  InvocationFs,
+  PathStability,
+  SmeltInvocation,
+  SmeltInvocationOptions,
+} from './invocation.ts';
 
 /**
  * The guard core — one zero-dependency node module, shared by every harness shim.
@@ -104,8 +110,27 @@ export const GUARD_CONFIG_FILE_NAME = 'smelt.config.json';
  * machine's PATH, and pinned an answer taken before the process knew its own
  * environment. Every call site here is on the deny path — the allow case is still a
  * stat and an exit.
+ *
+ * **Memoised for the process, lazily.** One rendered deny reason asks three times
+ * (the replacement, the retrieve sentence spliced into it, and the rewrite wrap), and
+ * each ask is a stat per PATH directory. The answer cannot change inside one hook
+ * process, so the first call pays and the rest read. An *injected* call — a test
+ * handing over `env`, `fs` or `distDir` — never reads or writes the memo, because a
+ * cache shared between the real machine and a fixture is a test that passes for the
+ * wrong reason.
  */
+let memoisedCliCommand: string | undefined;
+
 export function smeltCliCommand(options: SmeltInvocationOptions = {}): string {
+  const injected =
+    options.env !== undefined || options.fs !== undefined || options.distDir !== undefined;
+  if (!injected && memoisedCliCommand !== undefined) return memoisedCliCommand;
+  const command = deriveSmeltCliCommand(options);
+  if (!injected) memoisedCliCommand = command;
+  return command;
+}
+
+function deriveSmeltCliCommand(options: SmeltInvocationOptions): string {
   const onPath = smeltOnPath(options.env, options.fs);
   if (onPath !== undefined) return 'smelt';
   try {
