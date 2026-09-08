@@ -6,6 +6,7 @@ import type { SmeltConfig } from './config.ts';
 import { jsonHooksContainOurs } from './hooks.ts';
 import { GUARD_ONLY_FILES, HARNESS_PROFILES, JSON_HOOK_FILES } from '../harness/registry.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
+import { hasTomlEntry } from '../text/toml-edit.ts';
 
 /**
  * The one reader of InstalledState (CONTEXT.md): everything smelt has written to a
@@ -103,13 +104,16 @@ export function readInstalledState(cwd: string): InstalledState {
   const mcp = new Map<string, InstalledMcp>();
   for (const profile of Object.values(HARNESS_PROFILES)) {
     for (const step of profile.install) {
-      if (step.kind !== 'mcp-registration') continue;
+      if (step.kind !== 'mcp-registration' && step.kind !== 'toml-mcp-registration') continue;
       const key = `${step.file}·${step.path[1]}`;
       if (mcp.has(key)) continue;
       mcp.set(key, {
         file: step.file,
         server: step.path[1],
-        registered: mcpEntryRegistered(cwd, step.file, step.path),
+        registered:
+          step.kind === 'mcp-registration'
+            ? mcpEntryRegistered(cwd, step.file, step.path)
+            : tomlMcpEntryRegistered(cwd, step.file, step.path),
       });
     }
   }
@@ -150,4 +154,15 @@ function mcpEntryRegistered(cwd: string, file: string, path: readonly [string, s
   } catch {
     return false;
   }
+}
+
+/** {@link mcpEntryRegistered}'s TOML sibling — table form or dotted form, either counts. */
+function tomlMcpEntryRegistered(
+  cwd: string,
+  file: string,
+  path: readonly [string, string],
+): boolean {
+  const full = join(cwd, file);
+  if (!existsSync(full)) return false;
+  return hasTomlEntry(readFileSync(full, 'utf8'), path);
 }

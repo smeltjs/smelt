@@ -46,6 +46,10 @@ treated as 1.0.
 
 ## Wiring it into a harness
 
+`smelt setup` and `smelt hooks install` write this registration automatically for
+Claude Code, opencode, Codex and Grok — JSON or TOML, whichever the harness reads,
+byte-faithfully beside any servers you already registered. The commands below are the
+manual reference: what gets written, and how to wire it by hand into any other client.
 Per-harness mechanisms surveyed against primary sources in
 [`docs/research/2026-09-02-harness-capability-matrix.md`](../../docs/research/2026-09-02-harness-capability-matrix.md);
 each snippet below is labelled with the doc that owns it.
@@ -59,24 +63,27 @@ claude mcp add smelt -- npx @smeltjs/mcp
 ### Codex CLI
 
 `[mcp_servers.<name>]` TOML in `~/.codex/config.toml` — per Codex's config reference
-(<https://developers.openai.com/codex/config-reference>, verified 2026-09-02):
+(<https://developers.openai.com/codex/config-reference>, cross-checked against the
+`McpServerTransportConfig::Stdio` struct in
+[`codex-rs/config/src/mcp_types.rs`](https://github.com/openai/codex/blob/main/codex-rs/config/src/mcp_types.rs),
+verified 2026-09-08):
 
 ```toml
 [mcp_servers.smelt]
 command = "npx"
-args = ["-y", "@smeltjs/mcp"]
+args = ["@smeltjs/mcp"]
 ```
 
 ### Grok CLI
 
 Same TOML dialect, in Grok's settings — per xAI's settings reference
-(<https://docs.x.ai/build/settings/reference>, verified 2026-09-02; official CLI =
+(<https://docs.x.ai/build/settings/reference>, verified 2026-09-08; official CLI =
 `xai-org/grok-build`):
 
 ```toml
 [mcp_servers.smelt]
 command = "npx"
-args = ["-y", "@smeltjs/mcp"]
+args = ["@smeltjs/mcp"]
 ```
 
 Any other MCP client: the server is a plain stdio server — `npx @smeltjs/mcp`, run

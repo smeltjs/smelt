@@ -241,7 +241,8 @@ smelt setup
 ```
 
 `smelt setup` applies the whole recipe: `smelt.config.json`, the hooks preset for the
-harnesses it detects, the MCP registration for Claude Code and opencode, and a real
+harnesses it detects, the MCP registration for Claude Code, opencode, Codex and Grok
+(JSON or TOML, whichever the harness reads), and a real
 smelt → retrieve round trip to prove the loop. Interactive from a terminal — Enter
 accepts every default. Existing files are never overwritten: they are skipped with a
 note, and `smelt hooks install` (below) edits them, asking per file.

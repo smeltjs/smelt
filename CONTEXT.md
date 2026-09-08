@@ -251,8 +251,11 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   number spellings, unknown keys. It knows nothing about harnesses or hooks;
   `cli/hooks.ts` decides _what_ the merged `hooks` value is and hands it over. Under
   `src/text/`, not `cli/`, because it is strings in, strings out — no argv, no stdout,
-  no CLI import — and the next byte-faithful edit (an instruction file) is its sibling,
-  not a CLI detail. `test/guards/json-edit.test.ts` pins the round trip.
+  no CLI import. `test/guards/json-edit.test.ts` pins the round trip. Its sibling,
+  `src/text/toml-edit.ts` (KOT-258), carries the same contract for TOML —
+  `editTomlTable` replaces, inserts or removes one `[a.b]` table, header form or
+  dotted form, for Codex's and Grok's `mcp_servers.<name>` registration —
+  pinned by `test/guards/toml-edit.test.ts`.
 - **Instruction set** (`smelt agents`): the `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` an
   agent loads on **every request**, as `src/agents/instructions.ts` finds them —
   through `RepoReader`, so the walk is injectable and its claims are asserted by

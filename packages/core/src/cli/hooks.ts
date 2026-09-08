@@ -36,6 +36,7 @@ import {
   stripMarkerBlock,
   upsertMarkerBlock,
 } from '../text/json-edit.ts';
+import { editTomlTable } from '../text/toml-edit.ts';
 
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 import {
@@ -376,6 +377,16 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   const skipped: SkippedFile[] = [];
   const notes: string[] = [];
 
+  /**
+   * A step's base text: the previous step's planned output for this same path when
+   * one exists, disk otherwise. Codex's `.codex/config.toml` carries two independent
+   * edits — the `[features]` marker block and the `mcp_servers.smelt` table — and
+   * without this, the second step to touch a shared file would read stale disk bytes
+   * and its `files.set` would silently discard the first step's edit.
+   */
+  const currentContent = (path: string): string | undefined =>
+    files.get(path)?.content ?? readIfExists(path);
+
   // -- smelt.config.json: the guard's runtime settings live here, not in any harness
   // file, so every shim reads one source of truth.
   const configPath = findConfigFile(cwd) ?? join(cwd, CONFIG_FILE_NAME);
@@ -435,8 +446,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     skipWhen?: { readonly contains: string; readonly why: string },
   ): void => {
     const path = join(cwd, name);
-    if (files.has(path)) return; // a shared file (AGENTS.md), already planned
-    const existing = readIfExists(path);
+    const existing = currentContent(path);
     // A file that already carries its owner's version of what this block does is
     // theirs to edit, not ours: say so, and touch nothing.
     if (
@@ -486,6 +496,24 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
             break;
           }
           files.set(join(cwd, step.file), planFile(cwd, step.file, merged));
+          break;
+        }
+        case 'toml-mcp-registration': {
+          // The TOML sibling of 'mcp-registration': table-form or dotted-form, beside
+          // whatever the user already has — via currentContent, so a profile whose
+          // marker-block step already wrote this file (Codex's [features] block) is
+          // edited on top of that plan rather than overwritten by a fresh disk read.
+          const path = join(cwd, step.file);
+          const existing = currentContent(path);
+          const merged = editTomlTable(existing ?? '', step.path, step.entry(ctx));
+          if (merged === undefined) {
+            skipped.push({
+              name: step.file,
+              why: 'the server is already registered both as a table and as dotted keys — fix by hand, then re-run',
+            });
+            break;
+          }
+          files.set(path, planFile(cwd, step.file, merged));
           break;
         }
       }
@@ -554,6 +582,19 @@ export function planRemove(
 ): readonly PlannedRemoval[] {
   const removals = new Map<string, PlannedRemoval>();
 
+  /**
+   * A step's base text for stripping: the previous step's planned removal for this
+   * same path when one exists (its `'delete'` action reads as "nothing left to
+   * strip further"), disk otherwise — `planInstall`'s `currentContent`, mirrored for
+   * the tear-down direction, so Codex's two steps on `.codex/config.toml` compose
+   * instead of the second stripping stale disk bytes and discarding the first.
+   */
+  const currentText = (path: string): string | undefined => {
+    const planned = removals.get(path);
+    if (planned !== undefined) return planned.action === 'delete' ? undefined : planned.content;
+    return readIfExists(path);
+  };
+
   const planJsonStrip = (name: string): void => {
     const path = join(cwd, name);
     const existing = readIfExists(path);
@@ -576,7 +617,7 @@ export function planRemove(
 
   const planBlockStrip = (name: string, start: string, end: string): void => {
     const path = join(cwd, name);
-    const existing = readIfExists(path);
+    const existing = currentText(path);
     if (existing === undefined || !existing.includes(start)) return;
     const stripped = stripMarkerBlock(existing, start, end);
     removals.set(
@@ -602,7 +643,7 @@ export function planRemove(
    */
   const planMcpStrip = (name: string, keys: readonly [string, string]): void => {
     const path = join(cwd, name);
-    const existing = readIfExists(path);
+    const existing = currentText(path);
     if (existing === undefined) return;
     const removed = editJsonProperty(existing, keys, undefined);
     if (removed === undefined || removed === existing) return;
@@ -620,6 +661,21 @@ export function planRemove(
     );
   };
 
+  /** {@link planMcpStrip}'s TOML sibling — the table lifted out, byte-faithfully. */
+  const planTomlMcpStrip = (name: string, keys: readonly [string, string]): void => {
+    const path = join(cwd, name);
+    const existing = currentText(path);
+    if (existing === undefined) return;
+    const removed = editTomlTable(existing, keys, undefined);
+    if (removed === undefined || removed === existing) return;
+    removals.set(
+      path,
+      removed.trim() === ''
+        ? { name, path, action: 'delete' }
+        : { name, path, action: 'modify', content: removed },
+    );
+  };
+
   for (const profile of harnesses) {
     for (const step of profile.install) {
       switch (step.kind) {
@@ -634,6 +690,9 @@ export function planRemove(
           break;
         case 'mcp-registration':
           planMcpStrip(step.file, step.path);
+          break;
+        case 'toml-mcp-registration':
+          planTomlMcpStrip(step.file, step.path);
           break;
       }
     }
