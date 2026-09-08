@@ -1,25 +1,19 @@
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isAbsolute, relative, sep } from 'node:path';
+
+import { stableBinPath, stableGuardCorePath, stableShimPath } from '../hooks/invocation.ts';
 
 import type { ShimmedHarnessProfile } from './profile.ts';
 
 /**
  * Where the scripts a harness config points at actually live, and how a profile names
  * one. Path facts only — nothing here reads or writes a file.
+ *
+ * The script paths themselves are `hooks/invocation.ts`'s, not this file's: "where is
+ * the shipped `dist`" and "which spelling of it survives an upgrade" are the same
+ * fact, and it has to be answerable from the guard's own zero-import module (the deny
+ * reason quotes a command too). What stays here is what only a *writer* needs — the
+ * profile-to-script mapping, and how a config file spells a command.
  */
-
-/**
- * The `dist` directory of this installed package — where the shipped guard core and
- * shim scripts live. Computed from this module's own location, which is
- * `<pkg>/dist/harness/` in every real run (the CLI executes from `dist`); under the
- * test runner it is `<pkg>/src/harness/`, and the substitution still points at `dist`,
- * which is where the scripts will exist once built — the paths are written into config
- * files for *node* to execute, never imported.
- */
-function packageDistDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url)); // <pkg>/(dist|src)/harness
-  return join(dirname(dirname(here)), 'dist');
-}
 
 /**
  * The shim script a harness's hook command runs. Takes a profile rather than an id,
@@ -28,17 +22,17 @@ function packageDistDir(): string {
  * build never produced.
  */
 export function shimScriptPath(profile: ShimmedHarnessProfile): string {
-  return join(packageDistDir(), 'hooks', 'shims', `${profile.id}.js`);
+  return stableShimPath(profile.id);
 }
 
 /** The guard core as a module: what the opencode plugin imports at hook time. */
 export function guardCoreScriptPath(): string {
-  return join(packageDistDir(), 'hooks', 'guard-core.js');
+  return stableGuardCorePath();
 }
 
 /** The `smelt` binary — quoted into the stats and map hook commands. */
 export function smeltBinPath(): string {
-  return join(packageDistDir(), 'cli', 'bin.js');
+  return stableBinPath();
 }
 
 /** Inside the project, a project-relative path travels with the repo; outside, absolute. */

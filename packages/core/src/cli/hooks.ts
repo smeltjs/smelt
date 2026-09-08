@@ -29,6 +29,8 @@ import {
 } from '../harness/snippet.ts';
 import { DEFAULT_SUGGESTION_BUDGET_BYTES, DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import type { EnforcementMode } from '../hooks/guard-core.ts';
+import { smeltInvocation } from '../hooks/invocation.ts';
+import type { SmeltInvocation } from '../hooks/invocation.ts';
 import {
   editJsonProperty,
   editTopLevelProperty,
@@ -155,6 +157,20 @@ function shimCommand(profile: HarnessProfile, cwd: string): string {
 }
 
 /**
+ * A lifecycle hook's command, in whichever spelling this machine can still run after
+ * an upgrade: the bare `smelt` where it is on PATH, `node "<script>"` otherwise.
+ *
+ * The guard hook is deliberately **not** built this way — a shim is a script, not a
+ * bin, and `smelt` has no verb that runs one — which is why only the three lifecycle
+ * commands go through here.
+ */
+function smeltLifecycleCommand(cwd: string, args: string, invocation: SmeltInvocation): string {
+  return invocation.kind === 'path'
+    ? `${invocation.command} ${args}`
+    : nodeCommand(cwd, invocation.script ?? smeltBinPath(), args);
+}
+
+/**
  * One harness's hook entries: the guard under each matcher its schema spells, plus
  * the session-lifecycle hooks for the harnesses whose schema carries them. Every
  * toggle the wizard offers is a key that is present or absent here — an absent key is
@@ -170,20 +186,18 @@ function jsonHookEvents(
   step: HarnessJsonHooks,
   ctx: HarnessInstallContext,
   command: string,
+  invocation: SmeltInvocation,
 ): Record<string, readonly unknown[]> {
   // The trailing shell comment tags the entry as this installer's (see isOursEntry):
-  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary.
-  const stats = `${nodeCommand(ctx.cwd, smeltBinPath(), 'stats')} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const map = `${nodeCommand(
-    ctx.cwd,
-    smeltBinPath(),
+  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary,
+  // and a `smelt <verb>` spelling carries no path at all to recognise.
+  const lifecycle = (args: string): string =>
+    `${smeltLifecycleCommand(ctx.cwd, args, invocation)} 2>/dev/null || true # ${OURS_TOKEN}`;
+  const stats = lifecycle('stats');
+  const map = lifecycle(
     `${MAP_ON_START_ARGS} --budget ${String(ctx.budgetBytes)} --cache .smelt/tags`,
-  )} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const lint = `${nodeCommand(
-    ctx.cwd,
-    smeltBinPath(),
-    AGENTS_LINT_ARGS,
-  )} 2>/dev/null || true # ${OURS_TOKEN}`;
+  );
+  const lint = lifecycle(AGENTS_LINT_ARGS);
 
   const sessionStart = [
     ...(ctx.mapOnStart ? [commandEntry(SESSION_START_MATCHER, map)] : []),
@@ -343,6 +357,12 @@ export interface HooksChoices {
   lintOnStart: boolean;
   enforcement: EnforcementMode;
   thresholdBytes: number;
+  /**
+   * How smelt is re-invoked on this machine. Defaults to reading the machine
+   * (`smeltInvocation()`); a caller passes one to plan against something else, which
+   * is what lets a test see both spellings of a lifecycle hook without a global PATH.
+   */
+  invocation?: SmeltInvocation;
 }
 
 interface InstallPlan {
@@ -376,6 +396,16 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   const files = new Map<string, PlannedFile>();
   const skipped: SkippedFile[] = [];
   const notes: string[] = [];
+
+  // Every command this plan writes down has to still work tomorrow. Where it cannot
+  // promise that — a versioned Homebrew keg with no `opt` alias resolving to it — the
+  // plan says so out loud rather than writing a path that dies at the next upgrade.
+  const invocation = choices.invocation ?? smeltInvocation();
+  if (!invocation.stable) {
+    notes.push(
+      `hook command uses an unstable path (${invocation.why}) — re-run setup after upgrading`,
+    );
+  }
 
   /**
    * A step's base text: the previous step's planned output for this same path when
@@ -467,7 +497,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
         case 'json-hooks':
           planJsonHooks(
             step.file,
-            jsonHookEvents(step, ctx, shimCommand(profile, cwd)),
+            jsonHookEvents(step, ctx, shimCommand(profile, cwd), invocation),
             step.shape ?? {},
           );
           break;

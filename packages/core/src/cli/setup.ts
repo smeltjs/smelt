@@ -116,6 +116,13 @@ export interface SetupReceipt {
     readonly command?: string;
   };
   readonly checks: readonly SetupCheck[];
+  /**
+   * What the flow decided that no file records — today, that a hook command had to be
+   * written with a path an upgrade will delete. Additive and optional: absent when the
+   * run had nothing to say, so a reader of `smelt.setup.v1` that predates it is not
+   * looking at a changed envelope.
+   */
+  readonly notes?: readonly string[];
 }
 
 /** Everything the wizard or `--yes` decided. Pure data until apply. */
@@ -564,7 +571,13 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
 
   const failedChecks = checks.filter((check) => !check.ok).length;
   return {
-    receipt: { config: { action: configAction }, files, mcp, checks },
+    receipt: {
+      config: { action: configAction },
+      files,
+      mcp,
+      checks,
+      ...(notes.length === 0 ? {} : { notes }),
+    },
     notes,
     failedChecks,
   };

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { expect } from 'vitest';
@@ -166,4 +166,34 @@ export function valueAt(document: unknown, path: readonly string[]): unknown {
     value = (value as Record<string, unknown>)[key];
   }
   return value;
+}
+
+/**
+ * A spawn environment whose PATH holds no `smelt`.
+ *
+ * The guard's deny reason ranks `smelt` on PATH above `node "<script>"`, so a machine
+ * that happens to have smelt installed globally — the developer's, and every machine
+ * where this bug was found — would otherwise decide which branch these tests exercise.
+ * PATH is the seam, so PATH is what the test sets.
+ */
+export function envWithoutSmelt(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  env['PATH'] = join(packageRoot(), 'test', 'fixtures', 'no-such-bin-dir');
+  return env;
+}
+
+/**
+ * The other half: a PATH holding one executable named `smelt`, so a spawned guard
+ * takes the top rung of the ranking and quotes the bare name.
+ */
+export function envWithSmeltOnPath(dir: string): Record<string, string> {
+  const bin = join(dir, 'smelt');
+  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  chmodSync(bin, 0o755);
+  const env = envWithoutSmelt();
+  env['PATH'] = dir;
+  return env;
 }
