@@ -1,6 +1,6 @@
 {
   "guards": 34,
-  "mutations": 164,
+  "mutations": 166,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -112,7 +112,7 @@
     },
     {
       "guard": "packages/core/test/guards/structural.test.ts",
-      "count": 28
+      "count": 30
     },
     {
       "guard": "packages/core/test/guards/subcommand-registry.test.ts",

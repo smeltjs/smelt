@@ -161,8 +161,14 @@ codebase-design glossary.
   focus-matched or pinned unit is unreachable (it is in no run), the output cannot grow
   (nothing is minted whose marker is not strictly cheaper than the cut), and the
   enumeration is start-ascending, length-descending, so the plan stays deterministic.
-  The lexical planner's context ladder is the sibling of this idea, and
-  `src/plan/budget.ts` is the arithmetic they share.
+  It fires only when the plan is still over budget after the first pass — never merely
+  because a profitable sub-cut exists — and every cut it mints says so: `sibling-collapse-pressure`
+  on the `ElisionReason.rule`, `sibling-collapse` for everything the first pass alone
+  produced. The escalation is stated where every consumer of a plan already reads a
+  rule from — the CLI report's rule column, the `--json` envelope, the per-rule
+  ledger — never inferred from which pass happened to run. The lexical planner's
+  context ladder is the sibling of this idea, and `src/plan/budget.ts` is the
+  arithmetic they share.
 - **RepoMap**: the ranked whole-tree symbol map `buildRepoMap` returns — deliberately
   **not** an `ElisionPlan` and its builder deliberately not a Planner: nothing is
   elided, stored, or reversible, so the Planner interface would claim laws the map

@@ -190,6 +190,13 @@ describe("the structural planner's budget rung", () => {
     const cut = elision!.range.end - elision!.range.start;
     expect(cut).toBe(BUDGET_RUNG_CUT_BYTES);
     expect(markerPricing('python').costBytes(elision!.reason, cut)).toBe(BUDGET_RUNG_MARKER_BYTES);
+    // The escalation is stated on the elision, not just true of it: a rule id
+    // distinct from the first pass's plain `sibling-collapse`. The explanation stays
+    // the same sentence a first-pass cut of this shape would earn — lengthening it
+    // would grow the rendered marker and could tip this exact case (a 92-byte cut
+    // against an 82-byte marker) back into unprofitable, which is precisely why the
+    // rule id, never rendered into the marker, is where the escalation is stated.
+    expect(elision!.reason.rule).toBe('sibling-collapse-pressure');
     expect(elision!.reason.explanation).toBe('collapsed 3 sibling classes');
   });
 
@@ -210,6 +217,12 @@ describe("the structural planner's budget rung", () => {
   });
 
   it('leaves the plan alone when the first pass already fits', async () => {
+    // The rung is an over-budget escalation, never a hunt for extra profitable cuts:
+    // the profitability floor is the only thing that runs once the plan already fits,
+    // so the refused run (unprofitable whole) stays refused even though a sub-run of
+    // it — the same three classes the tighter-budget tests above cut — is profitable
+    // on its own. Firing here would mean the rung stopped being conditioned on
+    // `budgetBytes` at all.
     const plan = await planStructural(budgetInput(10_000));
     expect(plan.elisions).toEqual([]);
   });
@@ -311,6 +324,7 @@ describe("the structural planner's budget rung, bounded", () => {
       pricing: markerPricing('bash'),
     });
     expect(plan.elisions).toHaveLength(1);
+    expect(plan.elisions[0]!.reason.rule).toBe('sibling-collapse-pressure');
     expect(plan.elisions[0]!.reason.explanation).toBe('collapsed 200 sibling commands');
     const result = applyPlan(text, plan, new MemoryElisionStore());
     expect(result.text).toContain('cleanup_tmp; deploy_release --now');

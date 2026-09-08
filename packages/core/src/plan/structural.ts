@@ -45,6 +45,19 @@ export type StructuralLanguage = LanguageId;
  */
 const SIBLING_COLLAPSE_RULE = 'sibling-collapse';
 
+/**
+ * The rule id every cut the budget rung mints carries, instead of
+ * {@link SIBLING_COLLAPSE_RULE}. The rung is an over-budget escalation — it trades a
+ * maximal run's better explanation for a smaller, uglier cut only because the plan
+ * would otherwise stay over budget — and a plan that made that trade under the same
+ * rule id as an ordinary profitable cut would have silently changed its own rules: the
+ * report, the `--json` envelope and the per-rule ledger (`ElisionReason.rule` is their
+ * shared key, per `CONTEXT.md`) would show one more `sibling-collapse` row with no way
+ * to tell it apart from a first-pass cut. A distinct id is the label, in the one
+ * currency every consumer of a plan already reads.
+ */
+const SIBLING_COLLAPSE_PRESSURE_RULE = 'sibling-collapse-pressure';
+
 export interface StructuralPlannerOptions {
   /**
    * Never collapse a sibling group smaller than this. Defaults to 1 — the byte
@@ -232,8 +245,16 @@ function planFromTree(
    * would be illegal or would not pay for its marker. Every cut in this planner,
    * first pass and budget rung alike, is minted here: one legality rule, one price,
    * one explanation, so the rung cannot cut something the first pass would refuse.
+   *
+   * `rule` defaults to the first pass's id; the budget rung (below) passes
+   * {@link SIBLING_COLLAPSE_PRESSURE_RULE} instead, so the one thing that changes
+   * between an ordinary cut and an over-budget escalation is stated on the elision
+   * itself, never inferred from which pass happened to run.
    */
-  const collapse = (group: readonly Unit[]): PlannedElision | undefined => {
+  const collapse = (
+    group: readonly Unit[],
+    rule: string = SIBLING_COLLAPSE_RULE,
+  ): PlannedElision | undefined => {
     if (group.length === 0 || group.length < minSiblings) return undefined;
     // A line-comment marker swallows the rest of its line. When the group's last unit
     // ends mid-line — python's `stmt_a(); stmt_b()` puts two top-level statements on
@@ -252,7 +273,7 @@ function planFromTree(
     const names = group.flatMap((unit) => (unit.name === undefined ? [] : [unit.name]));
     const candidate: PlannedElision = {
       range: { start, end },
-      reason: { rule: SIBLING_COLLAPSE_RULE, explanation: explain(group) },
+      reason: { rule, explanation: explain(group) },
       ...(names.length === 0 ? {} : { names }),
     };
     // Profitability, priced rather than estimated: ask the MarkerPricing seam for the
@@ -312,6 +333,14 @@ function planFromTree(
   //     refusal is about one character, not about size — so the sweep stops at the
   //     first cut that fits the budget and skips every candidate whose span already
   //     proves it cannot win. See {@link bestSubRun}.
+  //   - **It says so.** Every cut this loop mints carries
+  //     `SIBLING_COLLAPSE_PRESSURE_RULE`, not the first pass's plain
+  //     `sibling-collapse` — the report's rule column, the `--json` envelope and the
+  //     per-rule ledger all key off `ElisionReason.rule`, so a caller reading any of
+  //     them can tell an over-budget escalation from an ordinary profitable cut
+  //     without re-deriving which pass happened to run. A plan that made this trade
+  //     under the ordinary rule id would have changed its own rules silently — the
+  //     failure this repository's guards exist to catch.
   //
   // Budget pressure is the trigger, not profitability, because a maximal run is the
   // better *explanation*: one marker naming everything it hid beats two naming halves
@@ -324,7 +353,16 @@ function planFromTree(
     // stopping condition, so a run that can fit the budget is priced a handful of
     // times instead of exhaustively. See {@link bestSubRun}.
     const enough = currentBytes - input.budgetBytes;
-    const cut = bestSubRun(group, collapse, pricing, spanBytes, enough);
+    // Every cut the rung mints carries SIBLING_COLLAPSE_PRESSURE_RULE, never the first
+    // pass's plain id — the escalation stated on the elision itself, not just implied
+    // by which loop happened to produce it. See the constant's doc comment.
+    const cut = bestSubRun(
+      group,
+      (candidate) => collapse(candidate, SIBLING_COLLAPSE_PRESSURE_RULE),
+      pricing,
+      spanBytes,
+      enough,
+    );
     if (cut !== undefined) elisions.push(cut);
   }
 
@@ -627,6 +665,14 @@ function matchUnits(
  * 1 class)` — and when the run holds anything that is not a declaration (a statement,
  * a floating comment, an unparsed region), the heading says `nodes`, because calling
  * a parse error a declaration would be the marker lying about the tree.
+ *
+ * The explanation stays the same sentence a first-pass cut of the same shape would
+ * earn — {@link SIBLING_COLLAPSE_PRESSURE_RULE} is where the escalation is stated.
+ * Words added here would grow the rendered marker (`defaultMarker` renders
+ * `explanation`, byte for byte) and could flip a rung candidate priced right at the
+ * edge of profitable back into unprofitable — the review's own case prices its
+ * 92-byte cut against an 82-byte marker, ten bytes of room a longer sentence would
+ * spend. The rule id costs the marker nothing: `defaultMarker` never renders it.
  */
 function explain(group: readonly Unit[]): string {
   const counts = new Map<string, number>();
