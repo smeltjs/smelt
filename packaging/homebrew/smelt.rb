@@ -11,8 +11,13 @@ class Smelt < Formula
   license "Apache-2.0"
 
   # smelt is a Node CLI — one runtime dependency, web-tree-sitter, whose grammars
-  # ship inside the tarball; no native build, no postinstall download.
-  depends_on "node"
+  # ship inside the tarball; no native build, no postinstall download. node is
+  # :recommended, not required: `--without-node` builds against whatever node is
+  # already on PATH, which must clear the engines floor in packages/core/package.json
+  # (^20.19.0 || >=22.12.0). install below never references Formula["node"]
+  # directly — plain "npm" resolves to Homebrew's node when it is installed, and to
+  # PATH's node otherwise, so both builds share the one code path.
+  depends_on "node" => :recommended
 
   def install
     # The classic npm-tarball install, spelled out: no Homebrew helper methods, so
