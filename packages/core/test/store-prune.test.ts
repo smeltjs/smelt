@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -12,7 +13,9 @@ import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { EvictedHashError, UnknownHashError } from '../src/errors.ts';
+import { reconstruct } from '../src/apply.ts';
+import { EvictedHashError, SmeltError, UnknownHashError } from '../src/errors.ts';
+import { createSmelter } from '../src/smelter.ts';
 import { DirectoryElisionStore, readStoreSize } from '../src/store-dir.ts';
 
 /**
@@ -216,6 +219,73 @@ describe('an eviction is journalled, and a lookup of it says so', () => {
   });
 });
 
+describe('a journal that stops accepting lines stops the eviction', () => {
+  it('warns, stops evicting, and returns a report instead of throwing', async () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    // Two blobs old enough to go. `toSorted()` fixes the scan order, so the journal can
+    // be made unwritable after the first eviction and before the second.
+    const hashes = ['first blob to go', 'second blob to go'].map((content) => {
+      const hash = store.put(content);
+      age(root, hash, 30 * DAY);
+      return hash;
+    });
+    const [firstByScan, secondByScan] = [...hashes].toSorted();
+    store.retrieve(hashes[0]!); // creates retrievals.log so it can be chmod'ed
+    const sizeBefore = readFileSync(join(root, 'blobs', firstByScan!), 'utf8').length;
+
+    // Take the journal away, then prune: the first blob's own receipt cannot be
+    // written, so nothing is evicted at all and both blobs are reported as kept.
+    const warnings: Error[] = [];
+    const collect = (warning: Error): void => void warnings.push(warning);
+    process.on('warning', collect);
+    chmodSync(join(root, 'retrievals.log'), 0o444);
+    let report;
+    try {
+      report = store.prune({
+        olderThan: new Date(Date.now() - 7 * DAY),
+        keepRetrieved: false,
+        dryRun: false,
+      });
+      // `emitWarning` fires on the next tick; drain it before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      chmodSync(join(root, 'retrievals.log'), 0o644);
+      process.off('warning', collect);
+    }
+
+    const warning = warnings.find((one) => one.name === 'SmeltPruneJournalFailure');
+    expect(warning?.message).toContain('could not journal the eviction');
+
+    // Nothing was evicted — the first blob's own receipt could not be written, so the
+    // run stopped there — and every scanned blob is accounted for as kept. Throwing
+    // instead would have lost the record of anything already unlinked, which is the one
+    // thing a caller cannot reconstruct.
+    expect(report.scanned).toBe(2);
+    expect(report.evicted).toEqual([]);
+    expect(report.kept).toBe(2);
+    expect(report.bytesFreed).toBe(0);
+    expect(sizeBefore).toBeGreaterThan(0);
+    expect(existsSync(join(root, 'blobs', firstByScan!))).toBe(true);
+    expect(existsSync(join(root, 'blobs', secondByScan!))).toBe(true);
+  });
+});
+
+describe('an unreadable cut-off is refused, not obeyed', () => {
+  it('throws rather than scanning, because every comparison against NaN is false', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    const hash = store.put('bytes no Invalid Date may reach');
+    expect(() =>
+      store.prune({ olderThan: new Date(NaN), keepRetrieved: false, dryRun: false }),
+    ).toThrow(SmeltError);
+    expect(() =>
+      store.prune({ olderThan: new Date(NaN), keepRetrieved: false, dryRun: false }),
+    ).toThrow(/every blob is old enough/);
+    expect(store.retrieve(hash)).toBe('bytes no Invalid Date may reach');
+  });
+});
+
 describe('the counters stay honest across a prune', () => {
   it('keeps elisionsStored and the expansion rate exactly where they were', () => {
     const root = newRoot();
@@ -286,6 +356,30 @@ describe('an evict line is invisible to a reader that predates it', () => {
     // Which is exactly what the two folds this store ships do with them.
     expect(store.stats().retrieveCalls).toBe(1);
     expect(store.ledger()).toEqual([{ rule: 'head-tail', stored: 2, retrieved: 1 }]);
+  });
+});
+
+describe('a round trip over a pruned result names the eviction', () => {
+  it('reconstruct() raises EvictedHashError rather than calling the hash unknown', async () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    const smelter = createSmelter({ store });
+    const corpus = Array.from({ length: 300 }, (_, i) => `line ${String(i)} padding`).join('\n');
+    const result = await smelter.smelt(corpus, { budgetBytes: 600 });
+    expect(result.elisions.length).toBeGreaterThan(0);
+    // The round trip works while the bytes are there — Law 3, before the prune.
+    expect(smelter.reconstruct(result)).toBe(corpus);
+
+    for (const elision of result.elisions) age(root, elision.hash, 30 * DAY);
+    store.prune({ olderThan: new Date(Date.now() - 7 * DAY), keepRetrieved: false, dryRun: false });
+
+    // And afterwards it says which fact ended it. `reconstruct` reads through `peek`,
+    // so the eviction travels out of the round trip as itself: a caller told
+    // "no stored content — it was never elided" would go looking for a bug that is
+    // really a command they ran.
+    expect(() => smelter.reconstruct(result)).toThrow(EvictedHashError);
+    expect(() => reconstruct(result, store)).toThrow(/was evicted on .* by `smelt store prune`/);
+    expect(() => reconstruct(result, store)).not.toThrow(UnknownHashError);
   });
 });
 

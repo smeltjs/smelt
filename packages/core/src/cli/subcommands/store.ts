@@ -51,6 +51,17 @@ const UNIT_MS: Readonly<Record<'h' | 'd' | 'w', number>> = {
 /** How the grammar is spelled to a user who got it wrong. Written once, shown twice. */
 const DURATION_HELP = `<n>d, <n>h or <n>w — a whole number of at least 1 and a unit, e.g. 30d, 12h, 2w`;
 
+/**
+ * ECMAScript's time-value limit: the furthest a `Date` can reach either side of the
+ * epoch, in milliseconds. Beyond it `new Date(...)` is an *Invalid Date*, whose
+ * `getTime()` is `NaN` — and every `mtimeMs >= NaN` comparison is false, which a
+ * scanner reads as "every blob is old enough". So an age that lands outside this range
+ * is refused here rather than turned into a cut-off nothing can compare against.
+ * `prune()` refuses it a second time, at the point of deletion; see its doc for why one
+ * check in one place is not enough for the only code in smelt that unlinks a blob.
+ */
+const MAX_TIME_VALUE = 8_640_000_000_000_000;
+
 /** `smelt store prune --older-than <age> [flags]` — parsed. */
 export interface StoreInvocation {
   readonly mode: 'store';
@@ -222,7 +233,16 @@ export const storeCommand: Subcommand<StoreInvocation, ResolvedStorePruneRun> = 
  * CLI: `--older-than 30` could mean days, hours or weeks, and a prune that guessed
  * wrong deletes bytes at 24× or 168× the age the user meant.
  *
- * @throws {CliUsageError} naming what was typed and the grammar it did not match.
+ * **The number is bounded as well as the unit**, and the bound is not cosmetic.
+ * `--older-than 200000000d` parsed cleanly here until it did not: the product overflows
+ * {@link MAX_TIME_VALUE}, `new Date(Date.now() - ms)` becomes an Invalid Date, every
+ * `mtimeMs >= NaN` comparison in the scan is false, and a prune meant to reclaim last
+ * decade's disk emptied a store written seconds earlier. The ceiling is *derived* from
+ * the representable range rather than picked, so the refusal states a real limit and
+ * not a number smelt invented.
+ *
+ * @throws {CliUsageError} naming what was typed and the grammar it did not match, or
+ *   the furthest age that is still a date.
  */
 function parseDuration(raw: string): number {
   const match = DURATION.exec(raw);
@@ -233,5 +253,15 @@ function parseDuration(raw: string): number {
         `  ${DURATION_HELP}`,
     );
   }
-  return value * UNIT_MS[match[2] as 'h' | 'd' | 'w'];
+  const unit = match[2] as 'h' | 'd' | 'w';
+  const milliseconds = value * UNIT_MS[unit];
+  if (Date.now() - milliseconds < -MAX_TIME_VALUE) {
+    const furthest = Math.floor((Date.now() + MAX_TIME_VALUE) / UNIT_MS[unit]);
+    throw new CliUsageError(
+      `${CLI_NAME}: --older-than ${JSON.stringify(raw)} reaches further back than a date ` +
+        `can go, so there is no instant to compare a blob against. At most ` +
+        `${String(furthest)}${unit}.\n  ${DURATION_HELP}`,
+    );
+  }
+  return milliseconds;
 }

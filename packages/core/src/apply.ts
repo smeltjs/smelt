@@ -287,6 +287,10 @@ export function applyPlan(
  * counter exactly where it was.
  *
  * @throws {UnknownHashError} if the store no longer holds an elision's bytes.
+ * @throws {EvictedHashError} if a `smelt store prune` deleted them — raised by
+ *   `peek` itself, and deliberately not caught here. A round trip over a pruned result
+ *   cannot be completed, and the honest answer names the date the bytes went rather
+ *   than reporting the hash as one this store never held.
  */
 export function reconstruct(result: SmeltResult, store: ElisionStore): string {
   const output = Buffer.from(result.text, 'utf8');

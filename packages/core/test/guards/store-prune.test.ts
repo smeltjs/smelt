@@ -174,6 +174,34 @@ describe('the only eviction in smelt is the one a user asked for', () => {
     expect(store.ledger()).toEqual([{ rule: 'head-tail', stored: 2, retrieved: 1 }]);
   });
 
+  it('refuses a cut-off it cannot read, rather than treating every blob as old', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    const hash = store.put('bytes an unreadable cut-off must not reach');
+
+    // An Invalid Date's getTime() is NaN, and `mtimeMs >= NaN` is false for every blob
+    // in the store — so a cut-off that cannot be read does not evict nothing, it evicts
+    // everything. `--older-than 200000000d` produced exactly this Date, and emptied a
+    // store written seconds earlier.
+    expect(() =>
+      store.prune({ olderThan: new Date(NaN), keepRetrieved: false, dryRun: false }),
+    ).toThrow(/not a date/);
+    expect(
+      errorName(() =>
+        store.prune({ olderThan: new Date(NaN), keepRetrieved: false, dryRun: false }),
+      ),
+    ).toBe('SmeltError');
+
+    // Nothing was scanned, nothing was journalled, and the bytes are still here.
+    expect(existsSync(join(root, 'blobs', hash))).toBe(true);
+    expect(store.retrieve(hash)).toBe('bytes an unreadable cut-off must not reach');
+    // A dry run is refused too: it reports what a real run *would* take, so a dry run
+    // that answered "all of it" would be the same lie one command earlier.
+    expect(() =>
+      store.prune({ olderThan: new Date(NaN), keepRetrieved: false, dryRun: true }),
+    ).toThrow(/not a date/);
+  });
+
   it('spares a retrieved hash when asked, and only when asked', () => {
     const root = newRoot();
     const store = new DirectoryElisionStore(root);
@@ -217,10 +245,17 @@ describe('nothing evicts on its own', () => {
  */
 export const MUTATIONS: GuardMutation[] = [
   {
+    id: 'prune-accepts-an-unreadable-cut-off',
+    file: 'store-dir.ts',
+    find: '    if (Number.isNaN(cutOff)) {',
+    replace: '    if (false as boolean) {',
+    why: 'the byte-deleter stops refusing a cut-off it cannot read — an Invalid Date makes every `mtimeMs >= NaN` false, so the scan reads "every blob is old enough" and empties the whole store, which is what `--older-than 200000000d` did before both halves of this were bounded',
+  },
+  {
     id: 'prune-ignores-older-than',
     file: 'store-dir.ts',
-    find: '      if (retrieved.has(entry) || stat.mtimeMs >= options.olderThan.getTime()) {',
-    replace: '      if (false as boolean) {',
+    find: '      if (journalFailed || retrieved.has(entry) || stat.mtimeMs >= cutOff) {',
+    replace: '      if (journalFailed || retrieved.has(entry)) {',
     why: "the age cut stops being consulted — every blob in the store is evicted whatever the user typed, so `smelt store prune --older-than 30d` run to reclaim last month's disk takes this session's working set with it",
   },
   {
@@ -245,10 +280,10 @@ export const MUTATIONS: GuardMutation[] = [
     why: 'elisionsStored stops counting evicted hashes — the same numerator over a smaller denominator, so a prune raises the expansion rate for free and a store where three of four elisions were never asked for back reports that every one of them was',
   },
   {
-    id: 'prune-deletes-before-it-journals',
+    id: 'prune-never-journals-the-eviction',
     file: 'store-dir.ts',
     find: "      this.#appendLog('evict', entry, at);",
     replace: '',
-    why: 'the eviction receipt is never written — the bytes go with no record, so the next lookup reports UnknownHashError and the loss is silent, which is the ordering (journal, then unlink) the whole design rests on',
+    why: 'the eviction receipt is never written — the bytes go with no record, so the next lookup reports UnknownHashError and the loss is silent. It pins that the eviction is journalled at all; the *ordering* (journal, then unlink) is a crash-window property no in-process mutation can observe, and is argued in the prune doc rather than pinned here',
   },
 ];

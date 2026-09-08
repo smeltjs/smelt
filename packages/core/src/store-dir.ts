@@ -564,17 +564,59 @@ export class DirectoryElisionStore implements ElisionStore {
    * **kept** and named on `process.emitWarning`, never as evicted — `bytesFreed` must
    * be bytes that were actually freed. A later prune tries again.
    *
+   * **The one race the ordering leaves open**, stated because it is real rather than
+   * because it is bad: another process `put`ting the *same content* between the `evict`
+   * append and the `unlink` takes {@link put}'s existing-blob fast path — it verifies
+   * the bytes already on disk, returns the hash, and writes nothing — and this loop then
+   * deletes them. The winner is left holding a hash whose bytes are gone, and every
+   * outcome from there is honest: the lookup raises {@link EvictedHashError} naming the
+   * date, and a re-`put` of the same content restores the blob and serves it again
+   * (`retrieve` reads the blob before the journal). The only artefact is a receipt whose
+   * date precedes a put — true of the eviction it records, and not of the bytes that
+   * came back. Making this impossible would need a lock across the whole directory, and
+   * this store's every other guarantee is built out of atomic operations instead.
+   *
+   * **A journal that stops accepting lines stops the eviction**, it does not silently
+   * continue it: the failure is named on `process.emitWarning`
+   * (`SmeltPruneJournalFailure`), that blob and every blob after it is counted as
+   * **kept**, and the report comes back describing exactly what did happen. Throwing
+   * would lose the record of the blobs already unlinked, which is the one piece of
+   * information the caller cannot reconstruct.
+   *
    * `dryRun` short-circuits both writes: nothing is appended, nothing is unlinked, and
    * the report is otherwise identical, so `--dry-run` and the real thing can be
    * compared field for field.
+   *
+   * @throws {SmeltError} when `olderThan` is not a readable instant. See the guard at
+   *   the top of the body: this is the only code in smelt that unlinks a blob, and an
+   *   unreadable cut-off makes every age comparison false, which reads as "everything
+   *   is old enough".
    */
   prune(options: PruneOptions): PruneReport {
+    // Before anything is listed, let alone unlinked. An Invalid Date's `getTime()` is
+    // NaN, and every `mtimeMs >= NaN` is false — so a cut-off that cannot be read would
+    // not evict *nothing*, it would evict *everything*. The one function in smelt that
+    // deletes bytes refuses an input it cannot interpret rather than picking the
+    // interpretation that happens to fall out of IEEE-754 comparison.
+    const cutOff = options.olderThan.getTime();
+    if (Number.isNaN(cutOff)) {
+      throw new SmeltError(
+        `smelt: prune was given a cut-off that is not a date, so no blob's age can be ` +
+          `compared against it. Refusing to scan: every comparison against an unreadable ` +
+          `instant is false, which would read as "every blob is old enough" and empty the ` +
+          `store. Pass a real Date — \`smelt store prune\` derives one from --older-than.`,
+      );
+    }
     const at = new Date().toISOString();
     const retrieved = options.keepRetrieved ? this.#retrievedHashes() : new Set<string>();
     const evicted: PrunedBlob[] = [];
     let scanned = 0;
     let kept = 0;
     let bytesFreed = 0;
+    // Set the moment the journal refuses a line. From then on this run evicts nothing
+    // and counts what is left as kept: an eviction it could not record is one it must
+    // not make, and the blobs already unlinked still deserve a report.
+    let journalFailed = false;
 
     for (const entry of readdirSync(this.#blobsDir).toSorted()) {
       if (!KEY_PATTERN.test(entry)) continue; // never this store's to delete
@@ -586,7 +628,7 @@ export class DirectoryElisionStore implements ElisionStore {
         continue; // vanished between the listing and the stat — nothing to scan
       }
       scanned += 1;
-      if (retrieved.has(entry) || stat.mtimeMs >= options.olderThan.getTime()) {
+      if (journalFailed || retrieved.has(entry) || stat.mtimeMs >= cutOff) {
         kept += 1;
         continue;
       }
@@ -600,10 +642,24 @@ export class DirectoryElisionStore implements ElisionStore {
         bytesFreed += blob.bytes;
         continue;
       }
-      // The receipt, durably, before the bytes go. A failure here fails the prune:
+      // The receipt, durably, before the bytes go. A failure here stops the eviction:
       // deleting bytes this store could not promise to explain is the one outcome
       // worse than not pruning at all.
-      this.#appendLog('evict', entry, at);
+      try {
+        this.#appendLog('evict', entry, at);
+      } catch (error) {
+        journalFailed = true;
+        kept += 1;
+        process.emitWarning(
+          `smelt: could not journal the eviction of "${entry}" in ${this.#logPath} ` +
+            `(${error instanceof Error ? error.message : String(error)}). This prune ` +
+            `stopped there: the bytes are still here, and the blobs it had already ` +
+            `evicted are in the report. An eviction smelt cannot record is one it must ` +
+            `not make — a later retrieve would call those bytes "never elided".`,
+          'SmeltPruneJournalFailure',
+        );
+        continue;
+      }
       try {
         unlinkSync(path);
       } catch (error) {

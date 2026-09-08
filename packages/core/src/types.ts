@@ -309,7 +309,16 @@ export interface ElisionStore {
    * reason is stored and never attributed.
    */
   put(content: string, reason?: ElisionReason): string;
-  /** The stored content, or `undefined` if this store never held that hash. */
+  /**
+   * The stored content, or `undefined` if this store never held that hash. Uncounted.
+   *
+   * @throws {EvictedHashError} — {@link DirectoryElisionStore} only — when the bytes
+   *   were deliberately removed by `smelt store prune`. Absence with a receipt is not
+   *   the same fact as absence without one, and answering `undefined` for both would
+   *   let a caller report "never elided" for bytes its own user deleted.
+   * @throws {StoreCorruptionError} — {@link DirectoryElisionStore} only — when the
+   *   stored bytes no longer hash to their own name.
+   */
   peek(hash: string): string | undefined;
   /**
    * The stored content, *counted* as a retrieval. This is what the model's tool calls.
@@ -320,6 +329,13 @@ export interface ElisionStore {
    *   `UnknownHashError` on purpose: "we hold damaged bytes" and "it never existed"
    *   are different answers, and a caller that conflates them will report the wrong
    *   one to its user.
+   * @throws {EvictedHashError} — {@link DirectoryElisionStore} only — when a
+   *   `smelt store prune` deleted the bytes, naming the date it took them. The third
+   *   answer, for the same reason there is a second: "you removed it" is not "it never
+   *   existed", and it is the one a model can act on. **It still counts as a miss** —
+   *   `retrieveCalls` and `misses` move exactly as they would for an unknown hash,
+   *   because the model asked for material back and did not get it, and an eviction
+   *   that stopped counting would let a prune improve the expansion rate.
    *
    * A {@link DirectoryElisionStore} whose journal cannot be written (a read-only
    * store directory, a full disk) still returns the bytes — verified bytes are never

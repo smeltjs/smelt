@@ -86,9 +86,15 @@ export interface SmeltCallOptions {
 export interface Smelter {
   /** Shrink one blob of text. Never mutates its input. */
   smelt(text: string, options?: SmeltCallOptions): Promise<SmeltResult>;
-  /** The exact original text of a previous result. @throws {UnknownHashError} */
+  /**
+   * The exact original text of a previous result. Uncounted.
+   * @throws {UnknownHashError} @throws {EvictedHashError} @throws {StoreCorruptionError}
+   */
   reconstruct(result: SmeltResult): string;
-  /** One elided run, counted as a retrieval. @throws {UnknownHashError} */
+  /**
+   * One elided run, counted as a retrieval.
+   * @throws {UnknownHashError} @throws {EvictedHashError} @throws {StoreCorruptionError}
+   */
   retrieve(hash: string): string;
   /** The tool to expose to your model. See {@link RetrieveTool}. */
   readonly tool: RetrieveTool;

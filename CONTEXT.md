@@ -39,8 +39,12 @@ codebase-design glossary.
   that cut. Only `bytesStored` falls, because only `bytesStored` measures the disk. A
   later `retrieve` of an evicted hash raises **`EvictedHashError`**, never
   `UnknownHashError`: "you pruned it on <date>" and "it was never elided" are different
-  answers, and the second one would be false. `has()` answers `false` — a boolean has no
-  room for a reason. _Avoid_: eviction policy, GC, LRU, TTL.
+  answers, and the second one would be false. That lookup **still counts as a miss** —
+  `retrieveCalls` and `misses` move exactly as they would for a hash nobody ever stored,
+  because the model asked for material back and did not get it; only the error text
+  differs, because only the error is read by a person deciding what went wrong. `has()`
+  answers `false` — a boolean has no room for a reason. _Avoid_: eviction policy, GC,
+  LRU, TTL.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by

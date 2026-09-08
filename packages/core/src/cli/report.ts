@@ -510,7 +510,14 @@ export function formatPruneReport({
 
   if (report.evicted.length === 0) {
     lines.push('');
-    lines.push('  nothing was old enough — no bytes left this store.');
+    // Two reasons nothing went, and they are not the same fact: with --keep-retrieved
+    // in force, a blob old enough to evict may have been spared for having been asked
+    // for back, and telling the user it "was not old enough" would be false.
+    lines.push(
+      keepRetrieved
+        ? '  nothing was both old enough and unretrieved — no bytes left this store.'
+        : '  nothing was old enough — no bytes left this store.',
+    );
     return `${lines.join('\n')}\n`;
   }
 

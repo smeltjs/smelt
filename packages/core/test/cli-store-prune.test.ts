@@ -144,6 +144,22 @@ describe('smelt store prune evicts what the user named, and reports it', () => {
     expect(readdirSync(join(storePath, 'blobs'))).toEqual([asked]);
   });
 
+  it('says why nothing went, and does not blame age when the flag spared it', async () => {
+    const { cwd, storePath } = directoryStoreCwd();
+    const asked = agedBlob(storePath, 'bytes retrieved once, long ago', 30);
+    await run(['retrieve', asked], cwd);
+
+    const spared = await run(['store', 'prune', '--older-than', '1d', '--keep-retrieved'], cwd);
+    expect(spared.code).toBe(EXIT.ok);
+    // It was old enough. It was kept for the other reason, and the report must say so
+    // rather than repeating a sentence that is now false.
+    expect(spared.stdout).toContain('nothing was both old enough and unretrieved');
+    expect(spared.stdout).not.toContain('nothing was old enough —');
+
+    const young = await run(['store', 'prune', '--older-than', '365d'], cwd);
+    expect(young.stdout).toContain('nothing was old enough —');
+  });
+
   it('makes a later retrieve say "evicted", not "never elided" — exit 3 either way', async () => {
     const { cwd, storePath } = directoryStoreCwd();
     const old = agedBlob(storePath, 'bytes with a receipt', 30);
@@ -194,6 +210,48 @@ describe('smelt store refuses what it cannot honestly do', () => {
       expect(stderr, raw).toContain('<n>d, <n>h or <n>w');
     },
   );
+
+  it('refuses an age further back than a date can go, without touching the store', async () => {
+    // The reported bug, pinned at the CLI end: `200000000d` overflowed the Date range,
+    // `new Date(Date.now() - ms)` became an Invalid Date, every `mtimeMs >= NaN` was
+    // false, and a prune meant to reclaim last decade's disk emptied a store written
+    // seconds earlier. Both ends refuse it now; this is the one a user meets.
+    const { cwd, storePath } = directoryStoreCwd();
+    const fresh = agedBlob(storePath, 'bytes written seconds ago', 0);
+
+    for (const age of ['200000000d', '9999999999999999999w', '999999999999h']) {
+      const { code, stderr } = await run(['store', 'prune', `--older-than=${age}`], cwd);
+      expect(code, age).toBe(EXIT.usage);
+      expect(stderr, age).toContain('further back than a date can go');
+      // The ceiling it names is derived from the representable range, not invented.
+      expect(stderr, age).toMatch(/At most \d+[dhw]\./u);
+      expect(stderr, age).toContain('<n>d, <n>h or <n>w');
+    }
+
+    // The blob a broken cut-off would have taken is still there.
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([fresh]);
+    expect((await run(['retrieve', fresh], cwd)).code).toBe(EXIT.ok);
+  });
+
+  it('accepts the largest age that is still a date', async () => {
+    // The bound is a real limit rather than a round number somebody liked: an age just
+    // inside the representable range still runs, so the refusal above cannot be a
+    // blanket "big numbers are suspicious".
+    const { cwd, storePath } = directoryStoreCwd();
+    const fresh = agedBlob(storePath, 'bytes written seconds ago', 0);
+    const furthest = Math.floor((Date.now() + 8_640_000_000_000_000) / (24 * 60 * 60 * 1000));
+    const { code, stdout } = await run(
+      ['store', 'prune', `--older-than=${String(furthest)}d`, '--json'],
+      cwd,
+    );
+    expect(code).toBe(EXIT.ok);
+    const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
+    // A cut-off at the dawn of representable time reaches nothing, which is the honest
+    // answer — and emphatically not "everything is older than this".
+    expect(envelope.prune).toMatchObject({ scanned: 1, kept: 1, bytesFreed: 0 });
+    expect(envelope.prune.evicted).toEqual([]);
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([fresh]);
+  });
 
   it('takes no further arguments — the store to prune is the configured one', async () => {
     const { cwd } = directoryStoreCwd();
