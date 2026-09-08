@@ -337,15 +337,22 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
 - **Rerank slot**: where a `RerankStage` actually bites — `src/rerank/protect.ts`,
   between the planner's decision and the cut. The **candidates** are the planner's own
   proposed elisions (the regions actually at stake), the **query** is the run's focus
-  terms joined, and the stage's answer decides which of them are **spared**: dropped from
-  the plan, so they survive into the output as if a focus term had matched them. A stage
-  can only spare, never add — a run may therefore come back over budget, which is
-  reported in the words a too-large focus window already earns. No candidates or no query
-  and the stage is not called at all. What it did comes back as a **RerankAttribution**
-  (`{adapter, model?, candidates, kept}`) on `SmeltResult`, which the stderr report, the
-  `--json` envelope and `smelt_file`'s report block all render from — one value, three
-  surfaces, no front door counting anything itself. _Avoid_: "rerank filters", "rerank
-  cuts" — it only ever keeps.
+  terms joined, and **what the stage returns is what smelt spares**: those entries are
+  dropped from the plan, so they survive into the output as if a focus term had matched
+  them. The returned list is a _selection_, not a ranking of everything — a stage that
+  returns every candidate spares every candidate, and the run emits its input unchanged
+  and exits 0, which is the one implementation mistake here that fails silently. A stage
+  can only spare, never add, so a run may come back **over budget**, reported in the words
+  a too-large focus window already earns. No candidates or no query and the stage is not
+  called at all; every way a stage can fail — including throwing, which a hosted one
+  ordinarily does — comes back as a `RerankStageError`, never as an unhandled crash. What
+  it did comes back as a **RerankAttribution** (`{adapter, model?, candidates, kept,
+skipped?}`) on `SmeltResult`, which the stderr report, the `--json` envelope and
+  `smelt_file`'s report block all render from — one value, three surfaces, no front door
+  counting anything itself. `candidates` is always the measured size of the candidate set
+  and `skipped` names the missing precondition when the stage was not called, so a receipt
+  never carries a count nobody took. _Avoid_: "rerank filters", "rerank cuts" — it only
+  ever keeps.
 - **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
   smelt setting that can send a caller's source to a third party. Two kinds: `module`
   (an ESM file of the consumer's own, resolved against the config file, default-exporting

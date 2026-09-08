@@ -164,6 +164,20 @@ describe('Law 1 — zero network', () => {
         'not. Load it through the constant in src/net/policy.ts, which `import()` takes ' +
         'as a value — or accept that this package now depends on a network client.',
     ).toEqual([]);
+
+    // "Spelled here and nowhere else in src" is a claim `net/policy.ts` and CONTEXT.md
+    // both make, so it is checked rather than trusted: a second literal is a second
+    // place to edit when the package is renamed, and the one that is missed is the one
+    // that quietly stops matching this ruling.
+    const spellers = allSourceFiles().filter((file) =>
+      OPT_IN_RERANK_PACKAGES.some((name) => readSource(file).includes(name)),
+    );
+    expect(
+      spellers,
+      'an opt-in rerank adapter package name appears outside net/policy.ts. It is data, ' +
+        'and it is owned there — read the constant instead, so a rename is one edit and ' +
+        'this ruling keeps matching what the loader actually loads.',
+    ).toEqual(['net/policy.ts']);
   });
 
   it('refuses a remote resource path', () => {

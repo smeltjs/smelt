@@ -399,6 +399,30 @@ describe('smelt_file — the rerank opt-in', () => {
     expect(result.texts[0]).toContain('./gone.mjs');
   });
 
+  it('answers a stage that throws with a tool error, not by crashing the handler', async () => {
+    // A reranker's ordinary failures — a timeout, a 401 — throw plain Errors from the
+    // consumer's own adapter. Unwrapped they would rethrow past this handler's catch,
+    // which only knows ToolArgumentError and SmeltError, and take the tool call out as a
+    // protocol-level failure the model cannot read or act on.
+    const dir = withRerank({ kind: 'module', path: './boom.mjs' });
+    writeFileSync(
+      join(dir, 'boom.mjs'),
+      `export default {
+         id: 'voyage',
+         async rerank() { throw new Error('api.voyageai.com did not answer within 30000ms'); },
+       };\n`,
+    );
+    const client = await connect(dir);
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('RerankStageError');
+    expect(result.texts[0]).toContain('did not answer within 30000ms');
+  });
+
   it('refuses to start on a rerank block it cannot parse, like every other key', async () => {
     expect(() => createSmeltMcpServer({ cwd: withRerank({ kind: 'psychic' }) })).toThrow(
       CliUsageError,

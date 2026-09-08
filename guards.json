@@ -1,6 +1,6 @@
 {
-  "guards": 35,
-  "mutations": 183,
+  "guards": 36,
+  "mutations": 185,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -141,6 +141,10 @@
     {
       "guard": "packages/mcp/test/guards/packaging.test.ts",
       "count": 3
+    },
+    {
+      "guard": "packages/rerank-voyage/test/guards/packaging.test.ts",
+      "count": 2
     }
   ]
 }

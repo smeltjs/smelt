@@ -268,6 +268,33 @@ describe('the rerank opt-in', () => {
     expect(stderr).toContain('./gone.mjs');
   });
 
+  it('a stage that throws exits like a refusal, not like a smelt bug', async () => {
+    // The failure mode this pins: a reranker's ordinary failures (a timeout, a 401, an
+    // unimplemented stub) throw plain Errors from the consumer's own adapter. Unwrapped,
+    // they reach `bin.ts`'s last-resort handler — "unexpected internal error — this is a
+    // bug, please report it", a stack trace, exit 4 — which blames smelt for somebody
+    // else's API being down and sends the user to the wrong issue tracker.
+    writeFileSync(
+      join(dir, 'boom.mjs'),
+      `export default {
+         id: 'voyage',
+         async rerank() { throw new Error('api.voyageai.com answered 401: invalid key'); },
+       };\n`,
+    );
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 800,
+      rerank: { kind: 'module', path: './boom.mjs' },
+    });
+    const { code, stderr } = await run(['--focus', 'handleRequest'], dir, corpus());
+    expect(code).toBe(EXIT.refused);
+    expect(stderr).toContain('RerankStageError');
+    expect(stderr).toContain('module/./boom.mjs');
+    expect(stderr).toContain('answered 401');
+    expect(stderr).not.toContain('please report it');
+    expect(stderr).not.toContain('unexpected internal error');
+  });
+
   it('refuses, naming the variable, when the voyage key is unset', async () => {
     writeConfig(dir, {
       smeltConfig: 1,

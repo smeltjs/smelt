@@ -155,12 +155,22 @@ const OUTLINE_LEADER = '↳ names:';
  */
 function rerankLine(rerank: RerankAttribution): string {
   const adapter = rerank.model === undefined ? rerank.adapter : `${rerank.adapter}/${rerank.model}`;
-  const detail =
-    rerank.candidates === 0
-      ? '(0 candidates, 0 kept)   nothing to rank — no elision was proposed, or the run named no focus'
-      : `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept)`;
-  return `rerank  ${adapter}  ${detail}`;
+  const counts = `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept)`;
+  return `rerank  ${adapter}  ${counts}${RERANK_SKIPPED[rerank.skipped ?? 'ran']}`;
 }
+
+/**
+ * Why the stage did not run, when it did not — a clause rather than a silence.
+ *
+ * `Record<…, string>` over the outcomes so a third `skipped` reason is a compile error
+ * here rather than a line that quietly prints nothing, the same totality the language
+ * and harness registries get.
+ */
+const RERANK_SKIPPED: Readonly<Record<'ran' | 'no-candidates' | 'no-query', string>> = {
+  ran: '',
+  'no-candidates': '   not run: the planner proposed nothing to cut',
+  'no-query': '   not run: this run named no focus terms to rank against',
+};
 
 /** What `smelt map` prints to stderr. */
 export interface MapReportInput {

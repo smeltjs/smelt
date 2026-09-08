@@ -748,9 +748,16 @@ kind needs, the environment variable, the uninstalled package — never a quiet 
 to an unranked run.
 
 **What a stage is asked, and what it may do.** When the planner has decided which regions
-to remove, the stage is handed _those regions_ and your focus terms, and its top-ranked
-answers are **spared** from the cut. It can only spare, never cut — so the worst a bad
-answer can do is cost you bytes, and bytes are already reported.
+to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
+returns is spared** from the cut — a selection, not a ranking of everything, so apply your
+own cut-off (`topK`, a `.slice`). Returning all of them keeps all of them, and the run
+emits its input unchanged. It can only spare, never cut, so the worst a bad answer can do
+is cost you bytes — and bytes are already reported, including when a reranker turns an
+in-budget run into an over-budget one.
+
+A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
+refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
+`smelt_file`), never as a crash in smelt.
 
 Every run that reranks says so, on a line of its own beneath the focus line — this is its
 shape, not a measurement; the two counts are tallied per run and never estimated:

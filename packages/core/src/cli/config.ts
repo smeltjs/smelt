@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
+import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
 import { ENFORCEMENT_MODES } from '../hooks/guard-core.ts';
 import type { EnforcementMode } from '../hooks/guard-core.ts';
 import { isStrategy, STRATEGIES } from '../plan/planners.ts';
@@ -95,7 +96,7 @@ export interface SmeltConfigAgents {
  * - `module` — an ESM file of the consumer's own, resolved against the config file (not
  *   the cwd — the same rule `store.path` follows), default-exporting a `RerankStage`.
  *   `smelt init` writes the stub it points at.
- * - `voyage` — the `@smeltjs/rerank-voyage` package, which the consumer installs
+ * - `voyage` — the {@link RERANK_VOYAGE_PACKAGE} adapter package, which the consumer installs
  *   themselves. It is not a dependency of `@smeltjs/core` and never will be: core loads
  *   it by a computed specifier at runtime, so it is absent from the import graph the
  *   zero-network guard walks, and a config naming it without the package installed is a
@@ -516,7 +517,7 @@ function parseRerank(
 
   throw bad(
     `"rerank".kind must be "module" or "voyage", got ${JSON.stringify(kind)}. ` +
-      `"module" loads a RerankStage you wrote; "voyage" loads @smeltjs/rerank-voyage, ` +
+      `"module" loads a RerankStage you wrote; "voyage" loads ${RERANK_VOYAGE_PACKAGE}, ` +
       `which you install yourself. There is no third kind and no default — a reranker ` +
       `smelt turned on for you would send your code somewhere you never named.`,
   );

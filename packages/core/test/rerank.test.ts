@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CliUsageError, RerankStageError } from '../src/errors.ts';
+import { formatReport } from '../src/cli/report.ts';
 import { loadRerankStage } from '../src/rerank/load.ts';
 import { applyRerank } from '../src/rerank/protect.ts';
 import { createSmelter } from '../src/smelter.ts';
@@ -109,9 +110,11 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
     for (const elision of outcome.plan.elisions) expect(plan.elisions).toContain(elision);
   });
 
-  it('does not call the stage when there is no query to rank against', async () => {
+  it('does not call the stage when there is no query, and says so rather than reporting a zero', async () => {
     // A ranker with no query would be scoring against the empty string and calling the
-    // result relevance. The attribution says 0/0 — a measurement, not a silence.
+    // result relevance. The candidate count stays the MEASURED size of the set the
+    // planner proposed — reporting 0 because nothing was sent would be a count nobody
+    // took — and `skipped` carries the reason.
     const plan = realPlan();
     let called = false;
     const stage: RerankStage = {
@@ -124,15 +127,61 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
     const outcome = await applyRerank({ stage, plan, text: TEXT, query: '   ' });
     expect(called).toBe(false);
     expect(outcome.plan).toBe(plan);
-    expect(outcome.attribution).toEqual({ adapter: 'never', candidates: 0, kept: 0 });
+    expect(outcome.attribution).toEqual({
+      adapter: 'never',
+      candidates: plan.elisions.length,
+      kept: 0,
+      skipped: 'no-query',
+    });
+    expect(plan.elisions.length).toBeGreaterThan(0);
   });
 
-  it('does not call the stage when the planner proposed nothing', async () => {
+  it('does not call the stage when the planner proposed nothing, and names that reason', () => {
     const empty: ElisionPlan = { planner: 'lexical/v1', language: 'unknown', elisions: [] };
     const { stage, seen } = spares([]);
-    const outcome = await applyRerank({ stage, plan: empty, text: TEXT, query: 'q' });
-    expect(seen.candidates).toBeUndefined();
-    expect(outcome.attribution.candidates).toBe(0);
+    return applyRerank({ stage, plan: empty, text: TEXT, query: 'q' }).then((outcome) => {
+      expect(seen.candidates).toBeUndefined();
+      expect(outcome.attribution.candidates).toBe(0);
+      expect(outcome.attribution.skipped).toBe('no-candidates');
+    });
+  });
+
+  it('reports no `skipped` at all when the stage actually ran', () => {
+    const { stage } = spares(['0']);
+    return applyRerank({ stage, plan: realPlan(), text: TEXT, query: 'q' }).then((outcome) => {
+      expect(outcome.attribution.skipped).toBeUndefined();
+    });
+  });
+
+  it('wraps whatever the stage throws in a RerankStageError, keeping the cause', async () => {
+    // The failure this catch exists for: a stage is the one part of a run that talks to
+    // another machine, so a timeout or a 401 is an ordinary outcome. Left unwrapped it
+    // reaches a CLI that calls it an internal bug and an MCP handler that crashes past
+    // its envelope — see the CLI and MCP cases in cli-config.test.ts / tools.test.ts.
+    const upstream = new Error('api.voyageai.com did not answer within 30000ms');
+    const failing: RerankStage = {
+      id: 'voyage',
+      rerank: () => Promise.reject(upstream),
+    };
+    const thrown = await applyRerank({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' })
+      .then(() => undefined)
+      .catch((cause: unknown) => cause);
+    expect(thrown).toBeInstanceOf(RerankStageError);
+    expect((thrown as Error).message).toContain('did not answer within 30000ms');
+    expect((thrown as Error).message).toContain('voyage');
+    expect((thrown as { cause?: unknown }).cause).toBe(upstream);
+  });
+
+  it('wraps a stage that throws synchronously too', async () => {
+    const failing: RerankStage = {
+      id: 'sync-thrower',
+      rerank: () => {
+        throw new Error('not implemented yet');
+      },
+    };
+    await expect(
+      applyRerank({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' }),
+    ).rejects.toBeInstanceOf(RerankStageError);
   });
 
   it('carries the stage’s model into the attribution when it names one', async () => {
@@ -188,6 +237,33 @@ describe('a smelter with a stage wired in', () => {
     // One fewer cut, and the spared bytes are back in the output.
     expect(reranked.elisions.length).toBe(plain.elisions.length - 1);
     expect(reranked.outputBytes).toBeGreaterThan(plain.outputBytes);
+  });
+
+  it('can turn an in-budget run into an over-budget one, and the report says so', async () => {
+    // The documented consequence of spare-only, pinned: a reranker cannot cut, so the
+    // bytes it saves can push the output past the budget. That is reported in the same
+    // words a too-large focus window earns — smelt does not re-cut the regions a stage
+    // asked to keep in order to make a number look right.
+    const budgetBytes = 700;
+    const plain = await createSmelter({ strategy: 'lexical' }).smelt(TEXT, {
+      budgetBytes,
+      focus: ['line 30'],
+    });
+    expect(plain.outputBytes).toBeLessThanOrEqual(budgetBytes);
+
+    const keepEverything: RerankStage = {
+      id: 'keeps-all',
+      rerank: (given) => Promise.resolve(given.map((c, i) => ({ ...c, score: 1 - i / 100 }))),
+    };
+    const reranked = await createSmelter({ strategy: 'lexical', rerank: keepEverything }).smelt(
+      TEXT,
+      { budgetBytes, focus: ['line 30'] },
+    );
+    expect(reranked.outputBytes).toBeGreaterThan(budgetBytes);
+    expect(reranked.elisions).toEqual([]);
+    expect(formatReport({ result: reranked, source: 'x', budgetBytes, inputText: TEXT })).toContain(
+      'OVER BUDGET',
+    );
   });
 
   it('stays byte-for-byte reversible over the smaller plan (Law 3 is untouched)', async () => {

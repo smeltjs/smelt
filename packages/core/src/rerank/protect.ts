@@ -61,9 +61,12 @@ export interface RerankOutcome {
 /**
  * Ask the stage which of the planner's proposed elisions to spare, and spare them.
  *
- * @throws {RerankStageError} when the stage answers with an id it was never sent, or
- *   the same id twice. Both are the stage misbehaving, and a repaired answer would hide
- *   it.
+ * @throws {RerankStageError} for **every** way the stage can fail: it threw (a timeout,
+ *   a 401, an unreachable host, an unimplemented stub), it answered with an id it was
+ *   never sent, or it answered with the same id twice. A stage talks to another machine,
+ *   so its failures are expected rather than exceptional — and a plain `Error` escaping
+ *   here would reach a CLI that calls it an internal bug and an MCP handler that crashes
+ *   past its envelope. See {@link RerankStageError}.
  */
 export async function applyRerank(request: RerankRequest): Promise<RerankOutcome> {
   const { stage, plan, text, query } = request;
@@ -73,11 +76,38 @@ export async function applyRerank(request: RerankRequest): Promise<RerankOutcome
   };
 
   const candidates = buildCandidates(plan, text);
-  if (candidates.length === 0 || query.trim() === '') {
-    return { plan, attribution: { ...identity, candidates: 0, kept: 0 } };
+  // Two preconditions the stage cannot supply, each reported as the fact it is rather
+  // than as a zero. `candidates` stays the measured size of the candidate set either
+  // way — the planner really did propose that many — and `skipped` says why nothing was
+  // asked, so a receipt never carries a count nobody took.
+  if (candidates.length === 0) {
+    return {
+      plan,
+      attribution: { ...identity, candidates: 0, kept: 0, skipped: 'no-candidates' },
+    };
+  }
+  if (query.trim() === '') {
+    return {
+      plan,
+      attribution: {
+        ...identity,
+        candidates: candidates.length,
+        kept: 0,
+        skipped: 'no-query',
+      },
+    };
   }
 
-  const ranked = await stage.rerank(candidates, query);
+  let ranked: readonly RerankedCandidate[];
+  try {
+    ranked = await stage.rerank(candidates, query);
+  } catch (cause) {
+    throw new RerankStageError(
+      stage.id,
+      `failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+  }
   const spared = sparedIndices(stage.id, candidates, ranked);
 
   return {
@@ -103,10 +133,17 @@ function buildCandidates(plan: ElisionPlan, text: string): readonly RerankCandid
 }
 
 /**
- * The indices the stage asked to spare — every candidate it returned, since the stage
- * owns how many it returns (Voyage's `top_k`, a consumer's own cut-off). smelt applies
- * no ceiling of its own on top: a K smelt invented would silently decide how much of
- * the caller's context survives, which is Decision 4's ruling wearing a different hat.
+ * The indices the stage asked to spare — **every candidate it returned**, because the
+ * returned list is a selection, not a ranking of everything (see
+ * {@link RerankStage.rerank}). The stage owns its own cut-off: Voyage's `top_k`, a
+ * consumer's own slice. smelt applies no ceiling on top, because a K smelt invented
+ * would silently decide how much of the caller's context survives — Decision 4's ruling
+ * wearing a different hat.
+ *
+ * The consequence a stage author must know, and which the doc comment on `rerank` states
+ * in so many words: returning *all* the candidates spares all of them, so the run emits
+ * its input unchanged and exits 0. That is the one implementation mistake here that
+ * fails silently, which is why it is written down in three places rather than one.
  */
 function sparedIndices(
   stageId: string,

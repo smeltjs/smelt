@@ -93,7 +93,7 @@ interface WizardChoices {
    *
    * `'none'` writes no block and generates nothing, which is what every default run
    * answers. `'module'` generates {@link RERANK_STUB_FILE} *and* points the config at
-   * it. `'voyage'` writes the config block for `@smeltjs/rerank-voyage` and prints the
+   * it. `'voyage'` writes the config block for {@link RERANK_VOYAGE_PACKAGE} and prints the
    * install command and the environment variable to set; it writes no key, ever.
    */
   rerank: RerankChoice;
@@ -787,6 +787,16 @@ import type { RerankCandidate, RerankedCandidate, RerankStage } from /* your ins
 /** The env var YOUR code reads. Rename it to match your vendor. */
 const API_KEY_ENV = 'RERANKER_API_KEY';
 
+/**
+ * How many regions this stage spares from the cut.
+ *
+ * smelt has no default for this and never will: whatever \`rerank\` returns is what smelt
+ * KEEPS, so a K somebody else picked would decide how much of your context survives.
+ * Pick a number you meant \u2014 and note that returning every candidate keeps every
+ * candidate, which makes the run a no-op that exits 0.
+ */
+const TOP_K = 8;
+
 export const rerank: RerankStage = {
   id: 'my-reranker/v1',
   async rerank(
@@ -813,21 +823,32 @@ export const rerank: RerankStage = {
     //     body: JSON.stringify({
     //       query,
     //       documents: candidates.map((candidate) => candidate.text),
+    //       // Your cut-off, and it is not optional. Whatever you return is what smelt
+    //       // SPARES from the cut, so returning every candidate spares every candidate:
+    //       // the output equals the input, nothing errors, and the run exits 0 looking
+    //       // like it worked. Pick a K you meant.
+    //       top_k: TOP_K,
     //     }),
     //   });
     //   if (!response.ok) throw new Error('rerank failed: ' + String(response.status));
     //   const body = (await response.json()) as {
     //     data: { index: number; relevance_score: number }[];
     //   };
-    //   return body.data.map(({ index, relevance_score }) => ({
-    //     ...candidates[index]!,
-    //     score: relevance_score,
-    //   }));
+    //   return body.data
+    //     .map(({ index, relevance_score }) => ({
+    //       ...candidates[index]!,
+    //       score: relevance_score,
+    //     }))
+    //     // Belt and braces: a vendor that ignores top_k must not silently disable
+    //     // every elision on this run.
+    //     .slice(0, TOP_K);
     //
     void candidates;
     void query;
+    void TOP_K;
     throw new Error(
-      'smelt.rerank.ts: implement the outbound call sketched above, then delete this throw.',
+      'smelt.rerank.ts: implement the outbound call sketched above, then delete this throw. ' +
+        'smelt reports this as a RerankStageError naming this stage, not as a crash.',
     );
   },
 };

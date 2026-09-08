@@ -271,6 +271,7 @@ export function standaloneTypecheckViolations(
   const manifest = JSON.parse(readFileSync(join(packed.root, 'package.json'), 'utf8')) as {
     name: string;
     dependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
   };
   // The consumer is built *beside* the extracted tarball, not in a scratch of its own,
   // because TypeScript resolves symlinks before walking up for `node_modules`: a
@@ -285,7 +286,16 @@ export function standaloneTypecheckViolations(
     rmSync(consumer, { recursive: true, force: true });
     mkdirSync(consumer, { recursive: true });
     linkModule(modules, manifest.name, packed.root);
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    // Peers are linked beside the runtime dependencies, and they have to be: a peer is
+    // by contract already in the consumer's tree — that is what makes it a peer rather
+    // than a dependency — so omitting it would report an unresolved import that no real
+    // consumer can see, and every adapter package that implements an interface from its
+    // peer would fail this check for being built correctly.
+    const linked = [
+      ...Object.keys(manifest.dependencies ?? {}),
+      ...Object.keys(manifest.peerDependencies ?? {}),
+    ];
+    for (const dependency of new Set(linked)) {
       linkModule(modules, dependency, dependencyDir(options.packageDir, dependency));
     }
     writeFileSync(

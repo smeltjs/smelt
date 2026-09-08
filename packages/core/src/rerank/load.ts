@@ -119,7 +119,7 @@ async function loadModuleStage(path: string, load: RerankLoad): Promise<RerankSt
 }
 
 /**
- * A `RerankStage` out of `@smeltjs/rerank-voyage` — the opt-in adapter package.
+ * A `RerankStage` out of {@link RERANK_VOYAGE_PACKAGE} — the opt-in adapter package.
  *
  * Three refusals before a byte can leave the machine, and each names its own fix: the
  * `topK` this kind requires, the environment variable that holds the key, and the

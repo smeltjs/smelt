@@ -73,6 +73,9 @@ importers:
 
   packages/rerank-voyage:
     devDependencies:
+      '@smelt/guard-kit':
+        specifier: workspace:*
+        version: link:../guard-kit
       '@smeltjs/core':
         specifier: workspace:*
         version: link:../core

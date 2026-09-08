@@ -16,10 +16,15 @@ import type { RerankCandidate, RerankStage, RerankedCandidate } from '@smeltjs/c
  * that survive. What it gets back is a relevance score per region, and smelt uses it to
  * spare the top ones from the cut. Nothing is written anywhere by this package.
  *
- * The wire contract (`POST https://api.voyageai.com/v1/rerank`, `Authorization: Bearer`,
- * `{query, documents, model, top_k}` in, `{data: [{index, relevance_score}], model,
- * usage}` out) was verified against the live API on 2026-09-08 and against
- * https://docs.voyageai.com/reference/reranker-api.
+ * **Provenance of the wire contract, stated exactly (Law 4).** `POST
+ * https://api.voyageai.com/v1/rerank`, `Authorization: Bearer`, `{query, documents,
+ * model, top_k}` in, `{data: [{index, relevance_score}], model, usage}` out — all of it
+ * **transcribed from https://docs.voyageai.com/reference/reranker-api** (read
+ * 2026-09-08). It has **not** been exercised against the live API from this repository:
+ * no request in this package's history has left a machine, and the test fixture is a
+ * hand-written transcription of the documented response shape rather than a recording of
+ * a real one. The first real call will be somebody's, and if the shape has moved, the
+ * validation in `parseResults` is what will say so.
  */
 
 /** Where the requests go. Stated once so a test can assert the exact URL. */
@@ -36,7 +41,16 @@ export const VOYAGE_RERANK_URL = 'https://api.voyageai.com/v1/rerank';
  */
 export const VOYAGE_MAX_DOCUMENTS = 1000;
 
-/** How long one request may take before it is aborted, in milliseconds. */
+/**
+ * How long **one request** may take before it is aborted, in milliseconds.
+ *
+ * Per request, not per `rerank()` call: a candidate set larger than
+ * {@link VOYAGE_MAX_DOCUMENTS} is split into batches and each batch gets its own budget,
+ * so N batches can take up to N × this. That is the honest reading of a per-request
+ * timeout and it is stated rather than implied — a caller who needs a ceiling on the
+ * whole call should cap `topK` and the candidate set, or wrap the call in their own
+ * deadline.
+ */
 export const VOYAGE_DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
@@ -53,6 +67,21 @@ export interface VoyageResponse {
   text(): Promise<string>;
 }
 
+/**
+ * The two members this adapter puts on an abort signal, stated structurally.
+ *
+ * A real `AbortSignal` satisfies it — one is what is actually passed — but naming the
+ * global in an exported signature would copy it into the shipped `.d.ts`, where it
+ * resolves only for a consumer who happened to pull `@types/node` or the DOM lib into
+ * global scope. That is the exact defect `packages/core` fixed for `Buffer` and `URL`,
+ * and this package's packaging guard holds it to the same rule.
+ */
+export interface VoyageAbortSignal {
+  /** True once the request has been aborted. Read to tell a timeout from a network failure. */
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void): void;
+}
+
 /** The request shape this adapter issues. A test passes a function; production passes `fetch`. */
 export type VoyageFetch = (
   url: string,
@@ -60,7 +89,7 @@ export type VoyageFetch = (
     readonly method: string;
     readonly headers: Readonly<Record<string, string>>;
     readonly body: string;
-    readonly signal: AbortSignal;
+    readonly signal: VoyageAbortSignal;
   },
 ) => Promise<VoyageResponse>;
 
@@ -81,7 +110,11 @@ export interface VoyageRerankOptions {
    * survives.
    */
   readonly topK: number;
-  /** Milliseconds before a request is aborted. Defaults to {@link VOYAGE_DEFAULT_TIMEOUT_MS}. */
+  /**
+   * Milliseconds before **one request** is aborted — per batch, not per `rerank()` call.
+   * Defaults to {@link VOYAGE_DEFAULT_TIMEOUT_MS}, whose docblock spells out the
+   * consequence for a multi-batch call.
+   */
   readonly timeoutMs?: number;
   /** Injected for tests. Defaults to the runtime's own `fetch`. */
   readonly fetch?: VoyageFetch;
@@ -101,7 +134,13 @@ export function createVoyageRerankStage(options: VoyageRerankOptions): RerankSta
   const timeoutMs = options.timeoutMs ?? VOYAGE_DEFAULT_TIMEOUT_MS;
   // `globalThis.fetch` is the one network call in this workspace. It is spelled here,
   // in the package whose README, description and docblock all say so.
-  const send: VoyageFetch = options.fetch ?? ((url, init) => globalThis.fetch(url, init));
+  // The cast is the one place the structural signal meets the real one: a
+  // `VoyageAbortSignal` here is always the `controller.signal` built below, which is a
+  // genuine AbortSignal — the interface exists to keep the global out of the shipped
+  // declarations, not to admit anything else.
+  const send: VoyageFetch =
+    options.fetch ??
+    ((url, init) => globalThis.fetch(url, { ...init, signal: init.signal as AbortSignal }));
 
   return {
     id: 'voyage',
@@ -198,11 +237,18 @@ async function rankBatch(
 }
 
 /**
- * Voyage's answer, validated rather than trusted.
+ * Voyage's answer, validated rather than trusted — and every complaint blamed on the
+ * **wire**, because that is where it happened.
  *
  * A reranker's answer decides what a caller's model does and does not see, so a shape
  * this adapter cannot read is an error naming what came back — never an empty list,
  * which would read as "nothing was relevant" and silently let every region be cut.
+ *
+ * The shape is transcribed from Voyage's published reference and has never been checked
+ * against a live response from this repository (see the module docblock), which is
+ * precisely why the checks below are strict: if the documented shape and the real one
+ * have diverged, a reader should learn it from a message naming the offending entry, not
+ * from a plan that quietly kept the wrong regions.
  */
 function parseResults(body: string, batchSize: number): readonly VoyageResult[] {
   let parsed: unknown;
@@ -222,20 +268,42 @@ function parseResults(body: string, batchSize: number): readonly VoyageResult[] 
       `${VOYAGE_RERANK_URL} answered without a \`data\` array: ${body.slice(0, 200)}`,
     );
   }
+  const seen = new Set<number>();
   return data.map((entry) => {
     const result = entry as { index?: unknown; relevance_score?: unknown };
     if (
       typeof result.index !== 'number' ||
       !Number.isInteger(result.index) ||
       result.index < 0 ||
-      result.index >= batchSize ||
-      typeof result.relevance_score !== 'number'
+      result.index >= batchSize
     ) {
       throw new Error(
-        `${VOYAGE_RERANK_URL} returned an entry smelt cannot read: ${JSON.stringify(entry)}`,
+        `${VOYAGE_RERANK_URL} returned an entry whose \`index\` is not a position in the ` +
+          `${String(batchSize)} documents that were sent: ${JSON.stringify(entry)}`,
       );
     }
-    return { index: result.index, relevance_score: result.relevance_score };
+    // A duplicate index is the wire's mistake, not the caller's stage misbehaving, and
+    // it must be blamed where it happened: left to reach smelt it would surface as a
+    // RerankStageError about "the same id twice", pointing every reader at the adapter's
+    // own contract instead of at the response that broke it.
+    if (seen.has(result.index)) {
+      throw new Error(
+        `${VOYAGE_RERANK_URL} returned index ${String(result.index)} twice in one batch. ` +
+          `One document ranks once; a duplicate makes "how many were kept" unreadable.`,
+      );
+    }
+    seen.add(result.index);
+    // `Number.isFinite`, not `typeof === 'number'`: JSON cannot carry NaN or Infinity,
+    // but a proxy, a gateway or a future field could, and a NaN score sorts
+    // unpredictably — the same input would produce different plans on different runs,
+    // which is the one property this adapter's sort exists to protect.
+    if (!Number.isFinite(result.relevance_score)) {
+      throw new Error(
+        `${VOYAGE_RERANK_URL} returned a \`relevance_score\` that is not a finite number: ` +
+          `${JSON.stringify(entry)}`,
+      );
+    }
+    return { index: result.index, relevance_score: result.relevance_score as number };
   });
 }
 

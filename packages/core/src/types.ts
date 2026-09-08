@@ -466,7 +466,26 @@ export interface RerankStage {
    * `voyage/rerank-2.5` is a fact where `reranked` is a rumour.
    */
   readonly model?: string;
-  /** May make network calls — that is the consumer's choice, made in the consumer's code. */
+  /**
+   * Rank `candidates` against `query` and return **the selection to spare** — not a
+   * ranking of everything you were given.
+   *
+   * This is the one thing about the contract a stage author must get right, and the one
+   * mistake here that fails silently. The candidates are the regions a planner has
+   * already decided to remove; every entry you return is a region smelt will therefore
+   * *not* remove. So returning all of them spares all of them: the run emits its input
+   * unchanged, under budget or not, and exits 0 with a report saying every candidate was
+   * kept. Nothing errors, because nothing is wrong — you asked for everything back.
+   *
+   * Apply your own cut-off before returning: a hosted reranker's `top_k`, a
+   * `.slice(0, k)`, a threshold you chose. smelt applies none on top of yours, because a
+   * K smelt invented would silently decide how much of the caller's context survives.
+   *
+   * May make network calls — that is the consumer's choice, made in the consumer's code.
+   * Throwing is fine and expected: smelt wraps whatever comes out in a
+   * {@link RerankStageError}, so a timeout or a 401 is reported as the refusal it is
+   * rather than as a bug in smelt.
+   */
   rerank(
     candidates: readonly RerankCandidate[],
     query: string,
@@ -478,24 +497,37 @@ export interface RerankStage {
  *
  * Law 2 says every elision is explainable and Law 4 says no number is unmeasured. A
  * stage that reaches the network on the caller's behalf owes both: **which** ranker ran,
- * how many regions were sent to it, and how many of them it saved from the cut. Every
+ * how many regions were at stake, and how many of them it saved from the cut. Every
  * surface renders this one value — the stderr report, the `--json` envelope (inside
  * `result`, so the receipt and the report cannot disagree) and the `smelt_file` report
  * block — so no front door assembles an attribution of its own.
  *
- * `candidates === 0` is a real answer, not a missing one: a run whose planner proposed
- * nothing to cut, or one with no focus terms to rank against, still says the stage was
- * configured and states that it had nothing to do.
+ * A run where the stage was never called still produces one of these, and says so in
+ * {@link skipped} rather than by reporting a zero nobody measured: "configured and had
+ * nothing to do" and "configured and never ran" are different facts, and one of them is
+ * a misconfiguration.
  */
 export interface RerankAttribution {
   /** {@link RerankStage.id} — `'voyage'`, `'module/./smelt.rerank.ts'`. */
   readonly adapter: string;
   /** {@link RerankStage.model}, when the stage names one. Never invented. */
   readonly model?: string;
-  /** Regions the planner proposed to elide, and the stage was asked to rank. */
+  /**
+   * Regions the planner proposed to elide — the candidate set, counted off the plan.
+   * Always the measured size, including when {@link skipped} says the stage never saw
+   * them: the planner really did propose that many, and reporting `0` because nothing
+   * was sent would be a count nobody took.
+   */
   readonly candidates: number;
-  /** Of those, how many the stage ranked highest and smelt therefore did **not** cut. */
+  /** Of those, how many the stage returned and smelt therefore did **not** cut. */
   readonly kept: number;
+  /**
+   * Present exactly when the stage was **not** called, naming the precondition it could
+   * not supply: `'no-candidates'` (the planner proposed nothing to cut) or `'no-query'`
+   * (the run named no focus terms, and a ranker with no query would be scoring against
+   * the empty string and calling the result relevance). Absent means the stage ran.
+   */
+  readonly skipped?: 'no-candidates' | 'no-query';
 }
 
 /**

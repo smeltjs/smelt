@@ -14,7 +14,7 @@ import {
 import type { VoyageFetch, VoyageResponse } from '../src/index.ts';
 
 /**
- * The adapter, against a **recorded fixture** and never against Voyage.
+ * The adapter, against a **transcribed fixture** and never against Voyage.
  *
  * `fetch` is a constructor option for exactly this reason: the one package in the
  * workspace that can reach the network must still have a suite that cannot. Every case
@@ -22,9 +22,13 @@ import type { VoyageFetch, VoyageResponse } from '../src/index.ts';
  * request body's exact shape, the index-to-candidate mapping, batching at Voyage's
  * documented ceiling, tie stability, and each refusal.
  *
- * The fixture (`fixtures/rerank-2.5-response.json`) is the response shape from Voyage's
- * own reference, including its quantised scores — two of the three tie, which is what
- * makes the stability case real rather than contrived.
+ * **What the fixture is, exactly (Law 4).** `fixtures/rerank-2.5-response.json` is
+ * hand-written from the response shape published at
+ * https://docs.voyageai.com/reference/reranker-api (read 2026-09-08), including that
+ * page's own quantised scores — two of the three tie, which is what makes the stability
+ * case real rather than contrived. It is **not a recording**: no request has been made
+ * to Voyage from this repository, so these tests prove the adapter matches the
+ * *documented* contract and cannot prove the documented contract matches the live one.
  */
 
 const FIXTURE = readFileSync(
@@ -210,7 +214,31 @@ describe('every refusal says which thing went wrong', () => {
     await expect(stage(fetch).rerank(candidates(1), 'q')).rejects.toThrow(/without a `data` array/);
 
     const outOfRange = recorder(['{"data":[{"index":9,"relevance_score":0.5}]}']);
-    await expect(stage(outOfRange.fetch).rerank(candidates(1), 'q')).rejects.toThrow(/cannot read/);
+    await expect(stage(outOfRange.fetch).rerank(candidates(1), 'q')).rejects.toThrow(
+      /`index` is not a position in the 1 documents that were sent/,
+    );
+  });
+
+  it('refuses a duplicate index, and blames the wire rather than the stage', async () => {
+    // Left to reach smelt, a duplicate would surface as a RerankStageError about "the
+    // same id twice" — pointing every reader at this adapter's contract with smelt
+    // instead of at the response that actually broke.
+    const doubled = recorder([
+      '{"data":[{"index":0,"relevance_score":0.9},{"index":0,"relevance_score":0.4}]}',
+    ]);
+    await expect(stage(doubled.fetch).rerank(candidates(2), 'q')).rejects.toThrow(
+      /returned index 0 twice in one batch/,
+    );
+  });
+
+  it('refuses a non-finite relevance_score — a NaN sorts unpredictably', async () => {
+    // JSON cannot carry NaN, but a proxy, a gateway or a future field can, and a NaN in
+    // the sort would make one input produce different plans on different runs. That is
+    // the one property this adapter's sort exists to protect.
+    const notANumber = recorder(['{"data":[{"index":0,"relevance_score":null}]}']);
+    await expect(stage(notANumber.fetch).rerank(candidates(1), 'q')).rejects.toThrow(
+      /`relevance_score` that is not a finite number/,
+    );
   });
 
   it('never puts the API key in an error', async () => {
