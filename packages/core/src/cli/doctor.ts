@@ -340,7 +340,7 @@ function probeHookFiles(
       file: file.file,
       harness: file.harness,
       entries: file.entries.map((entry) => {
-        const key = `${file.harness} ${JSON.stringify(entry.command)}`;
+        const key = `${file.harness}\0${JSON.stringify(entry.command)}`;
         let probe = seen.get(key);
         if (probe === undefined) {
           probe =
