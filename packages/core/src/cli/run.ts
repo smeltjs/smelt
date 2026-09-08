@@ -24,8 +24,14 @@ export type {
   SmeltInvocation,
   StatsInvocation,
 } from './args.ts';
-export { formatAgentsReport, formatMapReport, formatReport } from './report.ts';
-export type { AgentsReportInput, MapReportInput, ReportInput } from './report.ts';
+export {
+  formatAgentsReport,
+  formatMapReport,
+  formatPruneReport,
+  formatReport,
+  formatStoreSize,
+} from './report.ts';
+export type { AgentsReportInput, MapReportInput, PruneReportInput, ReportInput } from './report.ts';
 export { CLI_JSON_FORMAT, resolveRun } from './subcommands/smelt.ts';
 export type { CliJsonEnvelope, ResolvedRun } from './subcommands/smelt.ts';
 export { CLI_MAP_JSON_FORMAT, resolveMapRun } from './subcommands/map.ts';
@@ -34,6 +40,8 @@ export { resolveStoreRun } from './subcommands/retrieve.ts';
 export type { ResolvedStoreRun } from './subcommands/retrieve.ts';
 export { CLI_STATS_JSON_FORMAT } from './subcommands/stats.ts';
 export type { CliStatsJsonEnvelope } from './subcommands/stats.ts';
+export { CLI_PRUNE_JSON_FORMAT } from './subcommands/store.ts';
+export type { CliPruneJsonEnvelope, StoreInvocation } from './subcommands/store.ts';
 export { CLI_AGENTS_JSON_FORMAT, resolveAgentsRun } from './subcommands/agents.ts';
 export type { CliAgentsJsonEnvelope, ResolvedAgentsRun } from './subcommands/agents.ts';
 

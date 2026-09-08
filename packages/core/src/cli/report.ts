@@ -3,6 +3,7 @@ import { overBudgetBytes } from '../agents/lint.ts';
 import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
 import type { ResolvedFocus } from '../ops/verbs.ts';
 import type { RepoMap } from '../repomap/map.ts';
+import type { PruneReport } from '../store-dir.ts';
 import type { RerankAttribution, SmeltResult } from '../types.ts';
 
 import { CONFIG_FILE_NAME } from './config.ts';
@@ -438,4 +439,91 @@ function count(n: number, noun: string, pluralSuffix = 's'): string {
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+/**
+ * `3 blobs, 1.2 KB` — one store's size, as prose.
+ *
+ * It lives here, with every other rendering, because two surfaces print it: the
+ * `smelt doctor` config line and the `smelt store prune` header. Both read the same
+ * two integers off a structured field (`DoctorConfig.store.blobs`/`.bytes`,
+ * `PruneReport`), and the exact bytes stay in those fields — this is the *rendering*
+ * of them, so a reader who needs the number to the byte reads the receipt rather than
+ * a rounded KB.
+ */
+export function formatStoreSize(blobs: number, bytes: number): string {
+  return `${count(blobs, 'blob')}, ${formatBytes(bytes)}`;
+}
+
+/**
+ * Bytes for a human: exact under a kibibyte, one decimal above it. Deliberately not a
+ * measurement — every byte count smelt *claims* is an integer in a receipt, and this
+ * only decides how to print one.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${group(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** What {@link formatPruneReport} renders: the store's own report, plus its naming. */
+export interface PruneReportInput {
+  readonly report: PruneReport;
+  /** The store directory the prune ran against, as resolved. */
+  readonly storePath: string;
+  /** The cut-off the user typed — `30d`, echoed rather than re-derived from a Date. */
+  readonly olderThan: string;
+  /** Whether `--keep-retrieved` was in force, so the report can say what spared a blob. */
+  readonly keepRetrieved: boolean;
+}
+
+/**
+ * The `smelt store prune` report, for stdout.
+ *
+ * Every number here is read straight off the {@link PruneReport} the store returned —
+ * the CLI counts nothing itself, for the same reason `formatReport` counts nothing
+ * itself: two pieces of code counting the same bytes is how a report ends up
+ * disagreeing with the thing it is reporting on, and this report is about bytes that
+ * are now gone.
+ *
+ * The closing sentence is not decoration. A prune is the only deletion in smelt, and a
+ * user who runs it should leave knowing exactly what a later `retrieve` of one of these
+ * hashes will say.
+ */
+export function formatPruneReport({
+  report,
+  storePath,
+  olderThan,
+  keepRetrieved,
+}: PruneReportInput): string {
+  const lines: string[] = [];
+  lines.push(
+    `${CLI_NAME} store prune${report.dryRun ? ' --dry-run' : ''}  ${storePath}  ` +
+      `older than ${olderThan}${keepRetrieved ? ', keeping retrieved' : ''}`,
+  );
+  lines.push(
+    `scanned ${count(report.scanned, 'blob')}  ` +
+      `${report.dryRun ? 'would evict' : 'evicted'} ${group(report.evicted.length)}  ` +
+      `kept ${group(report.kept)}  ` +
+      `${report.dryRun ? 'would free' : 'freed'} ${formatBytes(report.bytesFreed)}`,
+  );
+
+  if (report.evicted.length === 0) {
+    lines.push('');
+    lines.push('  nothing was old enough — no bytes left this store.');
+    return `${lines.join('\n')}\n`;
+  }
+
+  lines.push('');
+  for (const blob of report.evicted) {
+    lines.push(`  ${blob.hash}  ${formatBytes(blob.bytes).padStart(9)}  ${blob.putAt}`);
+  }
+  lines.push('');
+  lines.push(
+    report.dryRun
+      ? '  Nothing was deleted. Run the same command without --dry-run to evict these.'
+      : '  These bytes are gone. A retrieve of one of these hashes now answers\n' +
+          '  EvictedHashError, naming the date — never "it was never elided".',
+  );
+  return `${lines.join('\n')}\n`;
 }

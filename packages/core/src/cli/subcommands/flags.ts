@@ -54,6 +54,9 @@ export const CLI_FLAGS = {
    * install is healthy while nothing is wired.
    */
   scope: { type: 'string' },
+  'older-than': { type: 'string' },
+  'keep-retrieved': { type: 'boolean' },
+  'dry-run': { type: 'boolean' },
   yes: { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
   /**
@@ -248,6 +251,32 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       "and each harness file goes to that harness's own documented",
       'user-level location; one that documents none is reported skipped,',
       'never guessed.',
+    ],
+  },
+  'older-than': {
+    label: '--older-than <age>',
+    body: () => [
+      'Required by prune: the age cut, as <n>d, <n>h or <n>w',
+      '(whole numbers, at least 1). Blobs last written before it',
+      'are evicted. There is no default — a cut-off',
+      `${CLI_NAME} invented would decide which of your elisions stop`,
+      'being reversible.',
+    ],
+  },
+  'keep-retrieved': {
+    label: '--keep-retrieved',
+    body: () => [
+      'Spare any hash the journal shows was retrieved at',
+      'least once, however old it is: material the model has',
+      'asked for once it may ask for again.',
+    ],
+  },
+  'dry-run': {
+    label: '--dry-run',
+    body: () => [
+      'List what would be evicted and free nothing. The',
+      'report is otherwise identical, so the two runs compare',
+      'field for field.',
     ],
   },
   yes: {

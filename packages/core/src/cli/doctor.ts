@@ -8,6 +8,7 @@ import { hasShim } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
 import { resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
+import { readStoreSize } from '../store-dir.ts';
 
 import {
   CONFIG_FILE_NAME,
@@ -17,6 +18,7 @@ import {
 } from './config.ts';
 import type { SmeltConfig } from './config.ts';
 import { readInstalledState } from './installed.ts';
+import { formatStoreSize } from './report.ts';
 import type {
   InstalledBlock,
   InstalledConfig,
@@ -105,6 +107,19 @@ export type DoctorConfig = Pick<InstalledConfig, 'present' | 'malformed'> & {
     readonly kind?: 'directory' | 'memory';
     readonly path?: string;
     readonly dirExists?: boolean;
+    /**
+     * How many blobs the store directory holds, and how many bytes they are — present
+     * only for a directory store that exists and is readable.
+     *
+     * They are two structured receipt fields rather than a sentence, because a
+     * receipt is what an agent reads: `store.bytes` is the exact integer, and the
+     * prose line doctor prints is a rendering of it (`formatStoreSize`). Read
+     * **without opening the store** — see `readStoreSize`. Doctor never writes, and
+     * constructing a store to ask it for `stats()` would author the very directory it
+     * is reporting on.
+     */
+    readonly blobs?: number;
+    readonly bytes?: number;
   };
 };
 
@@ -223,10 +238,12 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     } else {
       const parsed = state.config.parsed;
       const configPath = state.config.path ?? join(root, CONFIG_FILE_NAME);
-      const dirExists =
+      const storeDir =
         parsed.store?.kind === 'directory'
-          ? existsSync(join(dirname(configPath), parsed.store.path))
+          ? join(dirname(configPath), parsed.store.path)
           : undefined;
+      const dirExists = storeDir === undefined ? undefined : existsSync(storeDir);
+      const size = storeDir === undefined || !dirExists ? undefined : readStoreSize(storeDir);
       config = {
         present: true,
         schemaVersion: parsed.smeltConfig,
@@ -238,6 +255,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
           ...(parsed.store === undefined ? {} : { kind: parsed.store.kind }),
           ...(parsed.store?.kind === 'directory' ? { path: parsed.store.path } : {}),
           ...(dirExists === undefined ? {} : { dirExists }),
+          ...(size === undefined ? {} : { blobs: size.blobs, bytes: size.bytes }),
         },
       };
       if (parsed.store?.kind === 'directory' && dirExists === false) {
@@ -490,10 +508,19 @@ function describeWiring(file: DoctorHookFile | undefined): string {
   return 'wired (verified)';
 }
 
+
+/**
+ * The store, as one clause of the config line. The size half is rendered from the two
+ * receipt fields rather than counted here — one arithmetic, two surfaces.
+ */
 function describeStore(config: DoctorConfig): string {
   if (config.store.kind === undefined) return 'unset';
   if (config.store.kind === 'memory') return 'memory';
+  const size =
+    config.store.blobs === undefined || config.store.bytes === undefined
+      ? ''
+      : ` — ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
   return `directory at ${config.store.path ?? ''} (${
     config.store.dirExists ? 'present' : 'MISSING'
-  })`;
+  })${size}`;
 }

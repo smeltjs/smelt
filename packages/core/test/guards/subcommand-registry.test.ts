@@ -35,7 +35,7 @@ import type { GuardMutation } from './_mutations.ts';
  * a registry that is its own witness proves nothing.
  */
 
-/** Restated by hand: the eight verbs, and a minimal way to invoke each. */
+/** Restated by hand: the ten verbs, and a minimal way to invoke each. */
 const SHIPPED: Record<Verb, readonly string[]> = {
   smelt: [],
   init: ['init'],
@@ -46,6 +46,7 @@ const SHIPPED: Record<Verb, readonly string[]> = {
   agents: ['agents', 'lint'],
   setup: ['setup'],
   doctor: ['doctor'],
+  store: ['store', 'prune'],
 };
 const SHIPPED_VERBS = Object.keys(SHIPPED).toSorted();
 
@@ -60,6 +61,9 @@ const FLAG_ARGV: Record<VerbFlag, readonly string[]> = {
   cache: ['--cache', '.smelt-tags'],
   harness: ['--harness', 'codex'],
   scope: ['--scope', 'project'],
+  'older-than': ['--older-than', '30d'],
+  'keep-retrieved': ['--keep-retrieved'],
+  'dry-run': ['--dry-run'],
   yes: ['--yes'],
   'no-mcp': ['--no-mcp'],
   guard: ['--guard', 'on'],
@@ -82,6 +86,7 @@ const OWNED: Record<Verb, readonly VerbFlag[]> = {
   agents: ['strict', 'json'],
   setup: ['harness', 'scope', 'yes', 'no-mcp', 'json', 'guard', 'stats', 'map', 'lint'],
   doctor: ['scope', 'json'],
+  store: ['older-than', 'keep-retrieved', 'dry-run', 'json'],
 };
 
 /** How a verb is named in its own refusal — the default verb has no word to use. */
