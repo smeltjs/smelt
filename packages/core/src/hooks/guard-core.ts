@@ -1,9 +1,11 @@
 import { readSync, statSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 import { focusTermsFor, searchPattern, shellQuote, simpleCommandWords } from './focus-terms.ts';
+import { isSameFile, smeltOnPath, stableScriptPath } from './invocation.ts';
+import type { SmeltInvocationOptions } from './invocation.ts';
 
 /**
  * The command parsing lives in `./focus-terms.ts` — a zero-import sibling, so the
@@ -17,6 +19,22 @@ export {
   shellQuote,
   simpleCommandWords,
 } from './focus-terms.ts';
+export {
+  isSameFile,
+  pathStability,
+  smeltInvocation,
+  smeltOnPath,
+  stableBinPath,
+  stableGuardCorePath,
+  stableScriptPath,
+  stableShimPath,
+} from './invocation.ts';
+export type {
+  InvocationFs,
+  PathStability,
+  SmeltInvocation,
+  SmeltInvocationOptions,
+} from './invocation.ts';
 
 /**
  * The guard core — one zero-dependency node module, shared by every harness shim.
@@ -71,26 +89,58 @@ export type EnforcementMode = (typeof ENFORCEMENT_MODES)[number];
 export const GUARD_CONFIG_FILE_NAME = 'smelt.config.json';
 
 /**
- * The runnable CLI name every reason and suggestion quotes. A local (non-global)
- * `npm install @smeltjs/core` puts no `smelt` on anyone's PATH — the installer wires
- * every shim as `node "<dist path>"` for exactly that reason — so a suggestion
- * saying bare `smelt` would exit 127 the moment the model (or a rewrite-mode
- * harness) ran it. When this module's sibling `cli/bin.js` exists — the shipped
- * `dist/` layout every real run executes from — the command names it through `node`
- * explicitly; the bare name is only the fallback for layouts where the sibling is
- * absent (the source tree under the test runner).
+ * The runnable CLI name every reason and suggestion quotes.
+ *
+ * Ranked the way `invocation.ts` ranks everything smelt writes down, with one
+ * difference this module's own layout forces: the script rung names *this module's
+ * sibling* `cli/bin.js` rather than the package `dist`, because a shim only ever runs
+ * from the built tree and a source-tree run (the test runner) must fall back to the
+ * bare name rather than quoting a file the build has not produced yet.
+ *
+ *  1. `smelt` on PATH — a global install, a Homebrew install, a linked workspace.
+ *  2. `node "<the stable spelling of the sibling bin>"` — a local (non-global)
+ *     `npm install @smeltjs/core` puts no `smelt` on anyone's PATH, so a suggestion
+ *     saying bare `smelt` would exit 127 the moment the model ran it. The spelling
+ *     goes through {@link stableScriptPath}, so a Homebrew install quotes the `opt`
+ *     alias and not the versioned keg the next upgrade deletes.
+ *  3. The bare name, for layouts where the sibling is absent.
+ *
+ * **Called when a reason is rendered, never at module load.** The frozen-at-import
+ * constant this replaced meant the deny reason could not be tested without the real
+ * machine's PATH, and pinned an answer taken before the process knew its own
+ * environment. Every call site here is on the deny path — the allow case is still a
+ * stat and an exit.
+ *
+ * **Memoised for the process, lazily.** One rendered deny reason asks three times
+ * (the replacement, the retrieve sentence spliced into it, and the rewrite wrap), and
+ * each ask is a stat per PATH directory. The answer cannot change inside one hook
+ * process, so the first call pays and the rest read. An *injected* call — a test
+ * handing over `env`, `fs` or `distDir` — never reads or writes the memo, because a
+ * cache shared between the real machine and a fixture is a test that passes for the
+ * wrong reason.
  */
-export function smeltCliCommand(): string {
+let memoisedCliCommand: string | undefined;
+
+export function smeltCliCommand(options: SmeltInvocationOptions = {}): string {
+  const injected =
+    options.env !== undefined || options.fs !== undefined || options.distDir !== undefined;
+  if (!injected && memoisedCliCommand !== undefined) return memoisedCliCommand;
+  const command = deriveSmeltCliCommand(options);
+  if (!injected) memoisedCliCommand = command;
+  return command;
+}
+
+function deriveSmeltCliCommand(options: SmeltInvocationOptions): string {
+  const onPath = smeltOnPath(options.env, options.fs);
+  if (onPath !== undefined) return 'smelt';
   try {
     const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'bin.js');
-    if (existsSync(bin)) return `node ${shellQuote(bin)}`;
+    if (existsSync(bin)) return `node ${shellQuote(stableScriptPath(bin, options.fs))}`;
   } catch {
     // fall through to the PATH name
   }
   return 'smelt';
 }
-
-const SMELT_CLI = smeltCliCommand();
 
 /** What a shim hands the guard core: the harness schema already mapped away. */
 export interface GuardRequest {
@@ -404,7 +454,7 @@ function decideBash(
     // resolves a `--producer` hint in the ops seam, so both doors agree with this wrap.
     const focus = focusTermsFor(command);
     const focused = focus.map((term) => ` --focus ${shellQuote(term)}`).join('');
-    const wrapped = `${command} | ${SMELT_CLI} --budget ${String(settings.budgetBytes)}${focused}`;
+    const wrapped = `${command} | ${smeltCliCommand()} --budget ${String(settings.budgetBytes)}${focused}`;
     return {
       action: 'deny',
       reason:
@@ -426,9 +476,10 @@ function decideBash(
  * memory store dies with the process and `retrieve` then refuses (`resolveStoreRun`).
  */
 function retrieveSentence(settings: GuardSettings): string {
+  const cli = smeltCliCommand();
   return settings.persistentStore
-    ? `\`${SMELT_CLI} retrieve <hash>\` prints any marker's bytes back, byte for byte.`
-    : `\`${SMELT_CLI} retrieve <hash>\` can print a marker's bytes back once a persistent ` +
+    ? `\`${cli} retrieve <hash>\` prints any marker's bytes back, byte for byte.`
+    : `\`${cli} retrieve <hash>\` can print a marker's bytes back once a persistent ` +
         `store is configured ({"store":{"kind":"directory","path":…}} in smelt.config.json — ` +
         `\`smelt hooks install\` writes one); without it the elided bytes die with the ` +
         `smelt process.`;
@@ -441,7 +492,7 @@ function denyOversized(
   settings: GuardSettings,
   what: string,
 ): GuardDecision {
-  const replacement = `${SMELT_CLI} ${shellQuote(path)} --budget ${String(settings.budgetBytes)}`;
+  const replacement = `${smeltCliCommand()} ${shellQuote(path)} --budget ${String(settings.budgetBytes)}`;
   return {
     action: 'deny',
     reason:
@@ -459,12 +510,22 @@ function denyOversized(
  * Process plumbing, for the shims that run as one
  * ---------------------------------------------------------------------------------- */
 
-/** True when this module is the file node was asked to run, not an import. */
+/**
+ * True when this module is the file node was asked to run, not an import.
+ *
+ * The compare is {@link isSameFile}, not a string or URL compare, because **node
+ * realpaths the ESM main entry**: reached through any symlink — Homebrew's
+ * `<prefix>/opt/<name>` alias, a `pnpm link`, a hand-made `dist` alias — `argv[1]` and
+ * `import.meta.url` name the same file with two different spellings. A string compare
+ * therefore said "not main" on exactly the installs that matter, `runShimMain` never
+ * ran, and every shim exited 0 with empty stdout: a guard that is silently inert,
+ * which is the one failure mode worse than a guard that is loud and wrong.
+ */
 export function isMainModule(moduleUrl: string): boolean {
   const entry = process.argv[1];
   if (entry === undefined) return false;
   try {
-    return pathToFileURL(entry).href === moduleUrl;
+    return isSameFile(entry, fileURLToPath(moduleUrl));
   } catch {
     return false;
   }

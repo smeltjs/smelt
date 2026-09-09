@@ -21,7 +21,7 @@ import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
  * nothing could see them drift from what the shims print.
  */
 function opencodePluginSource(ctx: HarnessInstallContext): string {
-  const guardCore = portablePath(ctx.cwd, guardCoreScriptPath());
+  const guardCore = portablePath(ctx.cwd, guardCoreScriptPath(ctx.distDir));
   return `// smelt:hooks v1 — opencode plugin shim. EXPERIMENTAL tier: mapped from the
 // capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, opencode
 // row; https://opencode.ai/docs/plugins/). This template's deny/pass/window paths

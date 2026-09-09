@@ -15,11 +15,14 @@ import {
   searchPattern,
   shellQuote,
   simpleCommandWords,
+  smeltCliCommand,
 } from '../src/hooks/guard-core.ts';
 import type { GuardSettings } from '../src/hooks/guard-core.ts';
+import type { InvocationFs } from '../src/hooks/invocation.ts';
 import { parseConfig } from '../src/cli/config.ts';
 import { renderConfigWithHooks } from '../src/cli/hooks.ts';
 import { packageRoot } from './guards/_source.ts';
+import { envWithoutSmelt, envWithSmeltOnPath } from './hooks-fixtures.ts';
 
 /**
  * The guard core, unit by unit: threshold, windows, suggestion rendering, config
@@ -381,6 +384,42 @@ describe('parseGuardRequest', () => {
   });
 });
 
+describe('smeltCliCommand — the command a deny reason quotes', () => {
+  /** A machine with an executable `smelt` in one PATH directory, and nothing else. */
+  const withSmelt: InvocationFs = {
+    existsSync: () => false,
+    realpathSync: (path) => path,
+    statSync: (path) => {
+      if (path !== '/fake/bin/smelt') throw new Error('ENOENT');
+      return { isFile: () => true, mode: 0o755 };
+    },
+  };
+  const withoutSmelt: InvocationFs = {
+    existsSync: () => false,
+    realpathSync: (path) => path,
+    statSync: () => {
+      throw new Error('ENOENT');
+    },
+  };
+
+  it('names the bare `smelt` where one is on PATH, and node the sibling bin where none is', () => {
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withSmelt })).toBe('smelt');
+    // From the source tree the sibling cli/bin.js does not exist, so the last-resort
+    // bare name is what remains — the built tree is covered by the dist cases below.
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withoutSmelt })).toBe('smelt');
+  });
+
+  it('memoises the uninjected answer, and an injected call neither reads nor writes it', () => {
+    // One rendered deny reason asks three times; the answer cannot change inside a
+    // hook process. What must not happen is a fixture leaking into the memo (or the
+    // memo answering a fixture), which is what the second half pins.
+    const first = smeltCliCommand();
+    expect(smeltCliCommand()).toBe(first);
+    expect(smeltCliCommand({ env: { PATH: '/fake/bin' }, fs: withSmelt })).toBe('smelt');
+    expect(smeltCliCommand(), 'the injected call must not have overwritten the memo').toBe(first);
+  });
+});
+
 describe('the built module (dist/hooks/guard-core.js) — the artifact the opencode plugin imports', () => {
   const script = join(packageRoot(), 'dist', 'hooks', 'guard-core.js');
 
@@ -408,7 +447,7 @@ describe('the built module (dist/hooks/guard-core.js) — the artifact the openc
           script,
           big,
         ],
-        { encoding: 'utf8', cwd: dir },
+        { encoding: 'utf8', cwd: dir, env: envWithoutSmelt() },
       );
       expect(run.status, run.stderr).toBe(0);
       const decision = JSON.parse(run.stdout) as {
@@ -419,10 +458,43 @@ describe('the built module (dist/hooks/guard-core.js) — the artifact the openc
       expect(decision.action).toBe('deny');
       expect(decision.reason).toContain(big);
       expect(decision.reason).toContain('retrieve <hash>');
-      // From dist, the sibling cli/bin.js exists, so the suggestion is runnable on a
-      // local (non-global) install — never a bare `smelt` that would exit 127.
+      // With no `smelt` on PATH the sibling cli/bin.js is named through node, so the
+      // suggestion is runnable on a local (non-global) install — never a bare `smelt`
+      // that would exit 127.
       expect(decision.suggestion).toContain('cli/bin.js');
       expect(decision.suggestion).toMatch(/^node /);
+      // And never the versioned Homebrew keg, which the next upgrade deletes.
+      expect(decision.suggestion).not.toContain('/Cellar/');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('names the bare `smelt` when one is on PATH — the global install, one word', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'smelt-guard-e2e-path-'));
+    try {
+      const big = join(dir, 'big.log');
+      writeFileSync(big, 'x'.repeat(DEFAULT_THRESHOLD_BYTES + 1));
+      const bin = mkdtempSync(join(tmpdir(), 'smelt-guard-bin-'));
+      const run = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `import { pathToFileURL } from 'node:url';` +
+            `const core = await import(pathToFileURL(process.argv[1]).href);` +
+            `const settings = core.readGuardSettings(process.cwd(), () => {});` +
+            `const request = { tool: 'Read', input: { path: process.argv[2] } };` +
+            `process.stdout.write(JSON.stringify(core.decide(request, settings, process.cwd())));`,
+          script,
+          big,
+        ],
+        { encoding: 'utf8', cwd: dir, env: envWithSmeltOnPath(bin) },
+      );
+      expect(run.status, run.stderr).toBe(0);
+      const decision = JSON.parse(run.stdout) as { suggestion?: string };
+      expect(decision.suggestion).toBe(`smelt ${big} --budget 8000`);
+      rmSync(bin, { recursive: true, force: true });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -458,8 +530,11 @@ describe('the built module (dist/hooks/guard-core.js) — the artifact the openc
       const ok = edge.spec.startsWith('node:') || (edge.spec.startsWith('./') && !edge.escapes);
       expect(ok, `${edge.from} imports "${edge.spec}"`).toBe(true);
     }
-    // The transitive closure is exactly the guard core and its zero-import sibling.
+    // The transitive closure is exactly the guard core and its two zero-import
+    // siblings: focus-terms.js (the one derivation of focus terms) and invocation.js
+    // (the one derivation of how smelt is re-invoked). Both are builtins-only
+    // themselves, which the per-edge assertion above proves for every file walked.
     const relatives = edges.filter((edge) => edge.spec.startsWith('.')).map((edge) => edge.spec);
-    expect([...new Set(relatives)]).toEqual(['./focus-terms.js']);
+    expect([...new Set(relatives)].toSorted()).toEqual(['./focus-terms.js', './invocation.js']);
   });
 });

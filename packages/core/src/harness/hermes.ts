@@ -47,7 +47,7 @@ function hermesHooksYaml(ctx: HarnessInstallContext): string {
 # file directly, merge the \`hooks:\` section into ~/.hermes/config.yaml.
 hooks:
   pre_tool_call:
-    - command: ${nodeCommand(ctx.cwd, shimScriptPath(hermes))}
+    - command: ${nodeCommand(ctx.cwd, shimScriptPath(hermes, ctx.distDir))}
 ${SNIPPET_END_HASH}
 `;
 }

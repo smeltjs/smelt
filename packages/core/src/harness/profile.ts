@@ -147,6 +147,13 @@ export interface HarnessInstallContext {
   readonly thresholdBytes: number;
   /** The `--budget` every suggested command and the snippet quote. */
   readonly budgetBytes: number;
+  /**
+   * The package `dist` every rendered script path is named under. Absent means "this
+   * install's own", which is every real run; a caller passes one to render a plan for
+   * a layout that is not the running one, which is how the installer's stability
+   * reporting is exercised without a Homebrew machine.
+   */
+  readonly distDir?: string;
 }
 
 /** A file's bytes, rendered from the wizard's choices. */

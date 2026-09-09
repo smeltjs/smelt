@@ -272,6 +272,26 @@ Homebrew, from smelt's own tap:
 brew install smeltjs/tap/smelt
 ```
 
+Upgrading from 0.6.0 or earlier on Homebrew: **re-run `smelt setup`**. Hooks written by
+those releases point at the versioned Cellar path `brew upgrade` deletes, and the guard
+was inert through the `opt` symlink besides — it exited 0 with empty stdout, which every
+harness reads as _allow_. A re-run rewrites both.
+
+To see for yourself whether your guard fires, feed a shim the payload the harness would
+send it. It reads stdin to EOF, so it needs one — running it bare just hangs:
+
+```sh
+# a file over the 8 KB threshold, and the PreToolUse payload for reading it
+head -c 60000 /dev/zero | tr '\0' x > /tmp/smelt-probe.log
+printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/tmp/smelt-probe.log"},"cwd":"/tmp"}' \
+  | node "$(realpath /opt/homebrew/opt/smelt/libexec/lib/node_modules/@smeltjs/core/dist/hooks/shims/claude-code.js)"
+```
+
+A `"permissionDecision":"deny"` document on stdout means the guard is live. **Empty
+stdout means it is inert** — that is the 0.6.0 bug, and `smelt setup` is the fix.
+(`realpath` ships with macOS 13+ and every Linux; on Linux `readlink -f` does the same,
+and on older macOS drop the substitution — the `opt` path works directly from 0.7.0 on.)
+
 ### Updating — and the other machine
 
 An update is the same loop on every machine, forever:

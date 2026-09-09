@@ -1,7 +1,9 @@
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { hasShim, shimAdapterOf } from '../src/harness/profile.ts';
 import { HARNESSES } from '../src/harness/registry.ts';
@@ -13,7 +15,13 @@ import { adapter as claudeCode } from '../src/hooks/shims/claude-code.ts';
 import { adapter as codex } from '../src/hooks/shims/codex.ts';
 import { adapter as cline } from '../src/hooks/shims/cline.ts';
 
-import { FIXTURE_BY_HARNESS, harnessPayloads, valueAt } from './hooks-fixtures.ts';
+import {
+  envWithoutSmelt,
+  envWithSmeltOnPath,
+  FIXTURE_BY_HARNESS,
+  harnessPayloads,
+  valueAt,
+} from './hooks-fixtures.ts';
 import { packageRoot } from './guards/_source.ts';
 
 /**
@@ -236,5 +244,77 @@ describe('the built shim scripts are runnable front doors', () => {
     expect(spawned.status).toBe(0);
     expect(spawned.stdout).toBe(''); // an allow is silence, in this schema
     expect(spawned.stderr).toContain('allowing the call');
+  });
+
+  /**
+   * The defect this whole module exists for, reproduced end to end.
+   *
+   * Node **realpaths** the ESM main entry, so a shim reached through any symlink — a
+   * Homebrew `opt` alias, a `pnpm link`, the plain `dist` alias below — had
+   * `pathToFileURL(argv[1]).href !== import.meta.url`, `isMainModule` said no,
+   * `runShimMain` never ran, and the process exited 0 with empty stdout. Empty stdout
+   * is how this schema spells *allow*: the guard was silently inert on exactly the
+   * installs that reach it through a link, and every oversized read passed.
+   */
+  describe('a shim invoked through a symlink still denies', () => {
+    let dir: string;
+    let big: string;
+    let linked: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'smelt-shim-symlink-'));
+      symlinkSync(join(packageRoot(), 'dist'), join(dir, 'dist'));
+      big = join(dir, 'big.log');
+      writeFileSync(big, 'x'.repeat(60_000));
+      linked = join(dir, 'dist', 'hooks', 'shims', 'claude-code.js');
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const payload = (): string =>
+      JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: big },
+        cwd: dir,
+      });
+
+    function denyThrough(env: Record<string, string>): string {
+      const spawned = spawnSync(process.execPath, [linked], {
+        input: payload(),
+        encoding: 'utf8',
+        env,
+      });
+      expect(spawned.status, spawned.stderr).toBe(0);
+      expect(spawned.stdout, 'empty stdout is an allow — the shim never ran').not.toBe('');
+      const decision = JSON.parse(spawned.stdout) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string };
+      };
+      expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
+      return decision.hookSpecificOutput.permissionDecisionReason;
+    }
+
+    it('denies, and names node <bin> when no `smelt` is on PATH', () => {
+      const reason = denyThrough(envWithoutSmelt());
+      expect(reason).toContain(big);
+      // Never the versioned keg: a command the next `brew upgrade` deletes.
+      expect(reason).not.toContain('/Cellar/');
+      expect(reason).toContain('cli/bin.js');
+      expect(reason).toContain(`--budget ${String(DEFAULT_GUARD_SETTINGS.budgetBytes)}`);
+    });
+
+    it('names the bare `smelt` when one is on PATH', () => {
+      const bin = mkdtempSync(join(tmpdir(), 'smelt-shim-bin-'));
+      try {
+        const reason = denyThrough(envWithSmeltOnPath(bin));
+        expect(reason).toContain(
+          `smelt ${big} --budget ${String(DEFAULT_GUARD_SETTINGS.budgetBytes)}`,
+        );
+        expect(reason).not.toContain('cli/bin.js');
+      } finally {
+        rmSync(bin, { recursive: true, force: true });
+      }
+    });
   });
 });

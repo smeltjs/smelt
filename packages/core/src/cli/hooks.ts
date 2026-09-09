@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
-import { nodeCommand, portablePath, shimScriptPath, smeltBinPath } from '../harness/paths.ts';
+import {
+  guardCoreScriptPath,
+  nodeCommand,
+  portablePath,
+  shimScriptPath,
+  smeltBinPath,
+} from '../harness/paths.ts';
 import { hasShim, TIER_HONESTY } from '../harness/profile.ts';
 import type {
   HarnessInstallContext,
@@ -29,6 +35,8 @@ import {
 } from '../harness/snippet.ts';
 import { DEFAULT_SUGGESTION_BUDGET_BYTES, DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import type { EnforcementMode } from '../hooks/guard-core.ts';
+import { pathStability, smeltInvocation } from '../hooks/invocation.ts';
+import type { SmeltInvocation } from '../hooks/invocation.ts';
 import {
   editJsonProperty,
   editTopLevelProperty,
@@ -144,14 +152,28 @@ function commandEntry(matcher: string | undefined, command: string): unknown {
  * @throws {Error} when a profile declares a JSON hook file but ships no shim — a
  *   registry bug, pinned by `test/guards/harness-registry.test.ts`, not a user error.
  */
-function shimCommand(profile: HarnessProfile, cwd: string): string {
+function shimCommand(profile: HarnessProfile, cwd: string, distDir?: string): string {
   /* v8 ignore next 5 -- unreachable: pinned by the harness-registry guard */
   if (!hasShim(profile)) {
     throw new Error(
       `smelt: harness "${profile.id}" wires a hook command but ships no shim script.`,
     );
   }
-  return nodeCommand(cwd, shimScriptPath(profile));
+  return nodeCommand(cwd, shimScriptPath(profile, distDir));
+}
+
+/**
+ * A lifecycle hook's command, in whichever spelling this machine can still run after
+ * an upgrade: the bare `smelt` where it is on PATH, `node "<script>"` otherwise.
+ *
+ * The guard hook is deliberately **not** built this way — a shim is a script, not a
+ * bin, and `smelt` has no verb that runs one — which is why only the three lifecycle
+ * commands go through here.
+ */
+function smeltLifecycleCommand(cwd: string, args: string, invocation: SmeltInvocation): string {
+  return invocation.kind === 'path'
+    ? `${invocation.command} ${args}`
+    : nodeCommand(cwd, invocation.script ?? smeltBinPath(), args);
 }
 
 /**
@@ -170,20 +192,18 @@ function jsonHookEvents(
   step: HarnessJsonHooks,
   ctx: HarnessInstallContext,
   command: string,
+  invocation: SmeltInvocation,
 ): Record<string, readonly unknown[]> {
   // The trailing shell comment tags the entry as this installer's (see isOursEntry):
-  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary.
-  const stats = `${nodeCommand(ctx.cwd, smeltBinPath(), 'stats')} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const map = `${nodeCommand(
-    ctx.cwd,
-    smeltBinPath(),
+  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary,
+  // and a `smelt <verb>` spelling carries no path at all to recognise.
+  const lifecycle = (args: string): string =>
+    `${smeltLifecycleCommand(ctx.cwd, args, invocation)} 2>/dev/null || true # ${OURS_TOKEN}`;
+  const stats = lifecycle('stats');
+  const map = lifecycle(
     `${MAP_ON_START_ARGS} --budget ${String(ctx.budgetBytes)} --cache .smelt/tags`,
-  )} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const lint = `${nodeCommand(
-    ctx.cwd,
-    smeltBinPath(),
-    AGENTS_LINT_ARGS,
-  )} 2>/dev/null || true # ${OURS_TOKEN}`;
+  );
+  const lint = lifecycle(AGENTS_LINT_ARGS);
 
   const sessionStart = [
     ...(ctx.mapOnStart ? [commandEntry(SESSION_START_MATCHER, map)] : []),
@@ -343,6 +363,19 @@ export interface HooksChoices {
   lintOnStart: boolean;
   enforcement: EnforcementMode;
   thresholdBytes: number;
+  /**
+   * How smelt is re-invoked on this machine. Defaults to reading the machine
+   * (`smeltInvocation()`); a caller passes one to plan against something else, which
+   * is what lets a test see both spellings of a lifecycle hook without a global PATH.
+   */
+  invocation?: SmeltInvocation;
+  /**
+   * The package `dist` the shim and guard-core paths are named under. Defaults to
+   * this install's own; a caller passes one to plan for a layout that is not the
+   * running one — which is how the stability reporting below is exercised without a
+   * Homebrew machine.
+   */
+  distDir?: string;
 }
 
 interface InstallPlan {
@@ -376,6 +409,30 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   const files = new Map<string, PlannedFile>();
   const skipped: SkippedFile[] = [];
   const notes: string[] = [];
+
+  // Every path this plan writes down has to still be there tomorrow. The verdict is
+  // taken per **script actually named** — the guard shim, the guard core the opencode
+  // plugin imports, and the CLI binary the lifecycle hooks run — never from the
+  // invocation value: that one is stable whenever `smelt` is on PATH, and an earlier
+  // cut of this reported the lifecycle hooks fine while writing the guard hook, the
+  // security-relevant one, as a bare Cellar path with nothing said.
+  const invocation = choices.invocation ?? smeltInvocation();
+  const written: string[] = [];
+  if (invocation.script !== undefined) written.push(invocation.script);
+  for (const profile of choices.harnesses) {
+    if (hasShim(profile)) written.push(shimScriptPath(profile, choices.distDir));
+    else written.push(guardCoreScriptPath(choices.distDir));
+  }
+  const said = new Set<string>();
+  for (const script of written) {
+    const stability = pathStability(script);
+    if (stability.stable || said.has(stability.why)) continue;
+    said.add(stability.why);
+    notes.push(
+      `hook command uses an unstable path (${stability.why}) — re-run setup after upgrading`,
+    );
+  }
+  if (invocation.caveat !== undefined) notes.push(invocation.caveat);
 
   /**
    * A step's base text: the previous step's planned output for this same path when
@@ -416,6 +473,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     lintOnStart: choices.lintOnStart,
     thresholdBytes: choices.thresholdBytes,
     budgetBytes,
+    ...(choices.distDir === undefined ? {} : { distDir: choices.distDir }),
   };
   const snippet = instructionSnippet(choices.thresholdBytes, budgetBytes, choices.writtenBy);
 
@@ -467,7 +525,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
         case 'json-hooks':
           planJsonHooks(
             step.file,
-            jsonHookEvents(step, ctx, shimCommand(profile, cwd)),
+            jsonHookEvents(step, ctx, shimCommand(profile, cwd, choices.distDir), invocation),
             step.shape ?? {},
           );
           break;
