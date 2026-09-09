@@ -18,7 +18,7 @@ import type {
   HarnessProfile,
 } from './profile.ts';
 import { HARNESSES, LIFECYCLE_EVENTS, MANAGED_EVENTS } from './registry.ts';
-import { instructionArtefact, locateStep, renderRoot, scopeRoot } from './scope.ts';
+import { instructionArtefact, locateFormer, locateStep, renderRoot, scopeRoot } from './scope.ts';
 import type { InstallScope, ScopeRoots } from './scope.ts';
 import { instructionSnippet, OURS_TOKEN, SNIPPET_END_MD, SNIPPET_START_MD } from './snippet.ts';
 import { DEFAULT_SUGGESTION_BUDGET_BYTES } from '../hooks/guard-core.ts';
@@ -572,9 +572,26 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
         case 'marker-block':
           planBlockFile(path, name, step.block(ctx), step.start, step.end, step.skipWhen);
           break;
-        case 'own-file':
+        case 'own-file': {
           files.set(path, planFile(path, name, step.content(ctx), 'whole', step.mode));
+          // A copy of ours still sitting at the artefact's former name is named, never
+          // touched: install writes, `remove` removes, and this run is an install. The
+          // note is what tells somebody the old file is theirs to take out and how —
+          // silence would leave a file smelt wrote in a directory smelt no longer
+          // writes, with nothing anywhere saying so.
+          const former = locateFormer(step, scope, roots);
+          if (former?.path !== undefined && former.name !== undefined && former.path !== path) {
+            const stale = readIfExists(former.path);
+            if (stale !== undefined && stale.includes(OURS_TOKEN)) {
+              notes.push(
+                `${profile.name}: ${former.name} is where an earlier release wrote this ` +
+                  `file, and ${name} is where this one reads it from; ` +
+                  `\`smelt hooks remove --harness ${profile.id}\` takes the old one out`,
+              );
+            }
+          }
           break;
+        }
         case 'mcp-registration': {
           // Byte-faithful beside whatever servers the user already registered —
           // sibling entries, key order and indentation all ride through.
@@ -801,9 +818,18 @@ export function planRemove(
         case 'marker-block':
           planBlockStrip(path, name, step.start, step.end);
           break;
-        case 'own-file':
+        case 'own-file': {
           planWholeFileDelete(path, name);
+          // And the file this artefact used to be written to, where the harness has
+          // renamed the directory it loads from: one artefact, so `remove` takes out
+          // both names — leaving an earlier release's copy behind would leave a plugin
+          // loaded that `remove` has just said it took out.
+          const former = locateFormer(step, scope, roots);
+          if (former?.path !== undefined && former.name !== undefined) {
+            planWholeFileDelete(former.path, former.name);
+          }
           break;
+        }
         case 'mcp-registration':
           planMcpStrip(path, name, step.path);
           break;

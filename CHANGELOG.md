@@ -35,6 +35,15 @@ the guard was inert through the `opt` symlink besides — a re-run rewrites both
   "Cannot find module" until setup was re-run, and nothing said so. Commands are now
   written through the `<prefix>/opt/<name>` alias Homebrew re-points, for any prefix
   (`/opt/homebrew`, `/usr/local`, `/home/linuxbrew/.linuxbrew`).
+- **opencode's plugin directory is `plugins/`, not `plugin/`.** opencode documents
+  `.opencode/plugins/` for a project and `~/.config/opencode/plugins/` for the machine
+  (opencode.ai/docs/plugins § "From local files", and the same two names in its load
+  order and its v2 config spec); smelt wrote the singular `.opencode/plugin/`, so the
+  guard plugin sat in a directory opencode does not load from. The documented spelling
+  is what is written now. An install already at the old name is still **read** — doctor
+  reports it, a re-run reads your toggles back off it — and `smelt hooks remove` takes
+  it out; an install writes only the new name and names the old file so you know it is
+  there. One artefact, two names: nothing is orphaned and nothing is duplicated.
 - **`smelt setup` run from your home directory installed into files no harness reads.**
   Every path the installer wrote was a project-relative path joined to the working
   directory, so from `$HOME` it produced `~/CLAUDE.md`, `~/.mcp.json`, `~/AGENTS.md`,

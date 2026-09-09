@@ -342,7 +342,7 @@ describe('the other tiers write what their matrix row supports', () => {
 
   it('opencode: the plugin file carries the matrix caveat and imports the guard core', async () => {
     const { output } = await hooks('install', 'opencode', DEFAULT_ANSWERS);
-    const pluginPath = join(dir, '.opencode/plugin/smelt-guard.js');
+    const pluginPath = join(dir, '.opencode/plugins/smelt-guard.js');
     const plugin = readFileSync(pluginPath, 'utf8');
     expect(plugin).toContain('tool.execute.before');
     expect(plugin).toContain('hooks/guard-core.js');
@@ -353,6 +353,65 @@ describe('the other tiers write what their matrix row supports', () => {
     const { spawnSync } = await import('node:child_process');
     const checked = spawnSync(process.execPath, ['--check', pluginPath], { encoding: 'utf8' });
     expect(checked.status, checked.stderr).toBe(0);
+  });
+
+  /**
+   * OPENCODE RENAMED THE DIRECTORY IT LOADS PLUGINS FROM.
+   *
+   * Today's docs are `.opencode/plugins/` (and `~/.config/opencode/plugins/`); smelt
+   * wrote the singular `.opencode/plugin/` up to 0.6.0. The rule for a rename like that
+   * is one artefact, two names: the new one is the only one written, and the old one is
+   * still *recognised* — otherwise an existing install is a file nobody owns, doctor
+   * stops reporting it, `remove` stops removing it, and the next install writes a second
+   * copy beside it with nothing anywhere saying so.
+   */
+  describe('an install at the former plugin path', () => {
+    /** What 0.6.0 left on disk: ours, in the directory this release no longer writes. */
+    function oldInstall(): string {
+      const old = join(dir, '.opencode/plugin/smelt-guard.js');
+      mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
+      writeFileSync(old, '// smelt:hooks v1 — written by an earlier release\n');
+      return old;
+    }
+
+    it('is read back as the install it is, not as a file nobody owns', async () => {
+      const old = oldInstall();
+      // The toggle reader is the sharpest witness: it decides what a re-run offers to
+      // keep, so a reader blind to the old name would offer to turn the guard off.
+      expect(presetToggles(dir).guard).toBe(true);
+
+      let stdout = '';
+      await runCli(['doctor', '--json'], {
+        stdout: (text) => void (stdout += text),
+        stderr: () => {},
+        stdin: () => '',
+        version: '9.9.9-test',
+        cwd: dir,
+        home,
+      });
+      const receipt = JSON.parse(stdout) as { hookFiles: string[] };
+      expect(receipt.hookFiles).toContain('.opencode/plugin/smelt-guard.js');
+      expect(existsSync(old)).toBe(true); // doctor reads; it never writes (ADR-0003)
+    });
+
+    it('is named by an install, which writes the new path and touches the old one', async () => {
+      const old = oldInstall();
+      const { output } = await hooks('install', 'opencode', DEFAULT_ANSWERS);
+      expect(existsSync(join(dir, '.opencode/plugins/smelt-guard.js'))).toBe(true);
+      // Install writes; it does not delete. The note is how somebody learns the old
+      // copy is there and what takes it out.
+      expect(readFileSync(old, 'utf8')).toContain('written by an earlier release');
+      expect(output).toContain('.opencode/plugin/smelt-guard.js');
+      expect(output).toContain('smelt hooks remove --harness opencode');
+    });
+
+    it('comes out under both names on remove', async () => {
+      const old = oldInstall();
+      await hooks('install', 'opencode', DEFAULT_ANSWERS);
+      await hooks('remove', 'opencode', ['yes', 'yes', 'yes', 'yes', 'yes']);
+      expect(existsSync(join(dir, '.opencode/plugins/smelt-guard.js'))).toBe(false);
+      expect(existsSync(old)).toBe(false);
+    });
   });
 
   it('cline: the hook wrapper is executable and execs the cline shim', async () => {
@@ -423,8 +482,8 @@ describe('smelt hooks install --yes', () => {
   });
 
   it('refuses a file it would have to write whole, and says which', async () => {
-    mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
-    const plugin = join(dir, '.opencode/plugin/smelt-guard.js');
+    mkdirSync(join(dir, '.opencode/plugins'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugins/smelt-guard.js');
     writeFileSync(plugin, 'export const theirs = true;\n');
 
     const { code, output } = await yes('install', 'opencode');
@@ -440,8 +499,8 @@ describe('smelt hooks install --yes', () => {
     // The one case a policy run refuses and a human can allow — and the only one where
     // bytes that were not smelt's are gone, which is why it is a literal `yes` and why
     // it is spelled `overwritten` rather than `merged` or `repaired`.
-    mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
-    const plugin = join(dir, '.opencode/plugin/smelt-guard.js');
+    mkdirSync(join(dir, '.opencode/plugins'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugins/smelt-guard.js');
     writeFileSync(plugin, 'export const theirs = true;\n');
 
     let output = '';

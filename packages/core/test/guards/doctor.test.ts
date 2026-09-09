@@ -502,7 +502,7 @@ async function setupHarness(cwd: string, harness: string, file: string): Promise
 const WHOLE_OWNED: readonly { id: string; file: string; event: string }[] = [
   { id: 'cline', file: '.clinerules/hooks/PreToolUse', event: 'PreToolUse' },
   { id: 'hermes', file: '.hermes/hooks.yaml', event: 'pre_tool_call' },
-  { id: 'opencode', file: '.opencode/plugin/smelt-guard.js', event: 'tool.execute.before' },
+  { id: 'opencode', file: '.opencode/plugins/smelt-guard.js', event: 'tool.execute.before' },
 ];
 
 describe('a hook file smelt owns whole is run too', () => {
@@ -568,13 +568,13 @@ describe('a hook file smelt owns whole is run too', () => {
   it('opencode: a plugin whose guard core is gone is `wired but missing`', async () => {
     const cwd = scratch('plugin-missing');
     try {
-      const path = await setupHarness(cwd, 'opencode', '.opencode/plugin/smelt-guard.js');
+      const path = await setupHarness(cwd, 'opencode', '.opencode/plugins/smelt-guard.js');
       const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'guard-core.js');
       pointFileAt(path, gone);
 
       const { code, stdout } = doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
-      expect(stdout).toContain('.opencode/plugin/smelt-guard.js: wired but missing');
+      expect(stdout).toContain('.opencode/plugins/smelt-guard.js: wired but missing');
       expect(stdout).toContain(gone);
       expect(stdout).toContain('smelt setup --harness opencode');
     } finally {
@@ -585,7 +585,7 @@ describe('a hook file smelt owns whole is run too', () => {
   it('opencode: a plugin that loads and exports no hook is `wired but inert`', async () => {
     const cwd = scratch('plugin-inert');
     try {
-      const path = await setupHarness(cwd, 'opencode', '.opencode/plugin/smelt-guard.js');
+      const path = await setupHarness(cwd, 'opencode', '.opencode/plugins/smelt-guard.js');
       // Ours (it carries the token, so the reader still owns it) and loadable — and it
       // registers nothing. From inside a session this is indistinguishable from a
       // working guard: opencode calls nothing and every read goes through.
@@ -598,7 +598,7 @@ describe('a hook file smelt owns whole is run too', () => {
 
       const { code, stdout } = doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
-      expect(stdout).toContain('.opencode/plugin/smelt-guard.js: wired but inert');
+      expect(stdout).toContain('.opencode/plugins/smelt-guard.js: wired but inert');
       expect(stdout).toContain('tool.execute.before');
     } finally {
       rmSync(cwd, { recursive: true, force: true });

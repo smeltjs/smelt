@@ -1,6 +1,14 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -8,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // of src. See scripts/mutate.mjs.
 import { EXIT, runCli } from '@guard/cli/run';
 import { runDoctor } from '@guard/cli/doctor';
+import { presetToggles } from '@guard/cli/installed';
 import type { DoctorReceipt } from '@guard/cli/doctor';
 import type { SetupReceipt } from '@guard/cli/setup';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
@@ -199,6 +208,62 @@ describe('doctor reads through the same resolver the writer wrote through', () =
 });
 
 /**
+ * ONE ARTEFACT, TWO NAMES — what happens when a harness renames the directory it
+ * loads from.
+ *
+ * opencode documents `.opencode/plugins/` (and `~/.config/opencode/plugins/`); smelt
+ * wrote the singular `.opencode/plugin/` up to 0.6.0. A resolver that knew only today's
+ * spelling would make every existing install a file nobody owns: doctor stops reporting
+ * it, `remove` stops removing it, a re-run reads the guard toggle back as off, and the
+ * next install writes a second copy beside the first. So the former spelling is
+ * declared on the step and resolved by `locateFormer` — read, and removed, never
+ * written.
+ */
+describe("an artefact's former home is still read, and still removed", () => {
+  const FORMER = '.opencode/plugin/smelt-guard.js';
+  const TODAY = '.opencode/plugins/smelt-guard.js';
+
+  /** What an earlier release left on disk: ours, under the name it used to write. */
+  function earlierRelease(): void {
+    mkdirSync(join(dir, dirname(FORMER)), { recursive: true });
+    writeFileSync(join(dir, FORMER), '// smelt:hooks v1 — written by an earlier release\n');
+  }
+
+  it('is read back as an install, and named — not orphaned, and not written to again', async () => {
+    earlierRelease();
+    const receipt = await setup('project', 'opencode');
+
+    // Written: today's spelling only. The old copy is somebody's to remove, and this
+    // verb writes — it does not delete.
+    expect(existsSync(join(dir, TODAY))).toBe(true);
+    expect(readFileSync(join(dir, FORMER), 'utf8')).toContain('an earlier release');
+    expect(receipt.files.some((file) => file.name === FORMER)).toBe(false);
+
+    // And read back: the toggle reader is the sharpest witness — it decides what a
+    // re-run offers to keep, so a reader blind to the old name offers to turn off a
+    // guard that is installed.
+    expect(presetToggles(dir, { home }).guard).toBe(true);
+  });
+
+  it('comes out on remove, under both names', async () => {
+    earlierRelease();
+    await setup('project', 'opencode');
+    let stdout = '';
+    const code = await runCli(['hooks', 'remove', '--yes', '--harness', 'opencode'], {
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    expect(code, stdout).toBe(EXIT.ok);
+    expect(existsSync(join(dir, TODAY)), 'the file this release wrote').toBe(false);
+    expect(existsSync(join(dir, FORMER)), 'the file an earlier release wrote').toBe(false);
+  });
+});
+
+/**
  * The breaks this guard must catch. `pnpm mutate` applies each one and asserts this
  * file goes red — see `test/guards/_mutations.ts`.
  */
@@ -212,6 +277,14 @@ export const MUTATIONS: GuardMutation[] = [
     };`,
     replace: '    return { path: join(roots.cwd, step.file), name: step.file };',
     why: 'a user-scope install silently falling back to the project spelling — `~/AGENTS.md`, `~/.hermes/hooks.yaml`, files no harness reads, written with nothing said; that is the original defect exactly, and the whole reason a skipped step is given no path to fall back on',
+  },
+  {
+    kind: 'src',
+    id: 'install-scope-forgets-a-former-location',
+    file: 'harness/scope.ts',
+    find: "  if (step.formerly === undefined || scope !== 'project') return undefined;",
+    replace: '  return undefined;',
+    why: "an artefact's former home going unread the moment a harness renames the directory it loads from — every existing install becomes a file nobody owns: `remove` leaves it behind for ever, doctor stops reporting it, and a re-run reads the guard toggle back as off and offers to turn off a guard that is installed",
   },
   {
     kind: 'src',

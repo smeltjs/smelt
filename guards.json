@@ -1,6 +1,6 @@
 {
   "guards": 43,
-  "mutations": 224,
+  "mutations": 225,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -56,7 +56,7 @@
     },
     {
       "guard": "packages/core/test/guards/install-scope.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/invocation.test.ts",

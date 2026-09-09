@@ -292,8 +292,8 @@ describe('smelt setup applies the recipe in one command', () => {
       const { mkdirSync, writeFileSync } = await import('node:fs');
       writeFileSync(join(cwd, 'CLAUDE.md'), theirs);
       // A file smelt writes *whole*, sitting there with somebody else's bytes in it.
-      mkdirSync(join(cwd, '.opencode/plugin'), { recursive: true });
-      const plugin = join(cwd, '.opencode/plugin/smelt-guard.js');
+      mkdirSync(join(cwd, '.opencode/plugins'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugins/smelt-guard.js');
       const notOurs = 'export const theirs = true;\n';
       writeFileSync(plugin, notOurs);
 
@@ -330,8 +330,8 @@ describe('smelt setup applies the recipe in one command', () => {
     const cwd = scratch('repair-whole');
     try {
       const { mkdirSync, writeFileSync } = await import('node:fs');
-      mkdirSync(join(cwd, '.opencode/plugin'), { recursive: true });
-      const plugin = join(cwd, '.opencode/plugin/smelt-guard.js');
+      mkdirSync(join(cwd, '.opencode/plugins'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugins/smelt-guard.js');
       // Ours — it carries the ownership token — but stale: an older release's bytes.
       writeFileSync(plugin, '// smelt:hooks — written by an older release\n');
 

@@ -222,7 +222,12 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   home directory; both receipts carry it. A harness that documents no user-level home
   for an artefact is **project-only** and reported skipped with the reason — today
   Hermes, KiloCode and Aider entirely, plus Grok's and Cursor's instruction layers and
-  Grok's hook file.
+  Grok's hook file. `locateFormer` is the resolver's read-only sibling: where a harness
+  has renamed the directory it loads from (opencode's `.opencode/plugin/` →
+  `.opencode/plugins/`), the step declares the old spelling and it is still _read_ and
+  still _removed_ — never written. One artefact, two names: without it every existing
+  install becomes a file nobody owns, `remove` leaves it behind and a re-run reads the
+  guard toggle back as off.
 - **InstallPlan** (`src/harness/plan.ts`): every file an install would write, and every
   one `remove` would take back out, computed against the disk and writing nothing —
   `planInstall(cwd, choices)` → `{files, skipped, notes, manual}` and its mirror

@@ -495,7 +495,7 @@ describe('the reading order of hookFiles is the receipt field it has always been
       '.grok/hooks.json',
       '.cursor/hooks.json',
       '.hermes/hooks.yaml',
-      '.opencode/plugin/smelt-guard.js',
+      '.opencode/plugins/smelt-guard.js',
       '.clinerules/hooks/PreToolUse',
     ]);
     // …and it is the registry's own derivation, not a list that happens to agree today.
@@ -527,8 +527,8 @@ describe('flipping the scope re-reads that scope’s toggles', () => {
    *
    * From `$HOME` the two scopes share most spellings — `.claude/settings.json` is the
    * same file either way — so the state that tells them apart is a guard-only file
-   * whose two homes differ: opencode's plugin is `.opencode/plugin/…` for the project
-   * and `.config/opencode/plugins/…` for the machine.
+   * whose two homes differ: opencode's plugin is `.opencode/plugins/…` under the
+   * project and `.config/opencode/plugins/…` under the home directory.
    */
   function machineOnlyGuardInstall(): void {
     apply(planInstall(home, choicesFor(['opencode'], { scope: 'user' })));

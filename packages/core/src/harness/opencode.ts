@@ -10,6 +10,16 @@ import { renderRoot } from './scope.ts';
 import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
 
 /**
+ * The hook opencode calls, spelled once: the key of the table the plugin returns, and
+ * the event `smelt doctor` reports this file's probe under.
+ */
+const HOOK_KEY = 'tool.execute.before';
+
+/** The export opencode calls to get that table, and the binding the core's path is in. */
+const PLUGIN_FACTORY = 'SmeltGuard';
+const GUARD_CORE_BINDING = 'GUARD_CORE';
+
+/**
  * opencode — EXPERIMENTAL tier. Install and removal, end to end.
  *
  * The one harness with no shim script: its hook API is a JavaScript plugin, not a
@@ -21,16 +31,6 @@ import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
  * in from `hooks/shim.ts`'s constants rather than hand-typed into the template, where
  * nothing could see them drift from what the shims print.
  */
-/**
- * The hook opencode calls, spelled once: the key of the table the plugin returns, and
- * the event `smelt doctor` reports this file's probe under.
- */
-const HOOK_KEY = 'tool.execute.before';
-
-/** The export opencode calls to get that table, and the binding the core's path is in. */
-const PLUGIN_FACTORY = 'SmeltGuard';
-const GUARD_CORE_BINDING = 'GUARD_CORE';
-
 function opencodePluginSource(ctx: HarnessInstallContext): string {
   const guardCore = portablePath(renderRoot(ctx.scope, ctx), guardCoreScriptPath(ctx.distDir));
   return `// smelt:hooks v1 — opencode plugin shim. EXPERIMENTAL tier: mapped from the
@@ -120,10 +120,14 @@ export const opencode: HarnessProfile = {
   instructionFile: 'AGENTS.md',
   // Verified 2026-09-09: global config is `~/.config/opencode/opencode.json`
   // (opencode.ai/docs/config § Locations), global rules `~/.config/opencode/AGENTS.md`
-  // (.../docs/rules), and the global plugin directory `~/.config/opencode/plugins/`
-  // (.../docs/plugins § "From local files"). Note the plural: today's docs spell the
-  // *project* directory `.opencode/plugins/` too, while smelt has always written
-  // `.opencode/plugin/`. Changing the project path is not this change's to make.
+  // (.../docs/rules), and the plugin directories are **plural at both scopes** —
+  // opencode.ai/docs/plugins § "From local files": "Place JavaScript or TypeScript
+  // files in the plugin directory. `.opencode/plugins/` — Project-level plugins;
+  // `~/.config/opencode/plugins/` — Global plugins. Files in these directories are
+  // automatically loaded at startup." The same two names appear in the load order and
+  // in the v2 config spec (github.com/anomalyco/opencode, packages/web/.../plugins.mdx
+  // and specs/v2/config.md). smelt wrote the singular `.opencode/plugin/` until 0.6.0,
+  // which is the `formerly` below: read, and removed, but never written again.
   userInstructionFile: '.config/opencode/AGENTS.md',
   instructions: 'snippet',
   // The registration, as a person would add it — the same JSON value the step below
@@ -138,8 +142,9 @@ export const opencode: HarnessProfile = {
   install: [
     {
       kind: 'own-file',
-      file: '.opencode/plugin/smelt-guard.js',
+      file: '.opencode/plugins/smelt-guard.js',
       user: { file: '.config/opencode/plugins/smelt-guard.js' },
+      formerly: '.opencode/plugin/smelt-guard.js',
       content: opencodePluginSource,
       guardOnly: true,
       // The one harness with no shim: what is verified is that the module still loads
