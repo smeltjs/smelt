@@ -71,6 +71,7 @@ export type {
   PrunedBlob,
   PruneOptions,
   PruneReport,
+  StoreSurvey,
 } from './store-dir.ts';
 export { CUTOFF_HELP, readCutoff } from './store-cutoff.ts';
 export type { CutoffReading } from './store-cutoff.ts';

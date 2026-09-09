@@ -184,6 +184,25 @@ export function readStoreSize(root: string): { blobs: number; bytes: number } | 
   return { blobs, bytes };
 }
 
+/**
+ * Everything one traversal of a store directory can answer: the counters, the per-rule
+ * ledger, and the directory's own size. What {@link DirectoryElisionStore.survey}
+ * returns, and the shape `smelt stats` renders.
+ *
+ * `size.blobs` and `counters.elisionsStored` are different numbers on purpose. The
+ * first is what is on disk right now; the second is every distinct elision this store
+ * has ever held, evicted ones included, because a prune that shrank the expansion
+ * rate's denominator would flatter the metric over bytes the user deleted. They agree
+ * in a store nobody has pruned, and a reader who needs "how much disk" wants the first
+ * while a reader who needs "how much did smelt hide" wants the second.
+ */
+export interface StoreSurvey {
+  readonly counters: RawRetrieveCounters;
+  readonly ledger: readonly RuleLedgerEntry[];
+  /** The same two integers {@link readStoreSize} answers, from the same scan. */
+  readonly size: { readonly blobs: number; readonly bytes: number };
+}
+
 /** See {@link MemoryElisionStoreOptions} in `store.ts` — same escape hatch, same reason. */
 export interface DirectoryElisionStoreOptions {
   /**
@@ -499,9 +518,21 @@ export class DirectoryElisionStore implements ElisionStore {
   }
 
   /**
-   * The five directly-observed counts, every one read off the disk — a scan of
-   * `blobs/` plus a fold over `retrievals.log`. See {@link RawRetrieveCounters}; the
-   * derived half of the stats comes from the shared `retrieveStats()`, never here.
+   * **Everything a reader can learn about this store, from one traversal.**
+   *
+   * The counters, the per-rule ledger and the directory's own size are three questions
+   * over two files — `blobs/` and `retrievals.log` — and they used to be three walks.
+   * `smelt stats` asked all three (and the Stop hook runs `smelt stats` at the end of
+   * every session), so a store of 5,500 blobs was read twice and its journal parsed
+   * twice to answer one command. Nothing about *what* is counted changes here; the
+   * three answers simply come out of one pass, and {@link rawCounters}, {@link ledger}
+   * and {@link stats} are views over it.
+   *
+   * There is no cache. A cache would be a second copy of numbers whose whole value is
+   * that they are read off the disk every time — two instances over one directory
+   * always agree because neither remembers anything — and at the size this was measured
+   * at, one traversal is already fast enough that a stale-detection scheme would be the
+   * more likely source of a wrong answer. See `bench/` and the class doc above.
    *
    * **A prune moves `bytesStored` and nothing else.** `elisionsStored` is *distinct
    * blobs put into this store*, so an evicted hash still counts: the blobs on disk,
@@ -510,40 +541,80 @@ export class DirectoryElisionStore implements ElisionStore {
    * numerator over a smaller denominator, the metric flattering itself over bytes the
    * user deleted — which is precisely the silent failure Law 3's counters exist to
    * refuse. `bytesStored` is the honest exception: it measures what this directory is
-   * actually holding, so freeing disk is exactly what it should show.
+   * actually holding, so freeing disk is exactly what it should show. The ledger is
+   * untouched by a prune for its own reason, stated on {@link ledger}.
    */
-  rawCounters(): RawRetrieveCounters {
-    let elisionsStored = 0;
+  survey(): StoreSurvey {
+    let blobs = 0;
     let bytesStored = 0;
     const onDisk = new Set<string>();
     for (const entry of readdirSync(this.#blobsDir)) {
       if (!KEY_PATTERN.test(entry)) continue; // `.DS_Store` and friends are not blobs
+      let size;
+      try {
+        size = statSync(join(this.#blobsDir, entry)).size;
+      } catch {
+        // Vanished between the listing and the stat — another process pruned it while
+        // this scan was running, so it is not a blob this store holds. This is
+        // `readStoreSize`'s rule rather than the throw the counters used to take: one
+        // traversal must have one answer about what is on disk, and the tolerant one is
+        // the right answer for a directory a concurrent `smelt store prune` may be
+        // emptying underneath it.
+        continue;
+      }
       onDisk.add(entry);
-      elisionsStored += 1;
-      bytesStored += statSync(join(this.#blobsDir, entry)).size;
+      blobs += 1;
+      bytesStored += size;
     }
 
     let retrieveCalls = 0;
     let misses = 0;
     const hits = new Set<string>();
     const evicted = new Set<string>();
+    const puts: { hash: string; rule: string }[] = [];
     for (const line of this.#readLog().split('\n')) {
+      const put = PUT_LINE.exec(line);
+      if (put !== null) {
+        puts.push({ hash: JSON.parse(put[1]!) as string, rule: JSON.parse(put[2]!) as string });
+        continue;
+      }
       const evict = EVICT_LINE.exec(line);
       if (evict !== null) {
         evicted.add(JSON.parse(evict[1]!) as string);
         continue;
       }
       const match = LOG_LINE.exec(line);
-      if (match === null) continue; // a put line, a torn tail from a crash, or blank
+      if (match === null) continue; // a torn tail from a crash, or a blank line
       retrieveCalls += 1;
       if (match[1] === 'miss') misses += 1;
       else if (match[1] === 'hit') hits.add(JSON.parse(match[2]!) as string);
     }
+    let elisionsStored = blobs;
     // A hash evicted and later re-put is on disk and already counted once; counting it
     // again here would invent an elision nobody made.
     for (const hash of evicted) if (!onDisk.has(hash)) elisionsStored += 1;
 
-    return { elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved: hits.size, misses };
+    return {
+      counters: {
+        elisionsStored,
+        bytesStored,
+        retrieveCalls,
+        uniqueRetrieved: hits.size,
+        misses,
+      },
+      ledger: ruleLedger(puts, hits),
+      size: { blobs, bytes: bytesStored },
+    };
+  }
+
+  /**
+   * The five directly-observed counts, every one read off the disk. See
+   * {@link RawRetrieveCounters}; the derived half of the stats comes from the shared
+   * `retrieveStats()`, never here. A view over {@link survey} — the counting itself,
+   * and the reasoning behind every one of these five numbers, lives there.
+   */
+  rawCounters(): RawRetrieveCounters {
+    return this.survey().counters;
   }
 
   /**
@@ -712,27 +783,16 @@ export class DirectoryElisionStore implements ElisionStore {
   }
 
   /**
-   * The per-rule ledger: a fold over the journal's `put` lines against its `hit`
-   * lines, derived by the shared `ruleLedger()`. Uncounted, and read off the disk
-   * like everything else here, so two processes agree.
+   * The per-rule ledger: the journal's `put` lines folded against its `hit` lines by
+   * the shared `ruleLedger()`, out of the one traversal {@link survey} makes.
+   * Uncounted, and read off the disk like everything else here, so two processes agree.
    *
    * A prune does not touch it. The rule *did* make that cut, and it was *not* asked
    * for back; deleting the row when the bytes go would erase the evidence that a rule
    * is cutting material nobody wants, which is the one thing this ledger is for.
    */
   ledger(): readonly RuleLedgerEntry[] {
-    const puts: { hash: string; rule: string }[] = [];
-    const hits = new Set<string>();
-    for (const line of this.#readLog().split('\n')) {
-      const put = PUT_LINE.exec(line);
-      if (put !== null) {
-        puts.push({ hash: JSON.parse(put[1]!) as string, rule: JSON.parse(put[2]!) as string });
-        continue;
-      }
-      const counter = LOG_LINE.exec(line);
-      if (counter !== null && counter[1] === 'hit') hits.add(JSON.parse(counter[2]!) as string);
-    }
-    return ruleLedger(puts, hits);
+    return this.survey().ledger;
   }
 
   /** The blob's exact content, or `undefined` when no such blob is stored. */

@@ -3,6 +3,7 @@ import type { RepoMap } from '../repomap/map.ts';
 import { focusTermsFor } from '../hooks/focus-terms.ts';
 import { retrieveEach } from '../retrieve.ts';
 import { createSmelter } from '../smelter.ts';
+import type { DirectoryElisionStore, StoreSurvey } from '../store-dir.ts';
 import type { Strategy } from '../plan/planners.ts';
 import type {
   DetectedLanguage,
@@ -260,6 +261,34 @@ export interface ReadCountersOp {
  */
 export function readCounters(op: ReadCountersOp): RetrieveStats {
   return op.store.stats();
+}
+
+/** One directory store to survey. */
+export interface SurveyStoreOp {
+  /**
+   * A {@link DirectoryElisionStore}, not any {@link ElisionStore} — the same narrowing
+   * `smelt store prune` uses, and for the same reason. A survey is a *traversal*, a
+   * fact about a store that lives on a disk; a memory store's counters are a `Map`'s
+   * size and there is nothing to walk.
+   */
+  readonly store: DirectoryElisionStore;
+}
+
+/**
+ * Verb: **the uncounted read, in one pass.**
+ *
+ * {@link readCounters} and {@link readLedger} each answer one question, and a front
+ * door that wants both plus the store's size asked for three traversals of the same two
+ * files. This is that reading, whole: the counters, the ledger and the size out of one
+ * walk. It journals nothing, exactly as its two siblings journal nothing — watching the
+ * expansion rate must never move it.
+ *
+ * The two narrower verbs stay: a caller that wants only the ledger should say so, and
+ * the {@link ElisionStore} seam is what a custom adapter implements. This one is for the
+ * surface that wants the whole reading, which today is `smelt stats`.
+ */
+export function surveyStore(op: SurveyStoreOp): StoreSurvey {
+  return op.store.survey();
 }
 
 /** One store to read the ledger off. */

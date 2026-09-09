@@ -25,8 +25,17 @@ import type { GuardMutation } from './_mutations.ts';
  * two-process concurrency test lives in `test/store-dir.test.ts`; this guard stays
  * cheap because `pnpm mutate` runs it repeatedly.
  *
- * Mutations: `pnpm mutate` disables the verify-on-read branch and drops the journal
- * append in `store-dir.ts`; this file must go red both times.
+ * It also pins the **one fold**. The counters, the per-rule ledger and the store's own
+ * size come out of a single traversal (`survey()`), because `smelt stats` — which the
+ * Stop hook runs at the end of every session — used to walk the same two files three
+ * times to answer them. Collapsing three reads into one is the kind of change that
+ * loses an answer silently: the numbers that survive still look right, and the one that
+ * went quiet reads as "no rule cut anything", which is indistinguishable from a store
+ * nobody used.
+ *
+ * Mutations: `pnpm mutate` disables the verify-on-read branch, drops the journal
+ * append, and drops the ledger out of the fold in `store-dir.ts`; this file must go red
+ * every time.
  */
 
 const roots: string[] = [];
@@ -211,6 +220,39 @@ describe('the persistent store keeps Law 3 across restarts', () => {
     expect(reopened.stats().elisionsStored).toBe(50);
   });
 
+  it('answers the counters, the ledger and the size from one traversal', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    const asked = store.put('material the model came back for', {
+      rule: 'head-tail',
+      explanation: 'x',
+    });
+    store.put('material nobody wanted', { rule: 'sibling-collapse', explanation: 'x' });
+    store.retrieve(asked);
+
+    const survey = store.survey();
+    // All three, out of the same pass. A fold that dropped the ledger would leave the
+    // counters looking perfectly right while `smelt stats` reported that no rule ever
+    // cut anything — the same output a store nobody has used produces.
+    expect(survey.ledger).toStrictEqual([
+      { rule: 'head-tail', stored: 1, retrieved: 1 },
+      { rule: 'sibling-collapse', stored: 1, retrieved: 0 },
+    ]);
+    expect(survey.counters.elisionsStored).toBe(2);
+    expect(survey.counters.uniqueRetrieved).toBe(1);
+    expect(survey.size.blobs).toBe(2);
+
+    // And the three published interfaces are views over it, never a second reading
+    // that could disagree with the first.
+    expect(store.ledger()).toStrictEqual(survey.ledger);
+    expect(store.rawCounters()).toStrictEqual(survey.counters);
+    expect(store.stats()).toMatchObject(survey.counters);
+
+    // Reading is still not counting: the survey journals nothing, so watching the
+    // expansion rate cannot move it.
+    expect(store.survey().counters).toStrictEqual(survey.counters);
+  });
+
   it('sweeps a temp file a dead process leaked, and leaves a live one alone', () => {
     const root = newRoot();
     mkdirSync(join(root, 'tmp'), { recursive: true });
@@ -258,6 +300,13 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    return this.peek(hash) !== undefined;',
     replace: '    return this.#readBlob(hash) !== undefined;',
     why: 'has() back to an existence check that skips the hash — a corrupt blob answers true and then throws StoreCorruptionError on the next line, so the consumer that checked first was told a lie by the call whose job was to prevent that throw',
+  },
+  {
+    id: 'stats-fold-drops-the-ledger',
+    file: 'store-dir.ts',
+    find: '      ledger: ruleLedger(puts, hits),',
+    replace: '      ledger: [],',
+    why: 'the one traversal stops answering one of its three questions — the counters still look right and `smelt stats` reports that no rule ever cut anything, which is exactly what a store nobody used reports, so the per-rule half of Law 3\u2019s honesty goes quiet with no error anywhere',
   },
   {
     id: 'law3-dir-store-stale-temp-not-swept',
