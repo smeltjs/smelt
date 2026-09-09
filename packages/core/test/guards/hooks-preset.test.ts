@@ -163,8 +163,8 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'hooks-install-overwrite-without-consent',
     file: 'cli/hooks.ts',
-    find: "      if (answer !== 'yes') {",
-    replace: '      if (false) {',
+    find: "  return answer === 'yes';",
+    replace: '  return true;',
     why: 'the per-file overwrite consent wired shut — `smelt hooks install` would clobber a hand-written CLAUDE.md or .claude/settings.json after any answer, the helpful-looking break the never-overwrite rule exists to refuse',
   },
 ];

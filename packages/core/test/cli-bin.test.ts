@@ -274,6 +274,59 @@ describe('the built binary, as a real process', () => {
   }, 20_000);
 });
 
+describe('a closed output stream is a refusal, not a crash', () => {
+  /**
+   * The shape a person actually hits: `yes | smelt hooks install | head`. The flood
+   * answers `y` to a question that wants `on` or `off`, so the wizard re-asks
+   * forever; `head` closes the pipe after its two lines, and every prompt after that
+   * is a write into a stream nobody is reading.
+   *
+   * That failure arrives on the stream's own asynchronous `'error'` event, which no
+   * `try`/`catch` around the write can see — so it can only be asserted here, from a
+   * real process with a real pipe. Unheard, it was an unhandled `'error'`: a Node
+   * stack trace and an exit code nobody chose.
+   */
+  it('exits with the usage code and one line, with no stack trace', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-epipe-'));
+    try {
+      const child = spawn(
+        process.execPath,
+        [binPath, 'hooks', 'install', '--harness', 'claude-code'],
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          cwd,
+          // A home of its own: harness detection reads it, and nothing here may look at
+          // the developer's.
+          env: { ...process.env, HOME: cwd },
+        },
+      );
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+      // `head`'s half: stop reading as soon as anything arrives.
+      child.stdout.once('data', () => child.stdout.destroy());
+      // `yes`'s half: enough answers that the wizard is still printing prompts long
+      // after the pipe closed. Writing into a dead stdin is expected once the child
+      // has gone, and is not this test's failure.
+      child.stdin.on('error', () => {});
+      child.stdin.write('y\n'.repeat(200_000));
+
+      const watchdog = setTimeout(() => child.kill('SIGKILL'), HOLD_OPEN_WATCHDOG_MS);
+      const code = await new Promise<number | null>((resolvePromise) =>
+        child.on('close', resolvePromise),
+      );
+      clearTimeout(watchdog);
+
+      expect(code, stderr).toBe(EXIT.usage);
+      expect(stderr).toContain("nothing is reading smelt's output");
+      // A stack trace is the thing this exists to remove: no frames, no "Error:".
+      expect(stderr).not.toContain('    at ');
+      expect(stderr).not.toContain('Unhandled');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
 describe('the built package loads from CommonJS via require(esm)', () => {
   it('resolves through both the exports map and the node10 main field', () => {
     // A scratch node_modules with the real package symlinked under its published

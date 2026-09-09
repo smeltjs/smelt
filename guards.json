@@ -1,6 +1,6 @@
 {
-  "guards": 38,
-  "mutations": 189,
+  "guards": 39,
+  "mutations": 192,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -44,6 +44,10 @@
     },
     {
       "guard": "packages/core/test/guards/hooks-preset.test.ts",
+      "count": 3
+    },
+    {
+      "guard": "packages/core/test/guards/hooks-yes.test.ts",
       "count": 3
     },
     {

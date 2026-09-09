@@ -17,6 +17,7 @@ import {
 import { harnessById } from '../src/harness/registry.ts';
 import type { SmeltInvocation } from '../src/hooks/invocation.ts';
 import { runInit } from '../src/cli/init.ts';
+import { EXIT, runCli } from '../src/cli/run.ts';
 
 /**
  * The `smelt hooks` installer, driven entirely in-process — the same pattern as
@@ -377,6 +378,159 @@ describe('the other tiers write what their matrix row supports', () => {
     const rules = readFileSync(join(dir, '.kilocode/rules/smelt.md'), 'utf8');
     expect(rules).toContain('advisory');
     expect(rules).toContain('kilocode#5827');
+  });
+});
+
+/**
+ * The non-interactive interface. It is the same plan and the same apply loop the
+ * wizard drives — what differs is who consents (`Consent` in cli/hooks.ts) — so these
+ * cases are about the parts that are genuinely its own: the toggles, the refusals,
+ * and the one file shape a policy run may not write.
+ */
+describe('smelt hooks install --yes', () => {
+  async function yes(
+    action: 'install' | 'remove',
+    harness: string | undefined,
+    toggles: Record<string, boolean> = {},
+  ): Promise<WizardRun> {
+    let output = '';
+    const code = await runHooks(action, harness, {
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+      yes: true,
+      toggles,
+    });
+    return { code, output };
+  }
+
+  it("applies with no stream at all, at the wizard's own defaults", async () => {
+    const { code, output } = await yes('install', 'claude-code');
+    expect(code).toBe(0);
+    expect(output).toContain('toggles: guard on, stats on, map off, lint off');
+    const events = readJson('.claude/settings.json')['hooks'] as Record<string, unknown[]>;
+    expect(Object.keys(events).toSorted()).toEqual(['PreToolUse', 'Stop']);
+    expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toContain(SNIPPET_START_MD);
+  });
+
+  it('a toggle flag wins over the default, and a re-run keeps what is installed', async () => {
+    await yes('install', 'claude-code', { mapOnStart: true });
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toContain('map . --budget');
+
+    // No --map on the second run: "absent" means as installed, not off.
+    const { output } = await yes('install', 'claude-code');
+    expect(output).toContain('map on');
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toContain('map . --budget');
+  });
+
+  it('refuses a file it would have to write whole, and says which', async () => {
+    mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugin/smelt-guard.js');
+    writeFileSync(plugin, 'export const theirs = true;\n');
+
+    const { code, output } = await yes('install', 'opencode');
+    expect(code).toBe(0);
+    expect(readFileSync(plugin, 'utf8')).toBe('export const theirs = true;\n');
+    expect(output).toContain('smelt-guard.js');
+    expect(output).toContain('written whole');
+    // The merged file beside it was still installed: one refusal is not a halt.
+    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toContain(SNIPPET_START_MD);
+  });
+
+  it('remove --yes takes it back out with no confirm and no per-file question', async () => {
+    await yes('install', 'claude-code');
+    const { code, output } = await yes('remove', 'claude-code');
+    expect(code).toBe(0);
+    expect(output).not.toContain('confirm (yes / no)');
+    expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(dir, '.claude/settings.json'))).toBe(false);
+  });
+
+  it('names --harness when nothing is detected and nothing was named', async () => {
+    await expect(yes('install', undefined)).rejects.toThrow(CliUsageError);
+    await expect(yes('install', undefined)).rejects.toThrow(/--harness/);
+  });
+});
+
+/**
+ * Without `--yes`, the same four flags pre-answer the wizard's questions: they set
+ * what Enter accepts, rather than being a second, silent way to install.
+ */
+describe('a toggle takes on or off, and says so when it does not get one', () => {
+  async function refusal(argv: readonly string[]): Promise<{ code: number; stderr: string }> {
+    let stderr = '';
+    const code = await runCli(argv, {
+      stdout: () => {},
+      stderr: (text) => {
+        stderr += text;
+      },
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    return { code, stderr };
+  }
+
+  it.each([
+    ['hooks', ['hooks', 'install', '--yes', '--harness', 'claude-code']],
+    ['setup', ['setup', '--yes', '--json', '--harness', 'claude-code']],
+  ])('%s names the flag and both values', async (_verb, base) => {
+    for (const flag of ['guard', 'stats', 'map', 'lint']) {
+      const { code, stderr } = await refusal([...base, `--${flag}`, 'yes']);
+      expect(code, flag).toBe(EXIT.usage);
+      expect(stderr, flag).toContain(`--${flag}`);
+      expect(stderr, flag).toContain('on or off');
+      expect(stderr, flag).toContain('"yes"');
+    }
+  });
+
+  it('the two verbs mean the same thing by the same word', async () => {
+    // Not a tautology: the flags are parsed twice, once per verb, and `on` meaning
+    // one thing to setup and another to hooks is exactly what one owner prevents.
+    const code = await runCli(['setup', '--yes', '--harness', 'claude-code', '--map', 'on'], {
+      stdout: () => {},
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    expect(code).toBe(EXIT.ok);
+    const fromSetup = JSON.stringify(readJson('.claude/settings.json')['hooks']);
+    // Only the settings file goes: the config setup wrote stays, so the two runs
+    // plan against the same budget and the only variable left is the flag.
+    rmSync(join(dir, '.claude'), { recursive: true, force: true });
+    await runHooks('install', 'claude-code', {
+      output: () => {},
+      cwd: dir,
+      home,
+      yes: true,
+      toggles: { mapOnStart: true },
+    });
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toBe(fromSetup);
+  });
+});
+
+describe('the toggle flags pre-answer the wizard', () => {
+  it('Enter through every step takes the flag values, not the built-in defaults', async () => {
+    let output = '';
+    await runHooks('install', 'claude-code', {
+      input: Readable.from([`${['', '', '', '', '', '', 'yes'].join('\n')}\n`]),
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+      toggles: { statsOnStop: false, lintOnStart: true },
+    });
+    expect(output).toContain('stats on Stop? (on/off) [off]');
+    expect(output).toContain('instruction-file lint on SessionStart? (on/off) [on]');
+    const events = readJson('.claude/settings.json')['hooks'] as Record<string, unknown[]>;
+    expect(Object.keys(events).toSorted()).toEqual(['PreToolUse', 'SessionStart']);
+    expect(JSON.stringify(events['SessionStart'])).toContain('agents lint .');
   });
 });
 
