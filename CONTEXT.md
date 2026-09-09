@@ -608,3 +608,18 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
   content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt
   still never writes an agent's files uninvited.
+- **AgentIndex** (`llms.txt`, with `llms-full.txt` beside it): the llmstxt.org index an
+  agent fetches _before_ it has installed anything — an H1, a blockquote summary, the four
+  laws as the notes, the three commands, the MCP tool names, and H2 link lists of every
+  document, ending in `## Optional`. It is **not** a third instruction channel: there are
+  still two (the marker block and the SkillPack, ADR-0002), and the index only points at
+  them. `llms-full.txt` inlines every document the index names, for a reader that can spend
+  the tokens on one fetch instead of twelve. Both are rendered by
+  `scripts/generate-llms-txt.mjs` from one document list and the built packages' own facts.
+  The index is written twice — the repository root and `site/public/`, byte-identically,
+  because an agent reading the repo should not have to fetch it, and because two hand-kept
+  copies of a link list is precisely how a link list goes stale. The companion is written
+  **once**, under `site/public/`: it is the whole documentation set inlined, the index
+  already links its served URL, and a second committed copy would put a large regenerated
+  blob in the diff of every docs change for nobody's benefit.
+  _Avoid_: "docs index" (the README's Documentation table is that) and "manifest".

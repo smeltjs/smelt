@@ -10,6 +10,8 @@ A library, not a proxy.
 [![node](https://img.shields.io/badge/node-%5E20.19_%7C%7C_%3E%3D22.12-6E7783?style=for-the-badge&logo=nodedotjs&logoColor=EFEBE5&labelColor=131417)](#requirements)
 [![License](https://img.shields.io/badge/license-Apache_2.0-6E7783?style=for-the-badge&labelColor=131417)](./LICENSE)
 
+[Docs](docs/ARCHITECTURE.md) · [Vocabulary](CONTEXT.md) · [Changelog](CHANGELOG.md) · [Skill](skills/smelt/SKILL.md) · [llms.txt](llms.txt)
+
 </div>
 
 **Measured, in three numbers** — every row in [`bench/RESULTS.md`](packages/core/bench/RESULTS.md), logs committed:
@@ -70,6 +72,39 @@ npx @smeltjs/core src/server.ts --budget 4000 --focus handleRequest
 
 One runtime dependency (`web-tree-sitter`); the parsers ship inside the tarball. No native
 build step, no post-install download, no Docker, no service, no API key.
+
+## For agents
+
+**AI agents / LLMs:** read [`llms.txt`](llms.txt) here — the summary, the four laws, the
+three commands and the five MCP tool names, with a link list of everything else — or fetch
+[`llms-full.txt`](https://smeltjs.github.io/smelt/llms-full.txt) for every document in that
+list concatenated into one blob. The companion is served, not vendored: it lives in the
+repository only under `site/public/`, and `pnpm generate:llms-txt` renders both locally
+whenever you want them. Neither is hand-written — a hand edit fails `pnpm verify`.
+
+There are exactly **two instruction channels**, and they teach the same commands from the
+same [SetupRecipe](#one-command-smelt-setup) ([ADR-0002](docs/adr/0002-skill-pack-complements-marker-blocks.md)):
+the **marker block** `smelt setup` writes beside the enforcement hooks, and the
+**[SkillPack](skills/smelt/SKILL.md)**, which an agent's owner installs with
+`npx skills add smeltjs/smelt`. Neither is written uninvited.
+
+What an agent on 0.7.0 should actually do:
+
+- **On Homebrew and upgrading from 0.6.0 or earlier, re-run `smelt setup`** — hooks written
+  by those releases point at a Cellar path `brew upgrade` deletes.
+- **`smelt setup --yes --scope user`** installs one config and one store for the whole
+  machine instead of one per project ([below](#one-project-or-the-whole-machine)).
+- **`smelt hooks install --yes`** is the non-interactive wiring, for CI and for any run
+  with no terminal to answer a prompt.
+- **`smelt doctor`** reports each wired artifact as `wired (verified)`, `wired but inert`
+  or `wired but missing`, and exits 3 when something is behind — with the repair command
+  named. Re-run `smelt setup`; never hand-edit what doctor names.
+- **`smelt store prune --older-than 30d --dry-run`**, then the same line without
+  `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own.
+- **Reranking is opt-in and you write it down** — there is no default reranker, nothing is
+  loaded unless a `rerank` key in your `smelt.config.json` says so, and the environment
+  variable read is the one that config names
+  ([below](#reranking-a-seam-and-an-opt-in-you-write-down)).
 
 ## Sixty seconds, from a shell
 

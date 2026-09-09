@@ -106,6 +106,7 @@ export function Footer() {
             { label: 'npm: mcp', href: 'https://www.npmjs.com/package/@smeltjs/mcp' },
             { label: 'Docs (ARCHITECTURE)', href: `${GITHUB}/blob/main/docs/ARCHITECTURE.md` },
             { label: 'Bench harness', href: `${GITHUB}/tree/main/packages/core/bench` },
+            { label: 'llms.txt', href: `${import.meta.env.BASE_URL}llms.txt` },
             { label: 'License', href: `${GITHUB}/blob/main/LICENSE` },
           ].map((link) => (
             <a
