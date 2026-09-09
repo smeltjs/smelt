@@ -378,6 +378,13 @@ describe('store.retention is the cut-off written down, and the flag still wins',
     );
     expect(flagOnly.stdout).toContain('keeping retrieved');
     expect(flagOnly.stdout).not.toContain('store.retention');
+    const flagOnlyJson = await run(
+      ['store', 'prune', '--older-than', '1d', '--keep-retrieved', '--dry-run', '--json'],
+      plain,
+    );
+    expect((JSON.parse(flagOnlyJson.stdout) as CliPruneJsonEnvelope).keepRetrievedSource).toBe(
+      'flag',
+    );
 
     const none = await run(['store', 'prune', '--older-than', '1d', '--dry-run', '--json'], plain);
     expect((JSON.parse(none.stdout) as CliPruneJsonEnvelope).keepRetrievedSource).toBe('none');
