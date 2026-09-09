@@ -559,6 +559,21 @@ describe('flipping the scope re-reads that scope’s toggles', () => {
     expect(project).toContain('stats on Stop? (on/off) [on]');
   });
 
+  it('a toggle flag still wins after the flip — a scope answer is not an unanswer', async () => {
+    machineOnlyGuardInstall();
+    let output = '';
+    await runHooks('install', 'claude-code', {
+      input: Readable.from([`${['2', '', '', '', '', '', '', 'no'].join('\n')}\n`]),
+      output: (text) => void (output += text),
+      cwd: home,
+      home,
+      // Neither reading says `on`: the machine wires the guard only, and the project
+      // has nothing installed, so both would offer `[off]`. Only the flag says on.
+      toggles: { mapOnStart: true },
+    });
+    expect(output).toContain('repo map on SessionStart? (on/off) [on]');
+  });
+
   it('the written file carries the flipped scope’s toggles', async () => {
     machineOnlyGuardInstall();
     await wizardFromHome(['2', '', '', '', '', '', '', 'yes', 'yes']);
