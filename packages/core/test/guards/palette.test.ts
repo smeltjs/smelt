@@ -602,8 +602,10 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'palette-ignores-NO_COLOR',
     file: 'cli/lava.ts',
-    find: "  if (no !== undefined && no !== '') return false;",
-    replace: '  if (false) return false;',
+    // Re-anchored when the boolean switch became a depth: NO_COLOR now answers the
+    // first rung of `colorDepth`, and `colorAllowed` is that answer as a boolean.
+    find: "  if (no !== undefined && no !== '') return 'none';",
+    replace: "  if (false) return 'none';",
     why: 'NO_COLOR ignored — the one environment variable whose whole meaning is "this terminal, or this CI log, must not receive escape sequences"',
   },
   {
