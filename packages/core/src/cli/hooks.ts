@@ -13,7 +13,7 @@ import type { InstallScope } from '../harness/scope.ts';
 import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import { presetToggles, withToggleFlags } from './installed.ts';
 import type { PresetToggles, ToggleFlags } from './installed.ts';
-import { countedFiles, doneBlock } from './lava.ts';
+import { countedFiles, doneBlock, palette } from './lava.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import type { AppliedFile } from './merge-policy.ts';
 import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
@@ -103,6 +103,13 @@ export interface HooksIo {
    * leave it as the install found it, which is what {@link presetToggles} reads.
    */
   readonly toggles?: ToggleFlags;
+  /**
+   * Whether the terminal's locale said it can render more than ASCII. The glyph set
+   * (`✓ ✗ ⚠`), the closing block's rule and the banner's bar fall back to `+ x !` and
+   * `-` where it did not. Absent means yes, which is what this wizard has always
+   * printed. Computed once by `bin.ts`; see `lava.ts`'s `supportsUnicode`.
+   */
+  readonly unicode?: boolean;
 }
 
 /* ------------------------------------------------------------------------------------
@@ -361,15 +368,24 @@ async function applyWithoutAsking(
   }
   for (const note of plan.notes) io.output(`note: ${note}\n`);
   io.output(
-    doneBlock({
-      ok: true,
-      what: `${CLI_NAME} hooks install`,
-      summary: countedFiles(applied.map((one) => one.action)),
-      note:
-        `Re-run with different toggles to edit them; ` +
-        `\`${CLI_NAME} hooks remove --yes\` takes it all back out.`,
-      next: INSTALLED_NEXT,
-    }),
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks install`,
+        // The skips count too: a harness whose file this preset will not write is a
+        // file this run did not write, and a verdict that named only what was applied
+        // would quietly round four-of-six up to four-of-four.
+        summary: countedFiles([
+          ...applied.map((one) => one.action),
+          ...plan.skipped.map(() => 'skipped' as const),
+        ]),
+        note:
+          `Re-run with different toggles to edit them; ` +
+          `\`${CLI_NAME} hooks remove --yes\` takes it all back out.`,
+        next: INSTALLED_NEXT,
+      },
+      palette({ unicode: io.unicode !== false }),
+    ),
   );
   return 0;
 }
@@ -381,8 +397,8 @@ async function applyWithoutAsking(
  * end.
  */
 const INSTALLED_NEXT: readonly (readonly [string, string])[] = [
-  [`${CLI_NAME} doctor`, 'prove the wiring actually fires, and what is behind'],
-  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
+  [`${CLI_NAME} doctor`, 'prove the wiring fires, and what is behind'],
+  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
 ];
 
 /** One toggle, as both the wizard prompt and the --yes summary spell it. */
@@ -599,15 +615,21 @@ async function confirmAndInstall(
 
   for (const note of plan.notes) io.output(`note: ${note}\n`);
   io.output(
-    doneBlock({
-      ok: true,
-      what: `${CLI_NAME} hooks install`,
-      summary: countedFiles(applied.map((one) => one.action)),
-      note:
-        `Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
-        `\`${CLI_NAME} hooks remove\` takes it all back out.`,
-      next: INSTALLED_NEXT,
-    }),
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks install`,
+        summary: countedFiles([
+          ...applied.map((one) => one.action),
+          ...plan.skipped.map(() => 'skipped' as const),
+        ]),
+        note:
+          `Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
+          `\`${CLI_NAME} hooks remove\` takes it all back out.`,
+        next: INSTALLED_NEXT,
+      },
+      palette({ unicode: io.unicode !== false }),
+    ),
   );
   return 'done';
 }
@@ -672,20 +694,23 @@ async function removeFlow(
     removed += 1;
   }
   io.output(
-    doneBlock({
-      ok: true,
-      what: `${CLI_NAME} hooks remove`,
-      // Counted off what this loop actually did, not off what `planRemove` found: a
-      // wizard run may decline any of them, one file at a time. Its own vocabulary,
-      // too — `countedFiles` speaks about writing, and this verb does the opposite.
-      summary:
-        `took ${String(removed)} ${removed === 1 ? 'file' : 'files'} back out` +
-        (spared === 0 ? '' : `, left ${String(spared)} alone`),
-      next: [
-        [`${CLI_NAME} doctor`, 'read back what is left, and what is behind'],
-        [`${CLI_NAME} hooks install`, 'put the guard preset back'],
-      ],
-    }),
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks remove`,
+        // Counted off what this loop actually did, not off what `planRemove` found: a
+        // wizard run may decline any of them, one file at a time. Its own vocabulary,
+        // too — `countedFiles` speaks about writing, and this verb does the opposite.
+        summary:
+          `took ${String(removed)} ${removed === 1 ? 'file' : 'files'} back out` +
+          (spared === 0 ? '' : `, left ${String(spared)} alone`),
+        next: [
+          [`${CLI_NAME} doctor`, 'read back what is left, and what is behind'],
+          [`${CLI_NAME} hooks install`, 'put the guard preset back'],
+        ],
+      },
+      palette({ unicode: io.unicode !== false }),
+    ),
   );
   return 0;
 }

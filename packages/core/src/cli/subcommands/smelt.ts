@@ -12,7 +12,7 @@ import { MemoryElisionStore } from '../../store.ts';
 import type { DetectedLanguage, ElisionStore, SmeltResult } from '../../types.ts';
 import { CONFIG_FILE_NAME, configuredStore } from '../config.ts';
 import type { ConfiguredStore, LoadedConfig, SmeltConfigRerank } from '../config.ts';
-import { stderrPalette } from '../lava.ts';
+import { PLAIN, stderrPalette } from '../lava.ts';
 import { formatReport } from '../report.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -341,7 +341,7 @@ async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
   // The report goes to stderr, so it is painted by the stderr switch: `smelt big.log
   // --budget 4000 > small.log` leaves the payload in a file and this report on a
   // terminal, and that is the half a person reads.
-  io.stderr(formatReport(outcome, stderrPalette(io)));
+  io.stderr(formatReport(outcome, run.json ? PLAIN : stderrPalette(io)));
 
   return outcome.result.outputBytes > run.budgetBytes ? EXIT.overBudget : EXIT.ok;
 }

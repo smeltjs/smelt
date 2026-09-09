@@ -3,7 +3,7 @@ import process from 'node:process';
 import { CliUsageError } from '../../errors.ts';
 import { harnessesByTier, harnessNames } from '../../harness/registry.ts';
 import type { HarnessTier } from '../../harness/profile.ts';
-import { colorize } from '../lava.ts';
+import { colorize, stdoutPalette } from '../lava.ts';
 import { noInteractiveInput, runHooks } from '../hooks.ts';
 import { CLI_NAME, refusingSink } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -157,7 +157,7 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
       // writing into a stream nobody is reading, and unwrapped that is a stack trace
       // and exit 4 — "unexpected internal error" — for two ordinary shell moves.
       output: refusingSink(
-        (text) => io.stdout(colorize(text, io.color === true && !resolved.yes)),
+        (text) => io.stdout(colorize(text, io.color === true && !resolved.yes, stdoutPalette(io))),
         (why) => closedSink(`hooks ${resolved.action}`, why),
       ),
       cwd: io.cwd ?? process.cwd(),
@@ -166,6 +166,8 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
       ...(resolved.scope === undefined ? {} : { scope: resolved.scope }),
       yes: resolved.yes,
       toggles: resolved.toggles,
+      // See setup's: the glyph set is the terminal's fact, not this run's.
+      ...(io.unicode === undefined ? {} : { unicode: io.unicode }),
     });
   },
 };

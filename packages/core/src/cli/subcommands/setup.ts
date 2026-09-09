@@ -4,7 +4,7 @@ import { CliUsageError } from '../../errors.ts';
 import { HARNESSES, harnessById } from '../../harness/registry.ts';
 import { SETUP_RECIPE } from '../../setup/recipe.ts';
 import { runSetup } from '../setup.ts';
-import { colorize } from '../lava.ts';
+import { colorize, stdoutPalette } from '../lava.ts';
 import { CLI_NAME, refusingSink } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
@@ -142,7 +142,10 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
       // or invalid stdout (`smelt setup | head`, `yes | smelt setup`) must be one
       // line and the usage exit rather than a stack trace and "internal error".
       output: refusingSink(
-        (text) => io.stdout(colorize(text, io.color === true && !resolved.yes && !resolved.json)),
+        (text) =>
+          io.stdout(
+            colorize(text, io.color === true && !resolved.yes && !resolved.json, stdoutPalette(io)),
+          ),
         (why) =>
           new CliUsageError(
             `${CLI_NAME}: setup could not write its output — the stream is closed ` +
@@ -155,6 +158,9 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
       // The lava renderer is for the human at a terminal: --yes and --json are the
       // machine paths, and their bytes stay plain however pretty the screen is.
       ...(io.color === true && !resolved.yes && !resolved.json ? { color: true } : {}),
+      // The glyph set, which is a fact about the terminal rather than about this run:
+      // a `--yes` receipt on a latin-1 terminal still has marks and a rule to draw.
+      ...(io.unicode === undefined ? {} : { unicode: io.unicode }),
     });
   },
 };

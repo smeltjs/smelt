@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 // of src. See scripts/mutate.mjs.
 import {
   colorAllowed,
+  colorDepth,
   colorize,
   countedFiles,
   doneBlock,
@@ -17,6 +18,7 @@ import {
   supportsUnicode,
 } from '@guard/cli/lava';
 import { runInit } from '@guard/cli/init';
+import { stderrPalette, stdoutPalette } from '@guard/cli/lava';
 import { EXIT, runCli } from '@guard/cli/run';
 import { cliUsage, frontDoor } from '@guard/cli/usage';
 
@@ -176,11 +178,91 @@ describe('a machine surface never carries paint', () => {
 
   it.each(JSON_RUNS)('smelt %s emits an envelope with no escape bytes', async (_name, argv) => {
     const cwd = projectRoot();
-    const { stdout } = await loud(argv(cwd), cwd);
+    const { stdout, stderr } = await loud(argv(cwd), cwd);
     expect(stdout).not.toContain(ESC);
     // …and it is still JSON, so this is a statement about the envelope and not about
     // an empty string.
     expect(() => JSON.parse(stdout) as unknown).not.toThrow();
+    // The other stream too: `--json` is bytes for a machine, and `2>&1` is how a
+    // machine ends up reading the report beside the envelope.
+    expect(stderr, 'the report beside the envelope was painted').not.toContain(ESC);
+  });
+
+  it('paints the report on stderr when the run is not a --json one', async () => {
+    // The other half of the claim above: the report *is* painted when a person is
+    // reading it, which is what makes the plain `--json` case a decision.
+    const cwd = projectRoot();
+    const { stderr } = await loud([join(cwd, 'corpus.txt'), '--budget', '600'], cwd);
+    expect(stderr).toContain(ESC);
+  });
+});
+
+/** The wordmark at one depth — the surface where a wrong assumption is most visible. */
+function logo(depth: 'truecolor' | 256 | 16): string {
+  return palette({ color: true, depth }).logo();
+}
+
+describe('the terminal is asked how much colour it has', () => {
+  it('reads the precedence in order, each rung on its own', () => {
+    // NO_COLOR beats everything, including a person's own FORCE_COLOR.
+    expect(colorDepth({ NO_COLOR: '1', FORCE_COLOR: '3', COLORTERM: 'truecolor' }, true)).toBe(
+      'none',
+    );
+    // FORCE_COLOR's conventional levels, and "colour, but do not guess high".
+    expect(colorDepth({ FORCE_COLOR: '0' }, true)).toBe('none');
+    expect(colorDepth({ FORCE_COLOR: '1' }, false)).toBe(16);
+    expect(colorDepth({ FORCE_COLOR: '2' }, false)).toBe(256);
+    expect(colorDepth({ FORCE_COLOR: '3' }, false)).toBe('truecolor');
+    expect(colorDepth({ FORCE_COLOR: 'true', TERM: 'xterm-256color' }, false)).toBe(16);
+    // Then what the terminal says about itself.
+    expect(colorDepth({ COLORTERM: 'truecolor', TERM: 'xterm-256color' }, true)).toBe('truecolor');
+    expect(colorDepth({ COLORTERM: '24bit' }, true)).toBe('truecolor');
+    expect(colorDepth({ TERM: 'xterm-256color' }, true)).toBe(256);
+    // A terminal that has said it cannot is not a terminal that can.
+    expect(colorDepth({ TERM: 'dumb' }, true)).toBe('none');
+    // And the floor: sixteen colours at a terminal, nothing in a pipe.
+    expect(colorDepth({ TERM: 'xterm' }, true)).toBe(16);
+    expect(colorDepth({}, true)).toBe(16);
+    expect(colorDepth({}, false)).toBe('none');
+    // `colorAllowed` is the same answer as a boolean, never a second opinion.
+    for (const env of [{}, { NO_COLOR: '1' }, { TERM: 'dumb' }, { FORCE_COLOR: '2' }]) {
+      for (const tty of [true, false]) {
+        expect(colorAllowed(env, tty), JSON.stringify(env)).toBe(colorDepth(env, tty) !== 'none');
+      }
+    }
+  });
+
+  it('emits the sequences each depth actually has, and 38;2 only where it was promised', () => {
+    // The bug this closes: `38;2;…` went out unconditionally, and a 16-colour
+    // emulator, Terminal.app or tmux without -2 renders it as garbage — in the logo
+    // the front door leads with.
+    expect(logo('truecolor')).toContain(`${ESC}38;2;`);
+    expect(logo(256)).toContain(`${ESC}38;5;`);
+    expect(logo(256)).not.toContain(`${ESC}38;2;`);
+    // Sixteen: one of the basic SGR colours, and nothing extended at all.
+    // `ESC` is the CSI itself (`\u001b[`), so its bracket is escaped for the pattern.
+    expect(logo(16)).toMatch(new RegExp(`${ESC.replace('[', '\\[')}(?:3[0-7]|9[0-7])m`, 'u'));
+    expect(logo(16)).not.toContain(`${ESC}38;`);
+    // The whole ramp lands on yellow at sixteen colours — the nearest thing a 1979
+    // palette has to amber. Flat, and legible, which is the trade.
+    const sixteen = palette({ color: true, depth: 16 });
+    expect(sixteen.paint('brand', 'x')).toBe(`${ESC}33mx${ESC}0m`);
+    expect(sixteen.paint('number', 'x')).toBe(`${ESC}33mx${ESC}0m`);
+    // The roles that were never on the ramp are the same at every depth.
+    for (const depth of ['truecolor', 256, 16] as const) {
+      expect(palette({ color: true, depth }).paint('good', 'y')).toBe(`${ESC}32my${ESC}0m`);
+    }
+    // …and `none` is the plain rendering, whatever `color` said.
+    expect(palette({ color: true, depth: 'none' }).logo()).not.toContain(ESC);
+    expect(palette({ color: false, depth: 'truecolor' }).logo()).not.toContain(ESC);
+  });
+
+  it('carries the depth from the io to every stream palette', () => {
+    const io = { color: true, colorErr: true, depth: 256 as const };
+    expect(stdoutPalette(io).depth).toBe(256);
+    expect(stderrPalette(io).depth).toBe(256);
+    // A stream that is not painted is `none`, whatever the terminal can do.
+    expect(stdoutPalette({ color: false, depth: 'truecolor' }).depth).toBe('none');
   });
 });
 
@@ -318,6 +400,29 @@ describe('the closing block: what happened, and what to type next', () => {
 });
 
 describe('the closing block counts what was applied, not what was planned', () => {
+  it('counts a file the preset would not write as a file it did not write', async () => {
+    // Grok documents no user-level hook file and no user-level instruction file, so a
+    // machine-scope install writes two of four and skips two. A block that counted
+    // only what it applied would round that to "wrote 2 files" and say nothing about
+    // the two a person may well have been expecting.
+    const cwd = projectRoot();
+    let stdout = '';
+    const code = await runCli(
+      ['hooks', 'install', '--yes', '--harness', 'grok', '--scope', 'user'],
+      {
+        stdout: (text) => void (stdout += text),
+        stderr: () => {},
+        stdin: () => '',
+        version: '9.9.9-test',
+        cwd,
+        home: cwd,
+      },
+    );
+    expect(code).toBe(EXIT.ok);
+    expect(stdout).toContain('skipped .grok/hooks.json');
+    expect(stdout).toContain('Done. smelt hooks install wrote 2, skipped 2 — 4 files in all.');
+  });
+
   it('a file the user declined is not a file the block says it wrote', async () => {
     // The whole hazard in one run: `smelt init` plans two files, the person says no to
     // the one that already exists, and the closing block is the last thing they read.
@@ -338,6 +443,83 @@ describe('the closing block counts what was applied, not what was planned', () =
     expect(readFileSync(join(cwd, 'smelt.rerank.ts'), 'utf8')).toBe(
       '// hand-written — do not touch\n',
     );
+  });
+});
+
+describe('the ASCII fallback reaches the wizards, not just the primitives', () => {
+  /**
+   * The one non-ASCII character the fallback does **not** remove.
+   *
+   * Every prose surface in this CLI — the help page, the reports, doctor, every wizard
+   * — punctuates with an em dash, and always has. The `unicode` switch is about the
+   * characters smelt *draws*: the marks, the rule, the bar, the wordmark. Folding the
+   * prose's punctuation as well is a separate job, and a real one; this test states
+   * exactly where the line is today rather than pretending it is somewhere else.
+   */
+  const PROSE_DASH = '—';
+
+  it.each([
+    ['setup', ['setup', '--yes', '--harness', 'claude-code']],
+    ['hooks install', ['hooks', 'install', '--yes', '--harness', 'claude-code']],
+  ])('%s draws nothing above ASCII when the locale never promised it', async (_name, argv) => {
+    const cwd = projectRoot();
+    let stdout = '';
+    const code = await runCli(argv, {
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd,
+      home: join(cwd, 'home'),
+      unicode: false,
+    });
+    expect(code).toBe(EXIT.ok);
+    // The block, the marks and the rule are all there — in their ASCII spellings.
+    expect(stdout).toContain('----');
+    expect(stdout).toMatch(/^\s*\+ Done\./mu);
+    expect(stdout).not.toContain('━');
+    expect(stdout).not.toContain('✓');
+    expect(stdout).not.toContain('✗');
+    const above = [...new Set([...stdout].filter((ch) => (ch.codePointAt(0) ?? 0) > 127))];
+    expect(above, `unexpected non-ASCII: ${JSON.stringify(above)}`).toEqual([PROSE_DASH]);
+  });
+
+  it('draws the marks and the rule in Unicode when the locale did promise it', async () => {
+    const cwd = projectRoot();
+    let stdout = '';
+    await runCli(['setup', '--yes', '--harness', 'claude-code'], {
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd,
+      home: join(cwd, 'home'),
+    });
+    expect(stdout).toContain('━━━━');
+    expect(stdout).toContain('✓ Done.');
+  });
+});
+
+describe('everything a newcomer meets fits an 80-column terminal', () => {
+  it('keeps the front door and the closing block under 80 columns', () => {
+    const lines = [
+      ...frontDoor().split('\n'),
+      ...doneBlock({
+        ok: true,
+        what: 'smelt setup',
+        summary: 'wrote 4 files; 3 of 3 checks passed',
+        next: [
+          ['smelt doctor', 'read back what was written, and what is behind'],
+          ['smelt <file> --budget 4000', 'smelt one file — the report says what went'],
+          ['smelt stats', 'the store, once a run has put something in it'],
+        ],
+      }).split('\n'),
+    ];
+    for (const line of lines) {
+      // Counted in characters, not bytes: a wrapped line in an 80-column terminal
+      // breaks the alignment the block exists to give.
+      expect([...line].length, JSON.stringify(line)).toBeLessThan(80);
+    }
   });
 });
 
@@ -362,6 +544,15 @@ describe('Law 4 reaches the formatter', () => {
   it('caps a bar at the width the palette will draw, however wide it is asked for', () => {
     expect(PLAIN.bar(1, 4000)).toHaveLength(40);
   });
+
+  it('draws nothing rather than throwing when there is no room for a bar', () => {
+    // A width computed from a subtraction can reach zero on a narrow terminal, and
+    // `String.repeat(-1)` throws — a stats page that crashed instead of printing.
+    expect(PLAIN.bar(0.5, 0)).toBe('');
+    expect(PLAIN.bar(0.5, -3)).toBe('');
+    expect(PLAIN.bar(0, 0)).toBe('');
+    expect(palette({ color: true }).bar(0.5, 0)).toBe('');
+  });
 });
 
 /**
@@ -385,10 +576,18 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     kind: 'src',
+    id: 'palette-assumes-truecolor',
+    file: 'cli/lava.ts',
+    find: "  if (depth === 'truecolor') return `\\x1b[38;2;${String(r)};${String(g)};${String(b)}m`;",
+    replace: '  return `\\x1b[38;2;${String(r)};${String(g)};${String(b)}m`;',
+    why: "truecolor emitted at every depth — the assumption this module shipped with, which renders the front door's gradient as garbage on Terminal.app, on tmux without -2 and on every 16-colour emulator",
+  },
+  {
+    kind: 'src',
     id: 'palette-bar-rounds-a-real-rate-to-nothing',
     file: 'cli/lava.ts',
-    find: '  if (clamped > 0 && filled === 0) filled = 1;',
-    replace: '  if (false) filled = 1;',
+    find: '  if (cells > 0 && clamped > 0 && filled === 0) filled = 1;',
+    replace: '  if (cells > 0 && false) filled = 1;',
     why: 'a bar that draws "nothing was asked back" for a rate that is not zero — Law 4 lost in a picture, in the direction that flatters smelt',
   },
   {

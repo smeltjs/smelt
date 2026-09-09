@@ -516,10 +516,21 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   screen and a dozen bytes in a string, so a cell padded after painting is a column that
   does not line up. **A rendering may not round a non-zero to zero** — `percent` prints
   `<0.1%` and `bar` keeps one filled cell for a rate that is not zero, which is Law 4 at
-  the last inch before a person reads it. The **glyph set** (`✓ ✗ ⚠ · •`) and the bar's
-  block cells fall back to ASCII where the locale never said it could render more
-  (`supportsUnicode`), and the **wordmark** is a committed constant in the ANSI Shadow
-  letterforms with a plain-ASCII twin — smelt runs no figlet. _Avoid_: "theme",
+  the last inch before a person reads it. The **glyph set** (`✓ ✗ ⚠ · •`), the closing
+  block's rule and the bar's block cells fall back to ASCII where the locale never said
+  it could render more (`supportsUnicode`), and the **wordmark** is a committed constant
+  in the ANSI Shadow letterforms with a plain-ASCII twin — smelt runs no figlet.
+  **How much** colour is a capability, not a preference: `colorDepth(env, isTty)` →
+  `'none' | 16 | 256 | 'truecolor'`, in one precedence — `NO_COLOR` (any non-empty
+  value) beats everything, then `FORCE_COLOR` (`0` off, `1` sixteen, `2` 256, `3`
+  truecolor, anything else sixteen), then `COLORTERM` ∈ {`truecolor`, `24bit`}, then
+  `TERM` containing `256color`, then `TERM=dumb` → none, and otherwise sixteen at a
+  terminal and none anywhere else. `colorAllowed` is that same answer as a boolean, so
+  the two can never disagree. The lava ramp resolves against the depth (`38;2`
+  truecolor, `38;5` on the 6×6×6 cube, nearest of the sixteen below that); every other
+  role was already one of the sixteen every ANSI terminal has had since 1979. `bin.ts`
+  asks once, about the terminal, while the per-stream switches stay per-stream.
+  _Avoid_: "theme",
   "styling helper"; and never a colour name at a call site.
 
 ## Setup and distribution

@@ -38,7 +38,7 @@ const TAGLINE = 'shrink text for a model, without lying about what was removed.'
  */
 const FRONT_DOOR: readonly (readonly [string, string])[] = [
   [`${CLI_NAME} setup`, 'wire smelt into the agent harness you use here'],
-  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut, and why'],
+  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
   [`${CLI_NAME} doctor`, 'read back what is installed, and what is behind'],
 ];
 

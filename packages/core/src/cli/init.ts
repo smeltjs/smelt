@@ -7,7 +7,7 @@ import type { Strategy } from '../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../plan/structural.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 
-import { countedFiles, doneBlock } from './lava.ts';
+import { countedFiles, doneBlock, palette } from './lava.ts';
 import type { FileAction } from './lava.ts';
 import { CLI_NAME } from './shell.ts';
 import { wizardAsk } from './wizard.ts';
@@ -79,6 +79,13 @@ export interface InitIo {
    * written, and nothing is written outside it.
    */
   readonly cwd: string;
+  /**
+   * Whether the terminal's locale said it can render more than ASCII. The glyph set
+   * (`✓ ✗ ⚠`), the closing block's rule and the banner's bar fall back to `+ x !` and
+   * `-` where it did not. Absent means yes, which is what this wizard has always
+   * printed. Computed once by `bin.ts`; see `lava.ts`'s `supportsUnicode`.
+   */
+  readonly unicode?: boolean;
 }
 
 /** Everything the wizard decides. Pure data until the final confirm writes it. */
@@ -658,17 +665,20 @@ async function confirmAndWrite(
     );
   }
   io.output(
-    doneBlock({
-      ok: true,
-      what: `${CLI_NAME} init`,
-      summary: countedFiles(applied),
-      note: `${CONFIG_FILE_NAME} is defaults only — every flag still wins over it.`,
-      next: [
-        [`${CLI_NAME} setup`, 'wire the guard preset into the harness you use here'],
-        [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
-        [`${CLI_NAME} doctor`, 'read back what is installed, and what is behind'],
-      ],
-    }),
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} init`,
+        summary: countedFiles(applied),
+        note: `${CONFIG_FILE_NAME} is defaults only — every flag still wins over it.`,
+        next: [
+          [`${CLI_NAME} setup`, 'wire the guard preset into the harness you use'],
+          [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
+          [`${CLI_NAME} doctor`, 'read back what is installed, and what is behind'],
+        ],
+      },
+      palette({ unicode: io.unicode !== false }),
+    ),
   );
   return 'done';
 }

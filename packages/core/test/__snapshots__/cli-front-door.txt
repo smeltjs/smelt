@@ -8,7 +8,7 @@
   smelt — shrink text for a model, without lying about what was removed.
 
   smelt setup                 wire smelt into the agent harness you use here
-  smelt <file> --budget 4000  smelt one file — the report says what was cut, and why
+  smelt <file> --budget 4000  smelt one file — the report says what went
   smelt doctor                read back what is installed, and what is behind
 
   smelt --help for every verb, every flag and the exit codes.

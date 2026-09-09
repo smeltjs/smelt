@@ -77,6 +77,18 @@ export type { CliAgentsJsonEnvelope, ResolvedAgentsRun } from './subcommands/age
  * would make a wizard you run to *fix* a malformed config refuse to start.
  */
 /**
+ * The io a *machine* reads: stderr unpainted, because `--json` means bytes for
+ * something that parses them and `2>&1` puts the report beside the envelope.
+ *
+ * Every verb already prints its envelope through `PLAIN`, so stdout needs nothing
+ * here; what was left was the report on the other stream — and the refusal, which is
+ * printed from `runCli`'s own catch, where no verb's `--json` flag is in reach.
+ */
+function machineIo(io: CliIo): CliIo {
+  return Object.create(io, { colorErr: { value: false, enumerable: true } }) as CliIo;
+}
+
+/**
  * The same io with its colour switched off — and **not** `{ ...io, color: false }`.
  *
  * A spread reads every own property, and `bin.ts` deliberately hands `initInput` over
@@ -99,7 +111,11 @@ export async function runCli(argv: readonly string[], rawIo: CliIo): Promise<num
   // `--no-color` is answered before anything else, because it changes how the very
   // refusal for a mistyped command line is printed. Every palette below is built off
   // this one io, so a verb cannot re-derive colour and disagree with the flag.
-  const io: CliIo = refusesColor(argv) ? plainIo(rawIo) : rawIo;
+  const io: CliIo = refusesColor(argv)
+    ? plainIo(rawIo)
+    : argv.includes('--json')
+      ? machineIo(rawIo)
+      : rawIo;
   try {
     // Bare `smelt` at a terminal is a person who has not read anything yet: the front
     // door, not a refusal about stdin. A pipe (`cat log | smelt`) is not that person

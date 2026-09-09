@@ -35,7 +35,7 @@ import { DEFAULT_STRATEGY } from '../plan/planners.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 import { CLI_NAME, EXIT } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
-import { countedFiles, doneBlock, lavaBanner } from './lava.ts';
+import { countedFiles, doneBlock, lavaBanner, palette } from './lava.ts';
 
 /**
  * `smelt setup` — the SetupRecipe (CONTEXT.md) applied end-to-end: config, the hooks
@@ -80,6 +80,13 @@ export interface SetupIo {
   readonly version?: string;
   /** The lava renderer's switch — computed by the verb from CliIo, interactive-only. */
   readonly color?: boolean;
+  /**
+   * Whether the terminal's locale said it can render more than ASCII. The glyph set
+   * (`✓ ✗ ⚠`), the closing block's rule and the banner's bar fall back to `+ x !` and
+   * `-` where it did not. Absent means yes, which is what this wizard has always
+   * printed. Computed once by `bin.ts`; see `lava.ts`'s `supportsUnicode`.
+   */
+  readonly unicode?: boolean;
 }
 
 /** Everything the verb resolved before the flow ran. Pure data, both paths. */
@@ -265,7 +272,7 @@ async function wizardPath(
   say: Say,
   ask: Ask,
 ): Promise<SetupChoices | undefined> {
-  say(lavaBanner('smelt setup', io.color === true));
+  say(lavaBanner('smelt setup', io.color === true, io.unicode !== false));
   say(
     `\n${CLI_NAME} setup — one command through the whole recipe. Enter accepts every ` +
       `default; nothing is written until the final confirm.\n\n`,
@@ -667,10 +674,14 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
 }
 
 /** The prose renderer — one adapter over the outcome. */
-function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
+function renderOutcome(outcome: ApplyOutcome, say: Say, unicode: boolean): boolean {
   const { receipt } = outcome;
   const { files, mcp, checks } = receipt;
   const ok = outcome.failedChecks === 0;
+  // Plain on purpose: the marks and the rule are *drawn* here and *painted* at the
+  // verb's sink, which is where a wizard's colour has always been decided. What this
+  // palette decides is the glyph set — `✓` or `+`, `━` or `-`.
+  const lava = palette({ unicode });
 
   for (const file of files) {
     say(`  ${file.name}: ${file.action}${file.detail === undefined ? '' : ` — ${file.detail}`}\n`);
@@ -697,7 +708,7 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
     );
   }
   for (const check of checks) {
-    say(`${check.ok ? ' ✓' : ' ✗'} ${check.name} — ${check.detail}\n`);
+    say(` ${lava.glyph(check.ok ? 'ok' : 'bad')} ${check.name} — ${check.detail}\n`);
   }
 
   // The closing block, and the only place this flow states a total. Both halves are
@@ -705,23 +716,26 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
   // off the recipe.
   const passed = checks.filter((check) => check.ok).length;
   say(
-    doneBlock({
-      ok,
-      what: `${CLI_NAME} setup`,
-      summary:
-        `${countedFiles(files.map((file) => file.action))}; ` +
-        `${String(passed)} of ${String(checks.length)} checks passed`,
-      ...(ok
-        ? {}
-        : {
-            note: 'A check did not pass — the lines above say which, and this run exits non-zero.',
-          }),
-      next: [
-        [`${CLI_NAME} doctor`, 'read back what was just written, and what is behind'],
-        [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
-        [`${CLI_NAME} stats`, 'the store, once a run has put something in it'],
-      ],
-    }),
+    doneBlock(
+      {
+        ok,
+        what: `${CLI_NAME} setup`,
+        summary:
+          `${countedFiles(files.map((file) => file.action))}; ` +
+          `${String(passed)} of ${String(checks.length)} checks passed`,
+        ...(ok
+          ? {}
+          : {
+              note: 'A check did not pass — the lines above say which, and this run exits non-zero.',
+            }),
+        next: [
+          [`${CLI_NAME} doctor`, 'read back what was written, and what is behind'],
+          [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
+          [`${CLI_NAME} stats`, 'the store, once a run has put something in it'],
+        ],
+      },
+      lava,
+    ),
   );
 
   return ok;
@@ -745,7 +759,7 @@ async function finish(
   options: SetupOptions,
 ): Promise<number> {
   const outcome = await applySetup(choices, io);
-  const ok = renderOutcome(outcome, say);
+  const ok = renderOutcome(outcome, say, io.unicode !== false);
   if (options.json) {
     const receipt: SetupReceipt = {
       format: 'smelt.setup.v1',

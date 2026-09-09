@@ -3,7 +3,7 @@ import { readFileSync, readSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import process from 'node:process';
 
-import { colorAllowed, supportsUnicode } from './lava.ts';
+import { colorAllowed, colorDepth, supportsUnicode } from './lava.ts';
 import { closedSinkCode, EXIT, runCli } from './run.ts';
 
 /**
@@ -189,6 +189,12 @@ try {
     // a terminal, and that report is the half a person reads.
     color: colorAllowed(process.env, process.stdout.isTTY === true),
     colorErr: colorAllowed(process.env, process.stderr.isTTY === true),
+    // How much colour the terminal has, asked once. A capability, not a switch, so it
+    // is asked about the *terminal* — either stream being one is enough — while the
+    // two booleans above stay per-stream. Without this, `38;2;…` went out
+    // unconditionally, and Terminal.app, tmux without -2 and every 16-colour emulator
+    // rendered the front door's gradient as garbage.
+    depth: colorDepth(process.env, process.stdout.isTTY === true || process.stderr.isTTY === true),
     // A person at both ends — the front door's only switch. `isatty(0)` is the same
     // plain syscall readStdin uses, so nothing here flips fd 0 into non-blocking mode.
     tty: process.stdout.isTTY === true && isatty(0),

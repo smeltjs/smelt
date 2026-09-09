@@ -183,6 +183,19 @@ export interface CliIo {
    */
   readonly tty?: boolean;
   /**
+   * How much colour the terminal has — `'none' | 16 | 256 | 'truecolor'`, computed once
+   * by `bin.ts` through `lava.ts`'s `colorDepth`. A **capability**, not a switch: the
+   * two streams may differ about whether they are painted ({@link CliIo.color} and
+   * {@link CliIo.colorErr}) and never about what the terminal can render. Absent means
+   * truecolor wherever colour is on at all — which is what a test that says
+   * `color: true` and nothing else is asking for.
+   *
+   * Spelled out rather than imported as `ColorDepth`: this file imports nothing (see
+   * the module doc), and the two spellings are held together by `PaletteSource`, which
+   * every palette builder takes a `CliIo` through.
+   */
+  readonly depth?: 'none' | 16 | 256 | 'truecolor';
+  /**
    * Whether the terminal's locale said it can render more than ASCII — the glyph set
    * `✓ ✗ ⚠` and the block-drawing bar fall back to `+ x !` and `#` where it did not.
    * Absent means yes, which is what smelt has always printed.

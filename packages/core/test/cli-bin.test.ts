@@ -50,6 +50,16 @@ interface Finished {
   readonly stderr: string;
 }
 
+/** The variables the colour decision reads. Stripped so a test can state its own. */
+const COLOR_VARS = ['NO_COLOR', 'FORCE_COLOR', 'COLORTERM', 'TERM'] as const;
+
+/** The developer's environment, minus every variable `colorDepth` looks at. */
+function withoutColorVars(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const copy: Record<string, string | undefined> = { ...env };
+  for (const name of COLOR_VARS) delete copy[name];
+  return copy;
+}
+
 /**
  * Spawn the built bin.
  *
@@ -69,7 +79,12 @@ function runBin(
     const child = spawn(process.execPath, [binPath, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(cwd === undefined ? {} : { cwd }),
-      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+      // The colour variables are stripped from the inherited environment before the
+      // overrides go on: a developer with NO_COLOR (or FORCE_COLOR, or a COLORTERM
+      // their emulator exported) in their shell would otherwise fail the cases that
+      // are *about* those variables — a test that passes on one machine and not the
+      // next is not a test.
+      env: { ...withoutColorVars(process.env), ...env },
     });
     const stdoutChunks: Buffer[] = [];
     let stderr = '';
@@ -248,9 +263,22 @@ describe('the built binary, as a real process', () => {
     expect(piped.code, piped.stderr).toBe(EXIT.ok);
     expect(piped.stdout).not.toContain('\u001b[');
 
+    // FORCE_COLOR is how a person asks for paint through a pipe — and its level is
+    // what they get: `1` is sixteen colours, and no `38;2` goes to a terminal that
+    // never said it could render one.
     const forced = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1' });
     expect(forced.code, forced.stderr).toBe(EXIT.ok);
     expect(forced.stdout).toContain('\u001b[');
+    expect(forced.stdout).not.toContain('\u001b[38;2;');
+
+    const truecolor = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '3' });
+    expect(truecolor.stdout).toContain('\u001b[38;2;');
+
+    const dumb = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1', TERM: 'dumb' });
+    // FORCE_COLOR outranks TERM: the person asked, and TERM is the terminal's guess.
+    expect(dumb.stdout).toContain('\u001b[');
+    const plainTerm = await runBin(['stats'], undefined, cwd, { TERM: 'dumb' });
+    expect(plainTerm.stdout).not.toContain('\u001b[');
 
     const refused = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1', NO_COLOR: '1' });
     expect(refused.stdout).not.toContain('\u001b[');

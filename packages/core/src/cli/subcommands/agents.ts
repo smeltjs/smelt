@@ -238,7 +238,7 @@ async function runSplit(run: ResolvedAgentsRun, io: CliIo): Promise<number> {
   }
   return await runAgentsSplit({
     input: io.initInput,
-    output: (text) => io.stdout(colorize(text, io.color === true)),
+    output: (text) => io.stdout(colorize(text, io.color === true, stdoutPalette(io))),
     cwd: io.cwd ?? process.cwd(),
     dir: run.dir,
   });
