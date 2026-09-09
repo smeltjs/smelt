@@ -73,7 +73,13 @@ export const ALLOWED_NODE_BUILTINS: readonly string[] = [
   'node:path',
   'node:url',
   'node:buffer',
-  'node:module', // web-tree-sitter's own loader shim needs createRequire
+  // `createRequire`, for two resolvers and nothing else: web-tree-sitter's own loader
+  // shim, and `rerank/resolve.ts`, which asks Node where an opt-in adapter is
+  // installed. Both only *resolve* — they turn a name into a path on this machine
+  // and open nothing. The rerank one hands its answer back as a `file:` URL, so the
+  // adapter's name never reaches an `import()` as a literal and the walk below still
+  // finds no edge to it.
+  'node:module',
   'node:util', // parseArgs, for the CLI. Argument parsing with zero dependencies.
   'node:process', // argv, stdin/stdout/stderr and the exit code, for the CLI
   'node:os', // homedir(), for `smelt hooks install` harness detection — reads a path, opens nothing

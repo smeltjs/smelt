@@ -9,6 +9,8 @@ import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
 import { resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
+import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
+import { originLabel, resolveAdapter } from '../rerank/resolve.ts';
 import { readStoreSize } from '../store-dir.ts';
 
 import {
@@ -167,6 +169,15 @@ export interface DoctorRerank {
   readonly keySet?: boolean;
   /** For `module`: whether the file the config points at exists. */
   readonly moduleExists?: boolean;
+  /**
+   * For `voyage`: which of the two directories the adapter package resolved from —
+   * `'config'` for the one holding `smelt.config.json`, `'core'` for smelt's own
+   * install. Absent when it resolved from neither, which is when {@link install} is
+   * there instead. Presence only: nothing is imported to answer this.
+   */
+  readonly adapterFrom?: 'config' | 'core';
+  /** For `voyage`: the command that installs the adapter. Absent when it is installed. */
+  readonly install?: string;
 }
 
 /** One hook file, with every command of ours in it and its probe. */
@@ -302,7 +313,18 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       // this file that can make a smelt run talk to another machine, and "is that
       // switched on here, and does it have what it needs?" must be answerable without
       // running anything. Presence of the key only — never the key.
-      rerank = readRerank(parsed.rerank, dirname(configPath), io.env ?? {});
+      rerank = readRerank(parsed.rerank, configPath, io.env ?? {});
+      if (rerank?.install !== undefined) {
+        // The same class of failure as an unset key, and the one this receipt could
+        // not report at all before: the opt-in is written down, the adapter is in
+        // neither place smelt looks, and every run that would rerank refuses.
+        orphans.push(
+          `rerank is configured (${rerank.adapter}) but ${RERANK_VOYAGE_PACKAGE} is not ` +
+            `installed in the config's directory or in smelt's own — every run that ` +
+            `would rerank refuses instead`,
+        );
+        repair.push(rerank.install);
+      }
       if (rerank?.keySet === false) {
         orphans.push(
           `rerank is configured (${rerank.adapter}) but ${rerank.keyEnv ?? ''} is not set — ` +
@@ -403,11 +425,14 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     }
     if (rerank !== undefined) {
       line(
-        rerank.keySet === false || rerank.moduleExists === false ? 'bad' : 'ok',
+        rerank.keySet === false || rerank.moduleExists === false || rerank.install !== undefined
+          ? 'bad'
+          : 'ok',
         `rerank: ${rerank.adapter}` +
           (rerank.keyEnv === undefined
             ? ''
-            : ` — ${rerank.keyEnv} ${rerank.keySet === true ? 'set' : 'missing'}`),
+            : ` — ${rerank.keyEnv} ${rerank.keySet === true ? 'set' : 'missing'}`) +
+          adapterWhere(rerank),
       );
     }
     for (const orphan of orphans) line('bad', `ORPHAN: ${orphan}`);
@@ -492,7 +517,7 @@ function scopeFlag(scope: InstallScope): string {
  */
 function readRerank(
   configured: SmeltConfig['rerank'],
-  configDir: string,
+  configPath: string,
   env: Readonly<Record<string, string | undefined>>,
 ): DoctorRerank | undefined {
   if (configured === undefined) return undefined;
@@ -500,17 +525,36 @@ function readRerank(
     return {
       kind: 'module',
       adapter: `module/${configured.path}`,
-      moduleExists: existsSync(join(configDir, configured.path)),
+      moduleExists: existsSync(join(dirname(configPath), configured.path)),
     };
   }
   const keyEnv = configured.apiKeyEnv ?? VOYAGE_DEFAULT_KEY_ENV;
   const key = env[keyEnv];
+  // Where the adapter would come from, asked through the same resolver a run uses so
+  // the two cannot disagree. It resolves; it does not import — nothing an adapter
+  // package would do on load happens because somebody ran `smelt doctor`.
+  const adapter = resolveAdapter(RERANK_VOYAGE_PACKAGE, configPath);
   return {
     kind: 'voyage',
     adapter: `voyage/${configured.model ?? VOYAGE_DEFAULT_MODEL}`,
     keyEnv,
     keySet: key !== undefined && key !== '',
+    ...(adapter.found ? { adapterFrom: adapter.from } : { install: adapter.install }),
   };
+}
+
+/**
+ * Where the adapter resolved from, as the tail of the rerank line.
+ *
+ * The `module` kind has no adapter package, so it gets nothing. For `voyage` this is
+ * the fact that used to be unanswerable without running a smelt: an install can sit in
+ * the config's directory, in smelt's own, or in neither, and only the last of the three
+ * is a problem — which is why the missing case is the one that carries a command.
+ */
+function adapterWhere(rerank: DoctorRerank): string {
+  if (rerank.install !== undefined) return ` — adapter not installed: ${rerank.install}`;
+  if (rerank.adapterFrom === undefined) return '';
+  return ` — adapter ${originLabel(rerank.adapterFrom)}`;
 }
 
 /** The verdict over one block: whole-owned files carry no stamp to compare. */

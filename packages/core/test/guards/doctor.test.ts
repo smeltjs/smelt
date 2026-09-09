@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -237,12 +245,28 @@ describe('smelt doctor reads installed state back', () => {
 
       const missing = doctor(cwd, '9.9.9', false, {});
       expect(missing.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY missing');
-      expect(receiptOf(doctor(cwd, '9.9.9', true, {}).stdout).rerank).toEqual({
+      const receiptMissing = receiptOf(doctor(cwd, '9.9.9', true, {}).stdout);
+      expect(receiptMissing.rerank).toMatchObject({
         kind: 'voyage',
         adapter: 'voyage/rerank-2.5',
         keyEnv: 'VOYAGE_API_KEY',
         keySet: false,
       });
+      // Exactly those four facts, plus exactly one of the two resolution facts —
+      // `adapterFrom` when the adapter is installed somewhere, `install` when it is
+      // not. Nothing else about the opt-in reaches a receipt people paste into issue
+      // trackers, and the list is closed rather than merely checked for the key.
+      // Which of the two shows up is a fact about the machine, and pnpm gives this
+      // process a `NODE_PATH` into the workspace store, so the not-installed half is
+      // pinned in the spawned-binary case below where a consumer's environment applies.
+      const fields = Object.keys(receiptMissing.rerank ?? {}).toSorted();
+      expect(fields.filter((key) => key !== 'adapterFrom' && key !== 'install')).toEqual([
+        'adapter',
+        'keyEnv',
+        'keySet',
+        'kind',
+      ]);
+      expect(fields.filter((key) => key === 'adapterFrom' || key === 'install')).toHaveLength(1);
 
       const present = doctor(cwd, '9.9.9', false, { VOYAGE_API_KEY: 'sk-super-secret' });
       expect(present.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY set');
@@ -642,6 +666,42 @@ describe('a hook file smelt owns whole is run too', () => {
 });
 
 describe('the installed binary answers doctor', () => {
+  it('says WHERE the rerank adapter is, and names an install command that could work', () => {
+    // The one fact about the opt-in that could not be read without running a smelt:
+    // an adapter can be installed beside the config, beside smelt, or in neither, and
+    // only the last is a problem. `NODE_PATH` is cleared because pnpm points this
+    // process's at the workspace's virtual store, where every package in the
+    // repository — this adapter included — resolves from any directory at all; a
+    // consumer's machine has no such variable.
+    const bin = join(import.meta.dirname, '../../dist/cli/bin.js');
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'smelt-doctor-adapter-')));
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          defaultBudgetBytes: 4000,
+          rerank: { kind: 'voyage', topK: 8 },
+        })}\n`,
+      );
+      const run = spawnSync(process.execPath, [bin, 'doctor', '--json'], {
+        encoding: 'utf8',
+        cwd,
+        env: { ...process.env, NODE_PATH: '' },
+      });
+      const receipt = JSON.parse(run.stdout) as DoctorReceipt;
+
+      const install = `npm install --prefix ${cwd} @smeltjs/rerank-voyage`;
+      expect(receipt.rerank?.install, `doctor said:\n${run.stdout}${run.stderr}`).toBe(install);
+      expect(receipt.rerank?.adapterFrom).toBeUndefined();
+      expect(receipt.repair).toContain(install);
+      // And the value of the key never rides along, whichever half is reported.
+      expect(JSON.stringify(receipt)).not.toContain('sk-');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('`smelt doctor --json` over piped stdin parses as a receipt', () => {
     // Only a real process proves the read-only verb needs no wizard stream — piped
     // stdin that would starve a wizard is exactly what doctor must not care about.

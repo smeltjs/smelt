@@ -765,19 +765,12 @@ describe('loading a stage from a config block', () => {
     );
   });
 
-  it('names both places tried and an install command for the config’s directory', async () => {
-    // Neither the temp directory holding the config nor `@smeltjs/core`'s own install
-    // has the adapter — which is the whole point: the core does not depend on it. The
-    // refusal must name the directory the reader can actually install into, which is
-    // the config's, not smelt's.
-    await expect(load({ kind: 'voyage', topK: 4 }, { VOYAGE_API_KEY: 'k' })).rejects.toThrow(
-      new RegExp(
-        `@smeltjs/rerank-voyage is not installed.*npm install --prefix ${dir} ` +
-          `@smeltjs/rerank-voyage`,
-        's',
-      ),
-    );
-  });
+  // Where the *voyage* refusal is asserted, and why it is not here: pnpm runs this
+  // process with a `NODE_PATH` aimed at the workspace's virtual store, which holds
+  // every package in the repository — the adapter included — so `require.resolve`
+  // answers yes from any directory at all and an "it is not installed" assertion in
+  // this file would be about the developer's shell. `cli-bin.test.ts` spawns the built
+  // binary with an empty `NODE_PATH`, which is the environment a consumer has.
 
   it('loads the adapter installed beside the config file, not one beside smelt', async () => {
     // The bug this seam exists for, at the loader: a config in a directory of its own
