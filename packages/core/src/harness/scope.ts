@@ -46,6 +46,11 @@ export interface ScopedArtefact {
   readonly file: string;
   /** The documented user-level home, or absent for an artefact that has none. */
   readonly user?: HarnessUserLocation;
+  /**
+   * A former project-relative spelling of {@link file} — read and removed, never
+   * written. See {@link locateFormer}.
+   */
+  readonly formerly?: string;
 }
 
 /** The two roots a scope chooses between, and how a refusal names the harness. */
@@ -117,6 +122,30 @@ export function locateStep(
     name: user.file,
     ...(user.manual === undefined ? {} : { manual: user.manual }),
   };
+}
+
+/**
+ * Where this artefact *used* to live at this scope — for readers and for `remove`,
+ * never for a writer.
+ *
+ * `undefined` means there is nothing to look for: the artefact declares no former
+ * spelling, or the scope is one at which it never had one. A former location is a
+ * project fact by construction — it is where earlier releases wrote, and a user-level
+ * home a release never had cannot have a legacy install in it — so this answers
+ * `undefined` at user scope rather than inventing a home directory equivalent.
+ *
+ * Callers treat it exactly as they treat {@link locateStep}'s answer, minus the write:
+ * `installed.ts` falls back to it when today's spelling is absent (so an existing
+ * install is recognised rather than orphaned), and `planRemove` deletes it (so it is
+ * not left behind for ever).
+ */
+export function locateFormer(
+  step: ScopedArtefact,
+  scope: InstallScope,
+  roots: ScopeRoots,
+): LocatedStep | undefined {
+  if (step.formerly === undefined || scope !== 'project') return undefined;
+  return locateStep({ kind: step.kind, file: step.formerly }, scope, roots);
 }
 
 /**

@@ -21,6 +21,16 @@ import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
  * in from `hooks/shim.ts`'s constants rather than hand-typed into the template, where
  * nothing could see them drift from what the shims print.
  */
+/**
+ * The hook opencode calls, spelled once: the key of the table the plugin returns, and
+ * the event `smelt doctor` reports this file's probe under.
+ */
+const HOOK_KEY = 'tool.execute.before';
+
+/** The export opencode calls to get that table, and the binding the core's path is in. */
+const PLUGIN_FACTORY = 'SmeltGuard';
+const GUARD_CORE_BINDING = 'GUARD_CORE';
+
 function opencodePluginSource(ctx: HarnessInstallContext): string {
   const guardCore = portablePath(renderRoot(ctx.scope, ctx), guardCoreScriptPath(ctx.distDir));
   return `// smelt:hooks v1 — opencode plugin shim. EXPERIMENTAL tier: mapped from the
@@ -31,7 +41,7 @@ function opencodePluginSource(ctx: HarnessInstallContext): string {
 // provider credentials. Caveat carried from the matrix: MCP tools can bypass plugin
 // hooks (sst/opencode#2319) — this guard sees built-in tools only.
 //
-// Thin adapter: maps tool.execute.before onto the smelt guard core (zero
+// Thin adapter: maps ${HOOK_KEY} onto the smelt guard core (zero
 // dependencies), which owns every decision. Deny mode throws (opencode surfaces the
 // reason to the model); rewrite mode substitutes the faithful replacement command —
 // announced on stderr, because the plugin API has no reason channel on a rewrite
@@ -39,11 +49,11 @@ function opencodePluginSource(ctx: HarnessInstallContext): string {
 // from the shims' own constants, so this copy cannot drift from theirs.
 import { pathToFileURL } from 'node:url';
 
-const GUARD_CORE = ${JSON.stringify(guardCore)};
-const core = await import(pathToFileURL(GUARD_CORE).href);
+const ${GUARD_CORE_BINDING} = ${JSON.stringify(guardCore)};
+const core = await import(pathToFileURL(${GUARD_CORE_BINDING}).href);
 
-export const SmeltGuard = async () => ({
-  'tool.execute.before': async (input, output) => {
+export const ${PLUGIN_FACTORY} = async () => ({
+  '${HOOK_KEY}': async (input, output) => {
     const tool = input?.tool;
     const args = output?.args ?? {};
     let request;
@@ -132,6 +142,15 @@ export const opencode: HarnessProfile = {
       user: { file: '.config/opencode/plugins/smelt-guard.js' },
       content: opencodePluginSource,
       guardOnly: true,
+      // The one harness with no shim: what is verified is that the module still loads
+      // — its top-level import of the built guard core included — and still exports the
+      // hook opencode calls. Every name here is the renderer's own, above.
+      probe: {
+        kind: 'esm-plugin',
+        event: HOOK_KEY,
+        core: GUARD_CORE_BINDING,
+        factory: PLUGIN_FACTORY,
+      },
     },
     {
       kind: 'mcp-registration',

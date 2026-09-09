@@ -101,11 +101,13 @@ the guard was inert through the `opt` symlink besides — a re-run rewrites both
   `wired but inert` (it ran and allowed the read — what a shim reached through a symlink
   does), or `wired but missing` (the script is gone — what `brew upgrade` leaves
   behind). A hook that is not firing costs `current`, exits 3, and names `smelt setup
---harness <id>` as the repair. Cline, Hermes and the opencode plugin wire the guard
-  through a file smelt owns whole rather than through hook entries, so there is nothing
-  to read there and those keep reporting a plain `wired`. Doctor still writes no byte of
-  your project (ADR-0003): the file it oversizes lives in a temp directory that is
-  removed again.
+--harness <id>` as the repair. That covers every harness: Cline, Hermes and opencode
+  wire the guard through a file smelt owns whole rather than through hook entries, and
+  those are verified as files — the command behind Cline's `exec` and Hermes's
+  `- command:` is run like any other shim, and opencode's plugin is loaded, its import of
+  the built guard core included, to prove it still exports the hook opencode calls.
+  Doctor still writes no byte of your project (ADR-0003): the file it oversizes lives in
+  a temp directory that is removed again.
 - **`smelt hooks install --yes` — the whole install, without a terminal.** The verb had
   one flag and asked everything else, so an agent with no TTY could not run it at all.
   `--yes` applies the install with no question, and `smelt hooks remove --yes` takes it

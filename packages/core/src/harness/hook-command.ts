@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import process from 'node:process';
@@ -11,7 +11,8 @@ import { asRecord } from '../hooks/shim.ts';
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
 import { nodeCommand } from './paths.ts';
-import type { ShimmedHarnessProfile } from './profile.ts';
+import { hasShim } from './profile.ts';
+import type { HarnessOwnFileProbe, HarnessProfile, ShimmedHarnessProfile } from './profile.ts';
 import { MANAGED_EVENTS } from './registry.ts';
 import { OURS_TOKEN } from './snippet.ts';
 
@@ -34,15 +35,23 @@ import { OURS_TOKEN } from './snippet.ts';
  * recognise is *foreign*, which is the property the merge needs: an installer may
  * only ever replace entries it can prove are its own.
  *
- * {@link probeHookCommand} is the second half, and the reason this module is not just
- * a parser. `smelt doctor` printed `wired` for any file carrying an entry of ours — a
- * text fact, never a running one. A shim reached through a symlink (defect 1, fixed in
- * `hooks/invocation.ts`) and a keg path deleted by `brew upgrade` (defect 2) both
- * leave that text exactly as it was while the guard does nothing, and empty stdout is
- * how every harness schema spells *allow*. The probe runs the command against a
- * synthetic payload built from the harness's own {@link HarnessHookSchema} and reports
- * what came back. It reads; it never repairs (ADR-0003), and it never touches the
- * project: the file it oversizes lives in a fresh temp directory that is removed again.
+ * {@link probeHookCommand} and {@link probeOwnFile} are the second half, and the reason
+ * this module is not just a parser. `smelt doctor` printed `wired` for any file carrying
+ * an entry of ours — a text fact, never a running one. A shim reached through a symlink
+ * (defect 1, fixed in `hooks/invocation.ts`) and a keg path deleted by `brew upgrade`
+ * (defect 2) both leave that text exactly as it was while the guard does nothing, and
+ * empty stdout is how every harness schema spells *allow*. The probe runs the command
+ * against a synthetic payload built from the harness's own {@link HarnessHookSchema} and
+ * reports what came back. It reads; it never repairs (ADR-0003), and it never touches
+ * the project: the file it oversizes lives in a fresh temp directory that is removed
+ * again.
+ *
+ * {@link probeOwnFile} is the same answer for the three harnesses whose wiring is a file
+ * smelt owns **whole** — Cline's wrapper, Hermes's YAML, opencode's plugin — which
+ * carry no hook entries and so were the last places a plain `wired` survived. What each
+ * of those files runs, and how to ask it, is declared on the profile beside the renderer
+ * that wrote it (`HarnessOwnFileProbe`); this module folds over that declaration, and
+ * nothing here asks which harness it is looking at.
  */
 
 /* ------------------------------------------------------------------------------------
@@ -338,6 +347,63 @@ export function parseHookEntries(text: string): readonly HookEntry[] {
 }
 
 /* ------------------------------------------------------------------------------------
+ * Reading a file smelt owns whole
+ * ---------------------------------------------------------------------------------- */
+
+/**
+ * The one entry a whole-owned hook file carries — Cline's wrapper, Hermes's YAML, the
+ * opencode plugin — read back the way its renderer wrote it.
+ *
+ * There is always exactly one, and that is the point: these files have no event-to-entry
+ * table, so a reader that returned nothing for a file it could not make sense of would
+ * hand doctor the same silence as a file with nothing wrong. The command names what the
+ * file *runs* (the shim it execs, the plugin the harness imports), falling back to the
+ * file itself when the shape the renderer wrote is no longer in it — which the probe
+ * then reports as inert rather than as a file it never looked at.
+ */
+export function ownFileEntry(probe: HarnessOwnFileProbe, file: string, text: string): HookEntry {
+  return { event: probe.event, command: { kind: 'guard', script: ownFileRuns(probe, file, text) } };
+}
+
+/** What the file runs, as the renderer spelled it — or the file, when it says nothing. */
+function ownFileRuns(probe: HarnessOwnFileProbe, file: string, text: string): string {
+  if (probe.kind === 'esm-plugin') return file;
+  const command = commandBehind(probe.prefix, text);
+  const parsed = command === undefined ? undefined : parseHookCommand(command);
+  return parsed?.kind === 'guard' ? parsed.script : file;
+}
+
+/**
+ * The command a fixed prefix introduces — `exec node "<shim>"`, `- command: node
+ * "<shim>"` — with the prefix taken off and nothing else interpreted.
+ *
+ * The prefix is the renderer's own (it is declared on the step beside the renderer that
+ * wrote it), and what follows goes to {@link parseHookCommand}. So a whole-owned file is
+ * read by the same reader as every other hook command, and neither Cline's `exec` nor
+ * Hermes's YAML list item needs a syntax of its own here.
+ */
+function commandBehind(prefix: string, text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length).trim();
+  }
+  return undefined;
+}
+
+/** The `const <name> = "<path>";` binding a rendered ES module carries. */
+function bindingIn(name: string, text: string): string | undefined {
+  const match = new RegExp(`^const ${name} = ("[^"]*");`, 'mu').exec(text);
+  if (match?.[1] === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(match[1]);
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    /* v8 ignore next -- the writer JSON.stringify'd it; a hand-edit is the only way here */
+    return undefined;
+  }
+}
+
+/* ------------------------------------------------------------------------------------
  * The probe
  * ---------------------------------------------------------------------------------- */
 
@@ -398,6 +464,141 @@ export function probeHookCommand(
   io: HookProbeIo,
 ): HookProbe {
   return cmd.kind === 'guard' ? probeGuard(cmd.script, profile, io) : probeLifecycle(cmd, io);
+}
+
+/**
+ * {@link probeHookCommand}'s sibling for a file smelt owns **whole**: Cline's executable
+ * wrapper, Hermes's `hooks.yaml`, opencode's plugin.
+ *
+ * Three harnesses wire the guard through a file with no hook entries in it, and doctor
+ * used to print a plain `wired` for all three — the text fact PR 2 set out to end,
+ * surviving in the three places it was hardest to read. This fold answers for them from
+ * the {@link HarnessOwnFileProbe} their profile declares, so nothing here asks which
+ * harness it is looking at:
+ *
+ *  - `command-line` — take the command the renderer wrote behind its prefix, read it
+ *    with the one reader, and probe the shim it names exactly as a JSON entry's guard
+ *    command is probed. Same payload, same scratch directory, same verdicts.
+ *  - `esm-plugin` — load the module the way the harness loads it. The plugin imports the
+ *    built guard core at its top level, so a resolvable import graph *is* the thing
+ *    being checked: `fires` means it loaded and exported the hook, `missing` means the
+ *    plugin or the core it names is gone, `inert` means it loaded and exports no hook.
+ *    No opencode binary is involved, and nothing but this process's own node is spawned.
+ */
+export function probeOwnFile(
+  probe: HarnessOwnFileProbe,
+  file: string,
+  profile: HarnessProfile,
+  io: HookProbeIo,
+): HookProbe {
+  const path = resolveScript(file, io.cwd);
+  if (!existsSync(path)) {
+    return {
+      status: 'missing',
+      script: path,
+      detail: `${path} does not exist, so nothing wires the guard for ${profile.id}`,
+    };
+  }
+  const text = readFileSync(path, 'utf8');
+  if (probe.kind === 'esm-plugin') return probePlugin(probe, path, text, io);
+  const command = commandBehind(probe.prefix, text);
+  const parsed = command === undefined ? undefined : parseHookCommand(command);
+  if (parsed?.kind !== 'guard') {
+    return {
+      status: 'inert',
+      script: path,
+      detail: `${path} carries no \`${probe.prefix.trim()}\` line naming a smelt shim, so it runs nothing of ours`,
+    };
+  }
+  /* v8 ignore next 3 -- unreachable: only a shimmed profile declares a command-line probe */
+  if (!hasShim(profile)) {
+    return { status: 'inert', script: path, detail: `${profile.id} ships no shim to probe` };
+  }
+  return probeGuard(parsed.script, profile, io);
+}
+
+/**
+ * Load a rendered plugin the way the harness would: import it, call the factory it
+ * exports, and see whether the hook the harness calls is there.
+ *
+ * The loader runs in the scratch directory through `node --input-type=module -e`, so the
+ * import graph is resolved for real — the plugin's own top-level `await import(<guard
+ * core>)` included, which is the edge that a moved or deleted `dist` breaks and which
+ * no amount of reading the file can prove. The core's path is read out of the binding
+ * the renderer wrote it into, and checked before the spawn, so "the core is gone" is
+ * `missing` (a fact) rather than `inert` (a verdict about behaviour).
+ */
+function probePlugin(
+  probe: Extract<HarnessOwnFileProbe, { readonly kind: 'esm-plugin' }>,
+  path: string,
+  text: string,
+  io: HookProbeIo,
+): HookProbe {
+  const core = bindingIn(probe.core, text);
+  if (core === undefined) {
+    return {
+      status: 'inert',
+      script: path,
+      detail: `${path} names no ${probe.core}, so it imports no guard core and decides nothing`,
+    };
+  }
+  const corePath = resolveScript(core, io.cwd);
+  if (!existsSync(corePath)) {
+    // The *core* is what is missing, so it is what `script` names: the plugin is still
+    // sitting there, and a line naming the file that exists would send somebody looking
+    // in the wrong place — this is what `brew upgrade` leaves behind for opencode.
+    return {
+      status: 'missing',
+      script: corePath,
+      detail: `${path} imports ${corePath}, which does not exist: the plugin throws before it can decide anything`,
+    };
+  }
+  const timeoutMs = io.timeoutMs ?? HOOK_PROBE_TIMEOUT_MS;
+  const scratch = probeScratchDir();
+  try {
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', pluginLoader(probe)], {
+      input: '',
+      encoding: 'utf8',
+      cwd: scratch,
+      env: { ...process.env, SMELT_PROBE_PLUGIN: path },
+      timeout: timeoutMs,
+    });
+    if (run.error !== undefined) {
+      return { status: 'inert', script: path, detail: runFailure(run, path, timeoutMs) };
+    }
+    if (run.stdout.trim() === PLUGIN_FIRES) {
+      return { status: 'fires', script: path, detail: `${path} loads and exports ${probe.event}` };
+    }
+    return {
+      status: 'inert',
+      script: path,
+      detail: `${path} did not load an ${probe.event} hook${runTrailer(run)}`,
+    };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** What the loader prints when the plugin loaded and the hook is there. */
+const PLUGIN_FIRES = 'smelt-plugin-fires';
+
+/**
+ * The loader script, as source. The plugin's path travels in the environment rather
+ * than spliced into the program text: a path is data, and a path with a quote in it
+ * spliced into a program is an injection.
+ */
+function pluginLoader(
+  probe: Extract<HarnessOwnFileProbe, { readonly kind: 'esm-plugin' }>,
+): string {
+  return [
+    `import { pathToFileURL } from 'node:url';`,
+    `const mod = await import(pathToFileURL(process.env.SMELT_PROBE_PLUGIN).href);`,
+    `const factory = mod[${JSON.stringify(probe.factory)}];`,
+    `if (typeof factory !== 'function') process.exit(3);`,
+    `const hooks = await factory({});`,
+    `if (typeof hooks?.[${JSON.stringify(probe.event)}] !== 'function') process.exit(4);`,
+    `process.stdout.write(${JSON.stringify(PLUGIN_FIRES)});`,
+  ].join('\n');
 }
 
 function resolveScript(script: string, cwd: string): string {

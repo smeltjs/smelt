@@ -179,9 +179,13 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   against a payload built from the harness's own `HarnessHookSchema` naming an
   oversized file in a fresh temp directory, beside a `smelt.config.json` pinning the
   threshold so the walk up to the filesystem root cannot change the premise — and
-  answers `fires` / `inert` / `missing`. It reads **entries**, so the JSON hook files are
-  probed and the whole-owned guard-only files (Cline's, Hermes's, the opencode plugin)
-  are not: they carry no event-to-entry table, and doctor keeps saying plain `wired`.
+  answers `fires` / `inert` / `missing`. `probeOwnFile` is its sibling for the three
+  harnesses whose wiring is a file smelt owns **whole** (Cline's wrapper, Hermes's YAML,
+  opencode's plugin): those carry no event-to-entry table, so what each file runs and how
+  to ask it is declared on the profile as data (`HarnessOwnFileProbe` — a command behind
+  the renderer's own prefix, or an ES module to load), and this module folds over that
+  declaration without ever asking which harness it is looking at. Every harness is
+  probed; nothing reports a bare `wired` for want of a reading.
   `wired` used to be a text fact, and the two defects Invocation fixed (an inert shim
   through a symlink, a keg path `brew upgrade` deleted) both leave that text exactly as
   it was; `inert` is the dangerous verdict, because empty stdout is how every harness

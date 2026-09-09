@@ -28,13 +28,28 @@ const HOOKS: HarnessHookSchema = {
   deny: (reason) => ({ cancel: true, errorMessage: reason }),
 };
 
+/**
+ * Cline's pre-tool event, spelled once: it is both the **name of the file** Cline runs
+ * (hooks are executables under `hooks/`, named for their event) and the event
+ * `smelt doctor` reports this file's probe under.
+ */
+const PRE_TOOL_EVENT = 'PreToolUse';
+
+/**
+ * What the renderer writes in front of the hook command below — and therefore what a
+ * reader takes off to get the command back. Declared beside the renderer, and handed to
+ * `harness/hook-command.ts` as the step's probe, so the file is read by the one reader
+ * rather than grepped a second way.
+ */
+const EXEC_PREFIX = 'exec ';
+
 /** Cline's hook is an executable file; this two-liner hands it to the cline shim. */
 function clineHookSource(ctx: HarnessInstallContext): string {
   return `#!/bin/sh
-# smelt:hooks v1 — Cline PreToolUse hook. EXPERIMENTAL tier: schema mapped from the
+# smelt:hooks v1 — Cline ${PRE_TOOL_EVENT} hook. EXPERIMENTAL tier: schema mapped from the
 # capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, Cline row),
 # not yet smoke-tested against the real binary. Written by \`smelt hooks install\`.
-exec ${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(cline, ctx.distDir))}
+${EXEC_PREFIX}${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(cline, ctx.distDir))}
 `;
 }
 
@@ -54,11 +69,14 @@ export const cline: ShimmedHarnessProfile = {
   install: [
     {
       kind: 'own-file',
-      file: '.clinerules/hooks/PreToolUse',
-      user: { file: '.cline/hooks/PreToolUse' },
+      file: `.clinerules/hooks/${PRE_TOOL_EVENT}`,
+      user: { file: `.cline/hooks/${PRE_TOOL_EVENT}` },
       content: clineHookSource,
       mode: 0o755,
       guardOnly: true,
+      // Read back through the same prefix it was written with: the line behind `exec `
+      // is a hook command, and `parseHookCommand` is the reader for those.
+      probe: { kind: 'command-line', event: PRE_TOOL_EVENT, prefix: EXEC_PREFIX },
     },
   ],
 };

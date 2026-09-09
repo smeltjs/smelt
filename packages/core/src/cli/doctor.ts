@@ -2,9 +2,10 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { probeHookCommand } from '../harness/hook-command.ts';
+import { probeHookCommand, probeOwnFile } from '../harness/hook-command.ts';
 import type { HookCommand, HookProbe } from '../harness/hook-command.ts';
 import { hasShim } from '../harness/profile.ts';
+import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
 import { resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
@@ -53,8 +54,10 @@ import { CLI_NAME, EXIT } from './shell.ts';
  * an upgrade deleted both leave that text intact while the guard does nothing, so
  * doctor now runs each command it read (`harness/hook-command.ts`) against a synthetic
  * payload in a temp directory and reports `wired (verified)`, `wired but inert` or
- * `wired but missing`. Probing is a read — ADR-0003 holds, doctor still writes no byte
- * of the project.
+ * `wired but missing`. That covers **every** harness: a file smelt owns whole (Cline's
+ * wrapper, Hermes's YAML, opencode's plugin) is verified as a file, through the probe
+ * its own profile declares, rather than being the one place a plain `wired` survived.
+ * Probing is a read — ADR-0003 holds, doctor still writes no byte of the project.
  */
 
 export interface DoctorIo {
@@ -520,11 +523,7 @@ function probeHookFiles(
         const key = `${file.harness}\0${JSON.stringify(entry.command)}`;
         let probe = seen.get(key);
         if (probe === undefined) {
-          probe =
-            /* v8 ignore next 3 -- unreachable: a JSON hook file's harness ships a shim */
-            profile === undefined || !hasShim(profile)
-              ? { status: 'inert', detail: `${file.harness} ships no shim to probe` }
-              : probeHookCommand(entry.command, profile, { cwd });
+          probe = runOne(file, entry.command, profile, cwd);
           seen.set(key, probe);
         }
         return {
@@ -536,6 +535,32 @@ function probeHookFiles(
       }),
     };
   });
+}
+
+/**
+ * What one entry's command did — the two shapes of wiring, each asked its own way.
+ *
+ * A whole-owned file is verified as a file (`probeOwnFile` reads what the renderer
+ * wrote and runs it); every other entry is a command, verified as one. The fork is on
+ * what the *reading* found, never on which harness it is: `file.own` is present exactly
+ * when the profile declared how to ask.
+ */
+function runOne(
+  file: InstalledHookFile,
+  command: HookCommand,
+  profile: HarnessProfile | undefined,
+  cwd: string,
+): HookProbe {
+  /* v8 ignore next 3 -- unreachable: a hook file's harness is one the registry has */
+  if (profile === undefined) {
+    return { status: 'inert', detail: `${file.harness} is not a harness this binary knows` };
+  }
+  if (file.own !== undefined) return probeOwnFile(file.own.probe, file.own.path, profile, { cwd });
+  /* v8 ignore next 3 -- unreachable: a JSON hook file's harness ships a shim */
+  if (!hasShim(profile)) {
+    return { status: 'inert', detail: `${file.harness} ships no shim to probe` };
+  }
+  return probeHookCommand(command, profile, { cwd });
 }
 
 /**
@@ -552,8 +577,8 @@ function hookFileStatus(file: DoctorHookFile): HookProbe['status'] {
 
 /**
  * What a wired file's line says. `wired` alone is the honest answer for a file with no
- * probe behind it — the guard-only files smelt owns whole, which carry no event table
- * to read commands out of.
+ * probe behind it — a hook file whose entries were all somebody else's, or a
+ * whole-owned file whose profile declares no way to ask it.
  */
 function describeWiring(file: DoctorHookFile | undefined): string {
   if (file === undefined || file.entries.length === 0) return 'wired';

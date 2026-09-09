@@ -39,6 +39,15 @@ const HOOKS: HarnessHookSchema = {
   },
 };
 
+/** Hermes's pre-tool event, spelled once: the YAML key, and the event doctor reports. */
+const PRE_TOOL_EVENT = 'pre_tool_call';
+
+/**
+ * What the renderer writes in front of the hook command below — a YAML list item's
+ * `command:` key — and therefore what a reader takes off to get the command back.
+ */
+const COMMAND_PREFIX = '- command: ';
+
 /** Hermes hook config, as a mergeable snippet — their config is a home-level YAML. */
 function hermesHooksYaml(ctx: HarnessInstallContext): string {
   return `${SNIPPET_START_HASH}
@@ -47,8 +56,8 @@ function hermesHooksYaml(ctx: HarnessInstallContext): string {
 # row), not yet smoke-tested against the real binary. If Hermes does not read this
 # file directly, merge the \`hooks:\` section into ~/.hermes/config.yaml.
 hooks:
-  pre_tool_call:
-    - command: ${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(hermes, ctx.distDir))}
+  ${PRE_TOOL_EVENT}:
+    ${COMMAND_PREFIX}${nodeCommand(renderRoot(ctx.scope, ctx), shimScriptPath(hermes, ctx.distDir))}
 ${SNIPPET_END_HASH}
 `;
 }
@@ -77,6 +86,9 @@ export const hermes: ShimmedHarnessProfile = {
       file: '.hermes/hooks.yaml',
       content: hermesHooksYaml,
       guardOnly: true,
+      // The YAML is smelt's own, so what a reader takes off is the renderer's own
+      // prefix; what is left is a hook command, read by the one reader of those.
+      probe: { kind: 'command-line', event: PRE_TOOL_EVENT, prefix: COMMAND_PREFIX },
     },
   ],
 };

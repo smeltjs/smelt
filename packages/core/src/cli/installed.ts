@@ -8,11 +8,16 @@ import {
   hookEntryCommands,
   isOursEntry,
   jsonHooksContainOurs,
+  ownFileEntry,
   parseHookCommand,
   parseHookEntries,
 } from '../harness/hook-command.ts';
 import type { HookCommand, HookEntry } from '../harness/hook-command.ts';
-import type { HarnessInstallStep, HarnessProfile } from '../harness/profile.ts';
+import type {
+  HarnessInstallStep,
+  HarnessOwnFileProbe,
+  HarnessProfile,
+} from '../harness/profile.ts';
 import {
   GUARD_EVENTS,
   HARNESS_PROFILES,
@@ -22,7 +27,7 @@ import {
   MANAGED_EVENTS,
 } from '../harness/registry.ts';
 import { readIfExists } from '../harness/plan.ts';
-import { instructionArtefact, locateStep } from '../harness/scope.ts';
+import { instructionArtefact, locateFormer, locateStep } from '../harness/scope.ts';
 import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
 import { hasTomlEntry } from '../text/toml-edit.ts';
@@ -79,19 +84,28 @@ export interface InstalledConfig {
 }
 
 /**
- * One JSON hook file of a harness's, with the commands of ours it carries — read as
+ * One hook file of a harness's, with the commands of ours it carries — read as
  * {@link HookEntry} values, not as text.
  *
- * Guard-only files (Cline's executable hook, Hermes's YAML, the opencode plugin) are
- * deliberately absent: they are files smelt owns *whole*, not event-to-entry tables,
- * so there is no event to name and inventing one would be a fact nobody read. They
- * still appear in {@link InstalledState.hookFiles}, exactly as before.
+ * Two shapes, one reading. A JSON hook file carries an event-to-entry table and yields
+ * one entry per command of ours in it. A file smelt owns **whole** — Cline's executable
+ * wrapper, Hermes's YAML, the opencode plugin — carries no table, so its profile
+ * declares what it runs and how to ask it (`HarnessOwnFileProbe`), and it yields exactly
+ * one entry under the event that harness calls it for. Those three used to be absent
+ * here, which is the whole reason `smelt doctor` could say no more than a plain `wired`
+ * about them: nothing had been read, so there was nothing to run.
  */
 export interface InstalledHookFile {
   readonly file: string;
-  /** The harness whose file this is — each JSON hook file belongs to exactly one. */
+  /** The harness whose file this is — each hook file belongs to exactly one. */
   readonly harness: string;
   readonly entries: readonly HookEntry[];
+  /**
+   * Present for a file smelt owns whole: how to verify it, and where it is. The reader
+   * resolved that path once — this scope's spelling, or the former one when that is
+   * what is on disk — so nothing downstream resolves it a second way.
+   */
+  readonly own?: { readonly probe: HarnessOwnFileProbe; readonly path: string };
 }
 
 /** Everything the readers need, in one reading. */
@@ -176,7 +190,16 @@ export function readInstalledState(
     step: HarnessInstallStep,
     isJson: boolean,
   ): void => {
-    const located = locateStep(step, scope, rootsFor(profile.name));
+    const roots = rootsFor(profile.name);
+    // Today's spelling, or — only when nothing is there — the one an earlier release
+    // wrote (`locateFormer`). Falling back rather than reading both is what keeps an
+    // existing install from being reported twice: one artefact, one file, whichever
+    // name it is under. `remove` still takes both out.
+    const here = locateStep(step, scope, roots);
+    const located =
+      here.path !== undefined && existsSync(here.path)
+        ? here
+        : (locateFormer(step, scope, roots) ?? here);
     if (located.path === undefined || located.name === undefined) return;
     if (seenHookPaths.has(located.path)) return;
     seenHookPaths.add(located.path);
@@ -186,7 +209,18 @@ export function readInstalledState(
     hookFiles.push(located.name);
     if (isJson) {
       hooks.push({ file: located.name, harness: profile.id, entries: parseHookEntries(text) });
+      return;
     }
+    // A file smelt owns whole: its profile says what it runs and how to ask it, so the
+    // reading yields the one entry it carries instead of stopping at the file's name.
+    const probe = step.kind === 'own-file' ? step.probe : undefined;
+    if (probe === undefined) return;
+    hooks.push({
+      file: located.name,
+      harness: profile.id,
+      entries: [ownFileEntry(probe, located.path, text)],
+      own: { probe, path: located.path },
+    });
   };
   for (const profile of Object.values(HARNESS_PROFILES)) {
     for (const step of profile.install) {
@@ -353,6 +387,11 @@ export function presetToggles(
         if (!wanted) continue;
         const located = locateStep(step, scope, roots);
         if (located.path !== undefined && located.manual === undefined) paths.add(located.path);
+        // A former spelling counts as installed too: a re-run that read the toggles
+        // back off today's name alone would see nothing on a machine set up by an
+        // earlier release, and reset a guard the user has had on for months.
+        const former = locateFormer(step, scope, roots);
+        if (former?.path !== undefined) paths.add(former.path);
       }
     }
     return [...paths];

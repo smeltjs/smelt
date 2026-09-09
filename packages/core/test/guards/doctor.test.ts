@@ -450,6 +450,162 @@ describe('a wired hook is one that runs', () => {
   });
 });
 
+/**
+ * The same substitution for a file smelt owns **whole** — Cline's wrapper, Hermes's
+ * YAML, opencode's plugin — where the path to re-point is not in a JSON entry but in
+ * the file's own text, exactly where its renderer put it.
+ *
+ * One replacement covers all three shapes because all three name something under the
+ * package's `dist/hooks/`: a shim (`node "<...>/dist/hooks/shims/<id>.js"`) or the
+ * guard core (`const GUARD_CORE = "<...>/dist/hooks/guard-core.js"`). The built prefix
+ * is spelled out rather than derived through `@guard/harness/paths`, for the reason
+ * {@link useBuiltScripts} spells out: a derived path is a path the mutation under test
+ * may have changed.
+ */
+function useBuiltScriptsIn(path: string): void {
+  if (!existsSync(path)) return;
+  const built = join(packageRoot(), 'dist', 'hooks');
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/"[^"]*\/dist\/hooks\//gu, `"${built}/`));
+}
+
+/** Re-point whatever the whole-owned file at `path` runs at `script`. */
+function pointFileAt(path: string, script: string): void {
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/"[^"]*\/hooks\/[^"]*"/u, `"${script}"`));
+}
+
+/** `smelt setup --yes --json --harness <id>`, with every script it wrote made real. */
+async function setupHarness(cwd: string, harness: string, file: string): Promise<string> {
+  let stdout = '';
+  const code = await runCli(['setup', '--yes', '--json', '--harness', harness], {
+    stdout: (text) => void (stdout += text),
+    stderr: () => {},
+    stdin: () => '',
+    version: '0.5.0',
+    cwd,
+  });
+  expect(code, `setup --harness ${harness} failed:\n${stdout}`).toBe(EXIT.ok);
+  const path = join(cwd, file);
+  useBuiltScriptsIn(path);
+  return path;
+}
+
+/**
+ * THE THREE HARNESSES WHOSE WIRING IS A FILE, NOT AN ENTRY.
+ *
+ * Cline runs an executable, Hermes reads a YAML list, opencode imports a JavaScript
+ * plugin — and smelt owns each of those files whole. They carry no hook entries, so the
+ * probe had nothing to read and doctor printed a plain `wired` for all three: the exact
+ * text fact this arc exists to remove, surviving in the three places hardest to check
+ * by hand. Each is now read back through the probe its own profile declares, spawned
+ * for real against this package's built `dist`.
+ */
+const WHOLE_OWNED: readonly { id: string; file: string; event: string }[] = [
+  { id: 'cline', file: '.clinerules/hooks/PreToolUse', event: 'PreToolUse' },
+  { id: 'hermes', file: '.hermes/hooks.yaml', event: 'pre_tool_call' },
+  { id: 'opencode', file: '.opencode/plugin/smelt-guard.js', event: 'tool.execute.before' },
+];
+
+describe('a hook file smelt owns whole is run too', () => {
+  for (const harness of WHOLE_OWNED) {
+    it(`${harness.id}: the file setup wrote fires, and the receipt names the event`, async () => {
+      const cwd = scratch(`whole-${harness.id}`);
+      try {
+        await setupHarness(cwd, harness.id, harness.file);
+        const { stdout } = doctor(cwd, '0.5.0', false);
+        expect(stdout).toContain(`${harness.file}: wired (verified)`);
+
+        const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+        const file = receipt.hooks?.find((one) => one.file === harness.file);
+        expect(file?.harness).toBe(harness.id);
+        const entry = file?.entries[0];
+        expect(entry?.event).toBe(harness.event);
+        expect(entry?.probe.status, entry?.probe.detail).toBe('fires');
+        // Additive: the name is still in the list the receipt has always carried.
+        expect(receipt.hookFiles).toContain(harness.file);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('cline: a wrapper whose shim was deleted is `wired but missing`', async () => {
+    const cwd = scratch('whole-missing');
+    try {
+      const path = await setupHarness(cwd, 'cline', '.clinerules/hooks/PreToolUse');
+      const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'shims', 'cline.js');
+      pointFileAt(path, gone);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.clinerules/hooks/PreToolUse: wired but missing');
+      expect(stdout).toContain(gone);
+      expect(stdout).toContain('smelt setup --harness cline');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('hermes: a shim that runs and says nothing is `wired but inert`', async () => {
+    const cwd = scratch('whole-inert');
+    try {
+      const path = await setupHarness(cwd, 'hermes', '.hermes/hooks.yaml');
+      // Still recognisably a shim of ours — the ownership rule is the path's shape —
+      // and exactly what the symlink defect produced: exit 0, no output, no guard.
+      const stub = join(cwd, 'hooks', 'shims', 'hermes.js');
+      mkdirSync(join(cwd, 'hooks', 'shims'), { recursive: true });
+      writeFileSync(stub, 'process.exit(0);\n');
+      pointFileAt(path, stub);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.hermes/hooks.yaml: wired but inert');
+      expect(stdout).toContain('empty stdout is an allow');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('opencode: a plugin whose guard core is gone is `wired but missing`', async () => {
+    const cwd = scratch('plugin-missing');
+    try {
+      const path = await setupHarness(cwd, 'opencode', '.opencode/plugin/smelt-guard.js');
+      const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'guard-core.js');
+      pointFileAt(path, gone);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.opencode/plugin/smelt-guard.js: wired but missing');
+      expect(stdout).toContain(gone);
+      expect(stdout).toContain('smelt setup --harness opencode');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('opencode: a plugin that loads and exports no hook is `wired but inert`', async () => {
+    const cwd = scratch('plugin-inert');
+    try {
+      const path = await setupHarness(cwd, 'opencode', '.opencode/plugin/smelt-guard.js');
+      // Ours (it carries the token, so the reader still owns it) and loadable — and it
+      // registers nothing. From inside a session this is indistinguishable from a
+      // working guard: opencode calls nothing and every read goes through.
+      const core = join(packageRoot(), 'dist', 'hooks', 'guard-core.js');
+      writeFileSync(
+        path,
+        `// smelt:hooks v1\nconst GUARD_CORE = ${JSON.stringify(core)};\n` +
+          `export const SmeltGuard = async () => ({});\n`,
+      );
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.opencode/plugin/smelt-guard.js: wired but inert');
+      expect(stdout).toContain('tool.execute.before');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('the installed binary answers doctor', () => {
   it('`smelt doctor --json` over piped stdin parses as a receipt', () => {
     // Only a real process proves the read-only verb needs no wizard stream — piped
@@ -487,6 +643,14 @@ export const MUTATIONS: GuardMutation[] = [
     find: "  if (file === undefined || file.entries.length === 0) return 'wired';",
     replace: "  if (file !== undefined) return 'wired (verified)';",
     why: 'doctor reporting `wired (verified)` whatever the probe answered \u2014 which is exactly the old `wired`, the text fact that reads identically for a working install and for a shim that exits 0 with empty stdout',
+  },
+  {
+    kind: 'src',
+    id: 'doctor-skips-whole-owned-files',
+    file: 'cli/installed.ts',
+    find: "    const probe = step.kind === 'own-file' ? step.probe : undefined;",
+    replace: '    const probe = undefined;',
+    why: 'the three harnesses whose wiring is a file smelt owns whole going back to being read as a file *name* — Cline, Hermes and opencode would report a plain `wired` again, which is the text fact this whole arc exists to remove and reads identically for a working guard and for a plugin whose guard core an upgrade deleted',
   },
   {
     kind: 'src',

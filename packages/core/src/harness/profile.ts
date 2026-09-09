@@ -325,12 +325,66 @@ export interface HarnessOwnFile {
   readonly file: string;
   /** Where this file lives for the whole machine, when the harness documents one. */
   readonly user?: HarnessUserLocation;
+  /**
+   * A former project-relative spelling of {@link file}, read but never written.
+   *
+   * A harness that renames the directory it loads from leaves every existing install
+   * one directory over: a reader that knows only today's spelling calls that file
+   * nobody's — doctor stops reporting it, `remove` stops taking it out — and the next
+   * install writes a second copy beside it. Declaring the old name here is what keeps
+   * the artefact one artefact: `locateFormer` resolves it, the state reader falls back
+   * to it when today's spelling is absent, and `remove` deletes both.
+   */
+  readonly formerly?: string;
   readonly content: HarnessFileContent;
   /** chmod after writing (Cline's hook must be executable). */
   readonly mode?: number;
   /** True when the file exists only to wire the guard — the guard toggle gates it. */
   readonly guardOnly: boolean;
+  /**
+   * How to ask this file whether it still runs the guard — the fact that turns
+   * `smelt doctor`'s `wired` from a statement about text into one about behaviour, for
+   * the three harnesses whose wiring is a file smelt owns whole rather than an entry
+   * in somebody's JSON.
+   *
+   * It is **data on the profile**, beside the renderer that wrote the file, because
+   * the shape being read back is the shape that renderer wrote: `harness/hook-command.ts`
+   * folds over it and no reader anywhere asks which harness this is. A step with no
+   * probe is a file doctor can only say it saw.
+   */
+  readonly probe?: HarnessOwnFileProbe;
 }
+
+/**
+ * How a whole-owned hook file is verified — one variant per *shape smelt writes*, not
+ * one per harness.
+ *
+ *  - `command-line`: the file is a script whose one interesting line is a rendered
+ *    hook command behind a fixed prefix — Cline's `exec node "<shim>"` wrapper and
+ *    Hermes's `- command: node "<shim>"` YAML. The prefix is the renderer's own, so
+ *    the command is handed to `parseHookCommand` (the one reader) rather than grepped
+ *    for a second time with a second syntax.
+ *  - `esm-plugin`: the file is an ES module smelt wrote that imports the built guard
+ *    core and exports a hook factory — opencode's plugin, the one harness whose hook
+ *    API is JavaScript rather than a stdin schema. It is verified by loading it.
+ */
+export type HarnessOwnFileProbe = {
+  /** The harness's own name for the event this file wires — `PreToolUse`. */
+  readonly event: string;
+} & (
+  | {
+      readonly kind: 'command-line';
+      /** What the renderer wrote in front of the command: `exec `, `- command: `. */
+      readonly prefix: string;
+    }
+  | {
+      readonly kind: 'esm-plugin';
+      /** The `const <name> = "<path>"` binding the renderer put the core's path in. */
+      readonly core: string;
+      /** The export the harness calls to obtain the hook table. */
+      readonly factory: string;
+    }
+);
 
 /**
  * An MCP server registration inside a JSON config the harness reads — Claude Code's
