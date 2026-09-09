@@ -437,6 +437,15 @@ function parseStore(
  * least 1", the same representable-range bound `--older-than` is held to — so the file
  * and the flag can never disagree about what `30d` is worth. A malformed one is refused
  * here, at the moment the config is read, rather than at the moment a prune runs.
+ *
+ * **Reading the clock here is safe because the check is monotonic.** `readCutoff` refuses
+ * an age only when it reaches further back than a `Date` can go — `milliseconds > now +
+ * MAX_TIME_VALUE` — and that ceiling only *rises* as `now` does. So the accepted range
+ * can grow and never shrink: a config that parses today parses forever, and no committed
+ * file starts being refused because time passed. What the clock buys is that the range
+ * bound is enforced where the value is read rather than deferred to the moment a prune
+ * runs, which would leave a config sitting on disk carrying a cut-off the only
+ * byte-deleter in smelt refuses.
  */
 function parseRetention(
   value: unknown,

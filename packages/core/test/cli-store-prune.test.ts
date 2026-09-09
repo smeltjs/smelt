@@ -346,7 +346,41 @@ describe('store.retention is the cut-off written down, and the flag still wins',
     const { stdout } = await run(['store', 'prune', '--json'], cwd);
     const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
     expect(envelope.keepRetrieved).toBe(true);
+    expect(envelope.keepRetrievedSource).toBe('config');
     expect(envelope.prune.evicted.map((one) => one.hash)).toEqual([ignored]);
+  });
+
+  it('attributes the sparing as well as the age, in the header and the envelope', async () => {
+    // "This kept blobs I never asked it to keep" is the question a receipt has to be
+    // able to answer, and a header that only ever said "keeping retrieved" could not.
+    const { cwd, storePath } = retentionCwd({ olderThan: '1d', keepRetrieved: true });
+    const asked = agedBlob(storePath, 'bytes retrieved once', 30);
+    await run(['retrieve', asked], cwd);
+
+    const fromConfig = await run(['store', 'prune', '--dry-run'], cwd);
+    expect(fromConfig.stdout).toContain('keeping retrieved (smelt.config.json: store.retention)');
+
+    const fromBoth = await run(['store', 'prune', '--keep-retrieved', '--dry-run'], cwd);
+    expect(fromBoth.stdout).toContain(
+      'keeping retrieved (--keep-retrieved, and smelt.config.json: store.retention)',
+    );
+    const bothJson = await run(['store', 'prune', '--keep-retrieved', '--dry-run', '--json'], cwd);
+    expect((JSON.parse(bothJson.stdout) as CliPruneJsonEnvelope).keepRetrievedSource).toBe('both');
+
+    // A flag the user typed themselves needs no attribution, and a prune that spared
+    // nothing says nothing about sparing.
+    const { cwd: plain, storePath: plainStore } = directoryStoreCwd();
+    const kept = agedBlob(plainStore, 'bytes retrieved once', 30);
+    await run(['retrieve', kept], plain);
+    const flagOnly = await run(
+      ['store', 'prune', '--older-than', '1d', '--keep-retrieved', '--dry-run'],
+      plain,
+    );
+    expect(flagOnly.stdout).toContain('keeping retrieved');
+    expect(flagOnly.stdout).not.toContain('store.retention');
+
+    const none = await run(['store', 'prune', '--older-than', '1d', '--dry-run', '--json'], plain);
+    expect((JSON.parse(none.stdout) as CliPruneJsonEnvelope).keepRetrievedSource).toBe('none');
   });
 
   it('keeps sparing when the flag supplies the age and the config supplies the mercy', async () => {
@@ -361,6 +395,7 @@ describe('store.retention is the cut-off written down, and the flag still wins',
     const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
     expect(envelope.olderThanSource).toBe('flag');
     expect(envelope.keepRetrieved).toBe(true);
+    expect(envelope.keepRetrievedSource).toBe('config');
     expect(envelope.prune.evicted.map((one) => one.hash)).toEqual([ignored]);
   });
 

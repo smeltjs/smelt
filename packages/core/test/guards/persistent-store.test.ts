@@ -253,6 +253,27 @@ describe('the persistent store keeps Law 3 across restarts', () => {
     expect(store.survey().counters).toStrictEqual(survey.counters);
   });
 
+  it('answers the ledger from the journal alone, so the per-run path pays no blob scan', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    store.put('material the model came back for', { rule: 'head-tail', explanation: 'x' });
+    store.put('material nobody wanted', { rule: 'sibling-collapse', explanation: 'x' });
+    const expected = store.ledger();
+    expect(expected).toHaveLength(2);
+
+    // `smelter.ts` asks for the ledger on *every* smelt run, to hand planners
+    // `PlanInput.ruleHistory`. Every fact in it comes out of `retrievals.log`, so a
+    // ledger routed through the whole survey would make each run readdir blobs/ and
+    // stat every file in it to answer a question about a log — the entire cost of the
+    // survey spent on none of its answers, and an answer that stays right the whole
+    // time, which is why only a test that takes the directory away can see it.
+    rmSync(join(root, 'blobs'), { recursive: true, force: true });
+
+    expect(store.ledger()).toStrictEqual(expected);
+    // Non-vacuous: the directory really is gone, and a scan really would have failed.
+    expect(() => store.survey()).toThrow();
+  });
+
   it('sweeps a temp file a dead process leaked, and leaves a live one alone', () => {
     const root = newRoot();
     mkdirSync(join(root, 'tmp'), { recursive: true });
@@ -304,9 +325,18 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'stats-fold-drops-the-ledger',
     file: 'store-dir.ts',
-    find: '      ledger: ruleLedger(puts, hits),',
+    find: '      ledger: ruleLedger(journal.puts, journal.hits),',
     replace: '      ledger: [],',
     why: 'the one traversal stops answering one of its three questions — the counters still look right and `smelt stats` reports that no rule ever cut anything, which is exactly what a store nobody used reports, so the per-rule half of Law 3\u2019s honesty goes quiet with no error anywhere',
+  },
+  {
+    id: 'ledger-scans-the-blobs',
+    file: 'store-dir.ts',
+    find:
+      '    const journal = this.#foldJournal();\n' +
+      '    return ruleLedger(journal.puts, journal.hits);',
+    replace: '    return this.survey().ledger;',
+    why: 'the ledger goes back through the whole survey — the answer is still right, so nothing fails, but `smelter.ts` asks for the ledger on EVERY smelt run and each one now readdirs blobs/ and stats every file in it to answer a question about a log. A silent per-run cost with no wrong output is exactly the regression a correctness test cannot see',
   },
   {
     id: 'law3-dir-store-stale-temp-not-swept',

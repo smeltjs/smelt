@@ -38,8 +38,9 @@ import type { GuardMutation } from './_mutations.ts';
  *      own config denies, and one that could not say which spelling won would leave a
  *      surprised user with no way to find out.
  *
- * Mutations: `pnpm mutate` breaks each of the four in `store-dir.ts`; this file must go
- * red every time.
+ * Mutations: `pnpm mutate` breaks each of these in the module that owns it — the four
+ * eviction properties in `store-dir.ts`, the precedence in `cli/subcommands/store.ts`;
+ * this file must go red every time.
  */
 
 const roots: string[] = [];
@@ -298,6 +299,8 @@ describe('the cut-off is the one the user wrote down, and the receipt names it',
       }),
     );
     expect(resolved.keepRetrieved).toBe(true);
+    // And the receipt can say the file did it, not the command line.
+    expect(resolved.keepRetrievedSource).toBe('config');
   });
 });
 
@@ -363,7 +366,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'prune-shrinks-the-expansion-denominator',
     file: 'store-dir.ts',
-    find: '    for (const hash of evicted) if (!onDisk.has(hash)) elisionsStored += 1;',
+    find: '    for (const hash of journal.evicted) if (!onDisk.has(hash)) elisionsStored += 1;',
     replace: '',
     why: 'elisionsStored stops counting evicted hashes — the same numerator over a smaller denominator, so a prune raises the expansion rate for free and a store where three of four elisions were never asked for back reports that every one of them was',
   },

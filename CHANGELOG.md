@@ -74,7 +74,9 @@ the runner rather than by hand.
   a user types it, `--older-than` still wins, and with neither spelling present the verb
   still refuses — now naming both places an age can be written. The receipt says which
   won (`olderThanSource` on the report line and on the `smelt-store-prune-cli/v1`
-  envelope, which gains the field rather than changing one), and `smelt doctor` prints
+  envelope, which gains fields rather than changing one) — and `keepRetrievedSource`
+  beside it, because sparing is a union and "the config kept blobs the flag never
+  mentioned" is the surprising case. `smelt doctor` prints
   the configured cut-off as the age a prune _would_ use. `--keep-retrieved` is OR-ed
   with the configured one rather than overriding it: the flag has no negative spelling,
   so letting an absent boolean overrule a written-down `true` would make typing an age
@@ -126,14 +128,17 @@ the runner rather than by hand.
   per-rule ledger and the store's own size on disk were three separate walks of the same
   two files — a `readdir` plus a `stat` per blob and a whole-journal parse, twice over —
   paid at the end of every session, because the Stop hook runs `smelt stats`.
-  `DirectoryElisionStore.survey()` answers all three from one traversal, and `stats()`,
-  `ledger()` and `rawCounters()` are views over it; the interfaces, the numbers and the
-  arithmetic are unchanged, with the pre-fold implementation kept as the test's oracle
+  `DirectoryElisionStore.survey()` answers all three from one blob scan plus one journal
+  fold, and `stats()` and `rawCounters()` are views over it; the interfaces, the numbers
+  and the arithmetic are unchanged, with the pre-fold implementation kept as the test's
+  oracle
   and compared field for field over a fixture carrying every shape the journal holds.
   Measured on a scratch store of 5,500 puts and 500 retrievals (a 226,500-byte journal
   over 21 MB of blobs; Node 26, macOS 15, APFS SSD, 2026-09-09): the traversal work
-  falls from 47–59 ms to 24–28 ms, inside a `smelt stats` that runs end to end in
-  0.11–0.14 s against 0.16–0.17 s before. **No cache** — at that size nothing is paying
+  falls from 46–55 ms to 23–27 ms, inside a `smelt stats` that runs end to end in
+  0.12–0.13 s against 0.16–0.17 s before. `ledger()` alone — the one of the three on
+  `smelt`'s own per-run path, since `smelter.ts` hands planners `ruleHistory` every run —
+  stays on the journal half and costs 2.6–2.9 ms, exactly what it cost before. **No cache** — at that size nothing is paying
   a cost worth a stale-detection scheme, and a cached tail is a second copy of numbers
   whose whole value is being read off the disk every time. One deliberate behaviour
   change comes with it: a blob that vanishes between the listing and the `stat` is now

@@ -525,13 +525,15 @@ export class DirectoryElisionStore implements ElisionStore {
    * `smelt stats` asked all three (and the Stop hook runs `smelt stats` at the end of
    * every session), so a store of 5,500 blobs was read twice and its journal parsed
    * twice to answer one command. Nothing about *what* is counted changes here; the
-   * three answers simply come out of one pass, and {@link rawCounters}, {@link ledger}
-   * and {@link stats} are views over it.
+   * three answers simply come out of one blob scan and one {@link #foldJournal}, and
+   * {@link rawCounters} and {@link stats} are views over it. {@link ledger} deliberately
+   * is **not** — it needs the journal half alone, and it is asked for on every smelt
+   * run; see its doc.
    *
    * There is no cache, and the measurement is why. On a scratch store of 5,500 puts and
    * 500 retrievals (a 226,500-byte journal over 21 MB of blobs; Node 26, macOS 15, APFS
-   * SSD, 2026-09-09) the three traversals cost 47-59 ms and this one costs 24-28 ms,
-   * inside a `smelt stats` that runs end to end in 0.11-0.14 s. A cached tail would be a
+   * SSD, 2026-09-09) the three traversals cost 46-55 ms and this one costs 23-27 ms,
+   * inside a `smelt stats` that runs end to end in 0.12-0.13 s. A cached tail would be a
    * second copy of numbers whose whole value is that they are read off the disk every
    * time — two instances over one directory agree precisely because neither remembers
    * anything — bought against a cost nobody is paying. If a store an order of magnitude
@@ -572,6 +574,48 @@ export class DirectoryElisionStore implements ElisionStore {
       bytesStored += size;
     }
 
+    const journal = this.#foldJournal();
+    let elisionsStored = blobs;
+    // A hash evicted and later re-put is on disk and already counted once; counting it
+    // again here would invent an elision nobody made.
+    for (const hash of journal.evicted) if (!onDisk.has(hash)) elisionsStored += 1;
+
+    return {
+      counters: {
+        elisionsStored,
+        bytesStored,
+        retrieveCalls: journal.retrieveCalls,
+        uniqueRetrieved: journal.hits.size,
+        misses: journal.misses,
+      },
+      ledger: ruleLedger(journal.puts, journal.hits),
+      size: { blobs, bytes: bytesStored },
+    };
+  }
+
+  /**
+   * The journal, folded once — every fact `retrievals.log` carries, and **no disk scan**.
+   *
+   * The half of {@link survey} that answers questions about what *happened* rather than
+   * about what is *there*, split out because {@link ledger} needs only this half and
+   * `smelt`'s own run path asks for the ledger on every call (`smelter.ts` hands it to
+   * planners as `PlanInput.ruleHistory`). Folding the journal costs one read of one
+   * file; scanning `blobs/` costs a `readdir` plus a `stat` per blob, which on a store
+   * of any size is the whole cost — so a `ledger()` that went through the full survey
+   * would have made the per-run hot path pay for a number it never looks at.
+   *
+   * One pass, four kinds of line, in the order that lets each `continue` skip the rest:
+   * a `put` (the ledger's attribution), an `evict` (a prune's receipt), a counter
+   * (`hit`/`miss`/`corrupt`), and anything else — a torn tail from a crash, or a blank
+   * line — skipped, exactly as a reader that predates a line kind skips it.
+   */
+  #foldJournal(): {
+    retrieveCalls: number;
+    misses: number;
+    hits: ReadonlySet<string>;
+    evicted: ReadonlySet<string>;
+    puts: readonly { hash: string; rule: string }[];
+  } {
     let retrieveCalls = 0;
     let misses = 0;
     const hits = new Set<string>();
@@ -594,22 +638,7 @@ export class DirectoryElisionStore implements ElisionStore {
       if (match[1] === 'miss') misses += 1;
       else if (match[1] === 'hit') hits.add(JSON.parse(match[2]!) as string);
     }
-    let elisionsStored = blobs;
-    // A hash evicted and later re-put is on disk and already counted once; counting it
-    // again here would invent an elision nobody made.
-    for (const hash of evicted) if (!onDisk.has(hash)) elisionsStored += 1;
-
-    return {
-      counters: {
-        elisionsStored,
-        bytesStored,
-        retrieveCalls,
-        uniqueRetrieved: hits.size,
-        misses,
-      },
-      ledger: ruleLedger(puts, hits),
-      size: { blobs, bytes: bytesStored },
-    };
+    return { retrieveCalls, misses, hits, evicted, puts };
   }
 
   /**
@@ -789,15 +818,24 @@ export class DirectoryElisionStore implements ElisionStore {
 
   /**
    * The per-rule ledger: the journal's `put` lines folded against its `hit` lines by
-   * the shared `ruleLedger()`, out of the one traversal {@link survey} makes.
-   * Uncounted, and read off the disk like everything else here, so two processes agree.
+   * the shared `ruleLedger()`. Uncounted, and read off the disk like everything else
+   * here, so two processes agree.
+   *
+   * It goes through {@link #foldJournal} rather than {@link survey}, and the distinction
+   * is load-bearing rather than tidy: this is the one read on `smelt`'s **per-run** path
+   * — `smelter.ts` asks every run for it, to hand planners `PlanInput.ruleHistory` — and
+   * every fact in it comes out of `retrievals.log`. Routing it through the full survey
+   * would make each run `readdir` `blobs/` and `stat` every file in it to answer a
+   * question about a log, which is the whole cost of the survey spent on none of its
+   * answers.
    *
    * A prune does not touch it. The rule *did* make that cut, and it was *not* asked
    * for back; deleting the row when the bytes go would erase the evidence that a rule
    * is cutting material nobody wants, which is the one thing this ledger is for.
    */
   ledger(): readonly RuleLedgerEntry[] {
-    return this.survey().ledger;
+    const journal = this.#foldJournal();
+    return ruleLedger(journal.puts, journal.hits);
   }
 
   /** The blob's exact content, or `undefined` when no such blob is stored. */

@@ -670,6 +670,13 @@ export interface PruneReportInput {
   readonly olderThanSource: 'flag' | 'config';
   /** Whether `--keep-retrieved` was in force, so the report can say what spared a blob. */
   readonly keepRetrieved: boolean;
+  /**
+   * What put it in force — the flag, the config, or both. The header attributes the
+   * sparing whenever the config had a hand in it, because "this kept blobs I never
+   * asked it to keep" is the question a receipt has to be able to answer; a flag the
+   * user typed themselves needs no attribution.
+   */
+  readonly keepRetrievedSource: 'flag' | 'config' | 'both' | 'none';
 }
 
 /**
@@ -686,16 +693,31 @@ export interface PruneReportInput {
  * hashes will say.
  */
 export function formatPruneReport(
-  { report, storePath, olderThan, olderThanSource, keepRetrieved }: PruneReportInput,
+  {
+    report,
+    storePath,
+    olderThan,
+    olderThanSource,
+    keepRetrieved,
+    keepRetrievedSource,
+  }: PruneReportInput,
   lava: Palette = PLAIN,
 ): string {
+  const configured = `${CONFIG_FILE_NAME}: store.retention`;
+  const mercy = !keepRetrieved
+    ? ''
+    : keepRetrievedSource === 'config'
+      ? `, keeping retrieved (${configured})`
+      : keepRetrievedSource === 'both'
+        ? `, keeping retrieved (--keep-retrieved, and ${configured})`
+        : ', keeping retrieved';
   const lines: string[] = [];
   lines.push(
     `${lava.paint('brand', `${CLI_NAME} store prune`)}${report.dryRun ? ' --dry-run' : ''}  ` +
       `${lava.paint('path', storePath)}  ` +
       `older than ${olderThan}` +
-      `${olderThanSource === 'config' ? ` (${CONFIG_FILE_NAME}: store.retention)` : ''}` +
-      `${keepRetrieved ? ', keeping retrieved' : ''}`,
+      `${olderThanSource === 'config' ? ` (${configured})` : ''}` +
+      mercy,
   );
   lines.push(
     `scanned ${count(report.scanned, 'blob')}  ` +

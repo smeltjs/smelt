@@ -217,6 +217,26 @@ describe('one traversal answers the counters, the ledger and the size', () => {
     expect(survey.ledger.find((row) => row.rule === 'sibling-collapse')?.stored).toBe(1);
   });
 
+  it('answers the ledger from the journal alone — no blob scan on the per-run path', () => {
+    // `smelter.ts` asks for the ledger on *every* smelt run, to hand planners
+    // `PlanInput.ruleHistory`. Every fact in it comes out of `retrievals.log`, so a
+    // `ledger()` routed through the whole survey would make each run `readdir` blobs/
+    // and `stat` every file in it to answer a question about a log — the entire cost of
+    // the survey spent on none of its answers.
+    //
+    // Proved by taking `blobs/` away: a scan of it cannot succeed, and the ledger still
+    // does. The `survey()` assertion is what keeps this non-vacuous — it shows the
+    // directory really is gone and a scan really would have failed.
+    const { root, store } = fixtureStore();
+    const expected = store.ledger();
+    expect(expected.length).toBeGreaterThan(0);
+
+    rmSync(join(root, 'blobs'), { recursive: true, force: true });
+
+    expect(store.ledger()).toStrictEqual(expected);
+    expect(() => store.survey()).toThrow();
+  });
+
   it('answers an empty store without inventing anything', () => {
     const root = mkdtempSync(join(tmpdir(), 'smelt-fold-empty-'));
     roots.push(root);

@@ -1,6 +1,6 @@
 {
   "guards": 44,
-  "mutations": 233,
+  "mutations": 234,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -104,7 +104,7 @@
     },
     {
       "guard": "packages/core/test/guards/persistent-store.test.ts",
-      "count": 5
+      "count": 6
     },
     {
       "guard": "packages/core/test/guards/planner-registry.test.ts",

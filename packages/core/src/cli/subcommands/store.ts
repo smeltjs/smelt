@@ -74,6 +74,19 @@ export interface StoreInvocation {
  */
 export type CutoffSource = 'flag' | 'config';
 
+/**
+ * Where the sparing came from — `--keep-retrieved`, `store.retention.keepRetrieved`, or
+ * both, or nothing.
+ *
+ * Its own type rather than a reuse of {@link CutoffSource}, because the two merge
+ * differently and saying so in the type is cheaper than a comment. A cut-off has one
+ * winner; sparing is a **union**, so `'both'` is a real answer and not a hedge — and
+ * `'none'` is what a prune that spared nothing reports, distinct from a prune that
+ * spared on the flag alone. A user asking "why did this keep blobs I did not name" is
+ * asking exactly this question.
+ */
+export type KeepRetrievedSource = 'flag' | 'config' | 'both' | 'none';
+
 /** What `store prune` runs on: the shared store leg, plus what this invocation asked for. */
 export interface ResolvedStorePruneRun {
   readonly store: ResolvedStoreRun;
@@ -82,6 +95,8 @@ export interface ResolvedStorePruneRun {
   /** Which spelling of the cut-off won. Printed on the receipt; see {@link CutoffSource}. */
   readonly olderThanSource: CutoffSource;
   readonly keepRetrieved: boolean;
+  /** What spared the retrieved hashes, if anything. See {@link KeepRetrievedSource}. */
+  readonly keepRetrievedSource: KeepRetrievedSource;
   readonly dryRun: boolean;
   readonly json: boolean;
 }
@@ -108,6 +123,12 @@ export interface CliPruneJsonEnvelope {
    */
   readonly olderThanSource: CutoffSource;
   readonly keepRetrieved: boolean;
+  /**
+   * What spared the retrieved hashes. Additive to `smelt-store-prune-cli/v1`, like
+   * {@link olderThanSource}, and separate from it because the age has one winner while
+   * the sparing is a union — `"both"` is a receipt a reader will actually see.
+   */
+  readonly keepRetrievedSource: KeepRetrievedSource;
   /** The {@link PruneReport} exactly as the store's `prune()` returned it. */
   readonly prune: PruneReport;
 }
@@ -201,6 +222,7 @@ export const storeCommand: Subcommand<StoreInvocation, ResolvedStorePruneRun> = 
       olderThanMs: retention.olderThanMs,
       olderThanSource: retention.source,
       keepRetrieved: retention.keepRetrieved,
+      keepRetrievedSource: retention.keepRetrievedSource,
       dryRun: invocation.dryRun,
       json: invocation.json,
     };
@@ -228,6 +250,7 @@ export const storeCommand: Subcommand<StoreInvocation, ResolvedStorePruneRun> = 
         olderThan: resolved.olderThan,
         olderThanSource: resolved.olderThanSource,
         keepRetrieved: resolved.keepRetrieved,
+        keepRetrievedSource: resolved.keepRetrievedSource,
         prune: report,
       };
       io.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
@@ -242,6 +265,7 @@ export const storeCommand: Subcommand<StoreInvocation, ResolvedStorePruneRun> = 
           olderThan: resolved.olderThan,
           olderThanSource: resolved.olderThanSource,
           keepRetrieved: resolved.keepRetrieved,
+          keepRetrievedSource: resolved.keepRetrievedSource,
         },
         stdoutPalette(io),
       ),
@@ -316,12 +340,19 @@ function resolveRetention(
   olderThanMs: number;
   source: CutoffSource;
   keepRetrieved: boolean;
+  keepRetrievedSource: KeepRetrievedSource;
 } {
   const retention: SmeltConfigRetention | undefined =
     configured?.kind === 'directory' ? configured.retention : undefined;
   // Sparing is additive: the flag turns it on, the config turns it on, and neither can
-  // turn the other off. See the doc above.
-  const keepRetrieved = invocation.keepRetrieved || retention?.keepRetrieved === true;
+  // turn the other off. See the doc above. Both halves are carried onto the receipt,
+  // because "the config kept blobs the flag never mentioned" is the surprising case and
+  // a header that only ever said "keeping retrieved" could not tell a user which.
+  const byFlag = invocation.keepRetrieved;
+  const byConfig = retention?.keepRetrieved === true;
+  const keepRetrieved = byFlag || byConfig;
+  const keepRetrievedSource: KeepRetrievedSource =
+    byFlag && byConfig ? 'both' : byFlag ? 'flag' : byConfig ? 'config' : 'none';
 
   if (invocation.olderThan !== undefined && invocation.olderThanMs !== undefined) {
     return {
@@ -329,6 +360,7 @@ function resolveRetention(
       olderThanMs: invocation.olderThanMs,
       source: 'flag',
       keepRetrieved,
+      keepRetrievedSource,
     };
   }
   if (retention !== undefined) {
@@ -348,6 +380,7 @@ function resolveRetention(
       olderThanMs: reading.milliseconds,
       source: 'config',
       keepRetrieved,
+      keepRetrievedSource,
     };
   }
   throw new CliUsageError(

@@ -59,11 +59,14 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
   file asked for, and the receipt carries the provenance (`olderThanSource`). _Avoid_:
   retention policy, expiry, TTL.
 - **Survey** (`DirectoryElisionStore.survey()`): the whole reading of a store directory
-  from one traversal — the counters, the **Ledger** and the size on disk. Not a cache
-  and not a new fact: `stats()`, `ledger()` and `rawCounters()` are views over it, and a
-  store still remembers nothing between calls, which is what makes two processes over
-  one directory always agree. It exists because `smelt stats` (the Stop hook's, at every
-  session end) walked the same two files three times to print one report.
+  from one blob scan and one journal fold — the counters, the **Ledger** and the size on
+  disk. Not a cache and not a new fact: `stats()` and `rawCounters()` are views over it,
+  and a store still remembers nothing between calls, which is what makes two processes
+  over one directory always agree. It exists because `smelt stats` (the Stop hook's, at
+  every session end) walked the same two files three times to print one report.
+  `ledger()` deliberately is **not** a view over it: every fact in the Ledger comes out
+  of the journal, and it is the one of the three that `smelter.ts` asks for on every
+  smelt run, so it goes through the journal half alone and never scans `blobs/`.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by
