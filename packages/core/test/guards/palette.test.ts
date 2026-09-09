@@ -87,8 +87,14 @@ async function loud(
 /** The escape sequence prefix every one of these assertions is about. */
 const ESC = '\u001b[';
 
-/** The same, as a pattern: strip the paint back off and see what is underneath. */
-const PAINT = /\u001b\[[0-9;]*m/gu;
+/**
+ * The same, as a pattern: strip the paint back off and see what is underneath.
+ *
+ * Built from the constant rather than written as a literal, because a control
+ * character inside a regex literal is a lint error and an invisible byte in a diff —
+ * exactly the thing this file exists to be precise about.
+ */
+const PAINT = new RegExp(`${ESC.replace('[', '\\[')}[0-9;]*m`, 'gu');
 
 describe('off is the identity', () => {
   it('renders every role, glyph and primitive as plain text with colour off', () => {
