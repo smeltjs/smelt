@@ -720,11 +720,10 @@ function renderOutcome(outcome: ApplyOutcome, say: Say, unicode: boolean): boole
       {
         ok,
         what: `${CLI_NAME} setup`,
-        summary:
-          `${countedFiles(
-            files.map((file) => file.action),
-            lava,
-          )}; ` + `${String(passed)} of ${String(checks.length)} checks passed`,
+        summary: `${countedFiles(
+          files.map((file) => file.action),
+          lava,
+        )}; ${String(passed)} of ${String(checks.length)} checks passed`,
         ...(ok
           ? {}
           : {

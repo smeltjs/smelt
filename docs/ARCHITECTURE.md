@@ -318,17 +318,15 @@ smelt --budget 4000 --focus TypeError < build.log
 ```
 
 Prints the smelted text to stdout, and a report to stderr so the two can be piped apart.
-A recorded run of the built binary, on this repository's own `plan/lexical.ts` —
-`--version`, a smelt with its report, the marker it produced, the round trip closing byte
-for byte, and the non-zero exit when the plan came back over budget. It is that session's
-capture, not a fresh one: `plan/lexical.ts` has grown since, so the byte counts below are
-the ones that run measured and not the ones the same command prints today. The README's
-transcript of this command is the one that cannot go stale — `test/guards/readme-numbers.test.ts`
-regenerates it from the binary on every `pnpm verify`.
 
-![the smelt CLI running on packages/core/src/plan/lexical.ts](images/cli-run.png)
-
-The same run, as text:
+Below is a recorded run of the built binary on this repository's own `plan/lexical.ts`.
+It is that session's capture, not a fresh one: `plan/lexical.ts` has grown since, so
+these are the byte counts that run measured and not the ones the same command prints
+today. It is kept as text rather than as a screenshot for exactly that reason — a stale
+transcript is a diff a reviewer can read, and a stale image is a picture nobody can. The
+README's transcript of this command is the one that cannot go stale at all:
+`test/guards/readme-numbers.test.ts` regenerates it from the binary on every
+`pnpm verify`.
 
 ```
 smelt  packages/core/src/plan/lexical.ts  typescript  lexical/v1

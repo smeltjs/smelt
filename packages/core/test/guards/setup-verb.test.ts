@@ -278,8 +278,19 @@ describe('smelt setup applies the recipe in one command', () => {
         version: '2.0.0',
         cwd,
       });
-      expect(doctorCode).toBe(EXIT.ok);
-      expect((JSON.parse(doctorOut) as { current: boolean }).current).toBe(true);
+      // Named, because this is the assertion every merge-policy break trips first and a
+      // witness reading `expected 3 to be +0` names nothing: what is asserted is that
+      // the repair a doctor report *named* actually repaired, so the next doctor is
+      // current. A setup that skips its own blocks, or writes a file it does not own,
+      // or lies about which it touched, leaves this loop open.
+      expect(
+        doctorCode,
+        'the update loop did not close: doctor still refuses after the repair it named',
+      ).toBe(EXIT.ok);
+      expect(
+        (JSON.parse(doctorOut) as { current: boolean }).current,
+        'doctor read the repaired install back as not current',
+      ).toBe(true);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -316,9 +327,15 @@ describe('smelt setup applies the recipe in one command', () => {
 
       // A whole-owned file has nothing to merge into, so it is refused — untouched,
       // reported skipped, with a reason that names it.
-      expect(readFileSync(plugin, 'utf8')).toBe(notOurs);
+      expect(
+        readFileSync(plugin, 'utf8'),
+        "a whole-owned file that is not smelt's was written over: those bytes are gone, " +
+          'and no merge could have preserved them',
+      ).toBe(notOurs);
       const skipped = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
-      expect(skipped?.action).toBe('skipped');
+      expect(skipped?.action, 'the receipt calls a file it did not write something else').toBe(
+        'skipped',
+      );
       expect(skipped?.detail).toContain('smelt-guard.js');
       expect(skipped?.detail).toContain('hooks install');
     } finally {
@@ -337,9 +354,13 @@ describe('smelt setup applies the recipe in one command', () => {
 
       const receipt = await runYes(cwd, ['--harness', 'opencode']);
 
-      expect(readFileSync(plugin, 'utf8')).toContain('tool.execute.before');
+      expect(
+        readFileSync(plugin, 'utf8'),
+        "setup treated a whole-owned file that IS smelt's as foreign and left it stale: " +
+          'doctor names it behind for ever, and the repair it names skips it',
+      ).toContain('tool.execute.before');
       const repaired = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
-      expect(repaired?.action).toBe('written');
+      expect(repaired?.action, 'a repaired file must be reported as written').toBe('written');
       // A file rewritten whole cannot claim bytes outside the edit survived — there
       // was no edit, and there is nothing outside it. What is true is that all of
       // those bytes were smelt's.

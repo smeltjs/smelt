@@ -454,11 +454,16 @@ describe('the closing block counts what was applied, not what was planned', () =
   });
 });
 
+/** Every character above ASCII in `text`, deduplicated — the assertion's evidence. */
+function aboveAscii(text: string): readonly string[] {
+  return [...new Set([...text].filter((ch) => (ch.codePointAt(0) ?? 0) > 127))];
+}
+
 /**
  * A wizard's closing block, sliced off its output: the rule that opens it is the only
  * line in this CLI that is all rule cells, in either spelling.
  */
-function block(out: string): string {
+function closingBlock(out: string): string {
   const at = out.search(/^(?:━{4,}|-{4,})$/mu);
   return at === -1 ? '' : out.slice(at);
 }
@@ -477,11 +482,6 @@ describe('the ASCII fallback reaches the wizards, not just the primitives', () =
    */
   const PROSE_DASH = '—';
 
-  /** Every character above ASCII in `text`, deduplicated — the assertion's evidence. */
-  function aboveAscii(text: string): readonly string[] {
-    return [...new Set([...text].filter((ch) => (ch.codePointAt(0) ?? 0) > 127))];
-  }
-
   /**
    * THE PAGES THIS OVERHAUL OWNS ARE ASCII WHEN THE LOCALE SAID SO — every byte of
    * them, punctuation included.
@@ -496,9 +496,9 @@ describe('the ASCII fallback reaches the wizards, not just the primitives', () =
     ['doctor', ['doctor'] as readonly string[], (out: string) => out],
     ['stats', ['stats'] as readonly string[], (out: string) => out],
     // The blocks only: everything above them is the wizard's own older prose.
-    ['setup', ['setup', '--yes', '--harness', 'claude-code'], block],
-    ['hooks install', ['hooks', 'install', '--yes', '--harness', 'claude-code'], block],
-    ['hooks remove', ['hooks', 'remove', '--yes', '--harness', 'claude-code'], block],
+    ['setup', ['setup', '--yes', '--harness', 'claude-code'], closingBlock],
+    ['hooks install', ['hooks', 'install', '--yes', '--harness', 'claude-code'], closingBlock],
+    ['hooks remove', ['hooks', 'remove', '--yes', '--harness', 'claude-code'], closingBlock],
   ])('%s carries nothing above ASCII', async (_name, argv, page) => {
     const cwd = projectRoot();
     // Something installed, so doctor has findings to render and remove has files to
@@ -542,7 +542,7 @@ describe('the ASCII fallback reaches the wizards, not just the primitives', () =
       cwd,
       unicode: false,
     });
-    const rendered = block(output);
+    const rendered = closingBlock(output);
     expect(rendered, 'the page under test was empty').not.toBe('');
     expect(aboveAscii(rendered), JSON.stringify(aboveAscii(rendered))).toEqual([]);
   });
