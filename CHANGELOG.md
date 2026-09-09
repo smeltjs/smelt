@@ -29,12 +29,19 @@ the runner rather than by hand.
   sparing. The doctrine in one line, and it is written at the seam: a K smelt invents is
   refused; a budget the user typed is honoured. `test/guards/rerank-budget.test.ts` holds
   both halves, with mutations that remove the budget check and that fabricate the stop
-  reason.
+  reason. A run whose plan is over budget before the stage is asked does not reach the
+  stage at all — it could spare nothing whatever came back, and asking would send the
+  caller's source to a third party for an answer refused before it arrived. That is a
+  skip, not a stop: `skipped: 'plan-over-budget'` beside the existing two reasons, with
+  the counts only a real run can take left absent.
 - **`RerankedCandidate.score` is load-bearing as an order.** The slot sorts a stage's
   selection score-descending, breaking ties by the order the candidates were sent, so
   which regions survive a tight budget no longer depends on how an adapter happened to
   serialise its response. The interface documents it; a stage that returns its selection
-  unsorted now has a defined outcome rather than an incidental one.
+  unsorted now has a defined outcome rather than an incidental one. A score that is not a
+  finite number is refused with a `RerankStageError`: `NaN` compares false against
+  everything, so it would not disorder the ranking loudly but silently, and differently
+  per engine.
 - **The rerank attribution says what was asked for and where the sparing stopped.**
   `RerankAttribution` gains three optional fields, present exactly when the stage ran:
   `returned` (how many regions it asked to spare), `sparedBytes` (what those put back —

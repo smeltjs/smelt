@@ -55,9 +55,31 @@ import type {
  * the three walls the walk hit and `sparedBytes` says what the spares put back, so a
  * `topK` of 8 that yielded 3 reads as a budget decision rather than as a mystery.
  *
- * **Nothing is invented when there is nothing to do.** No candidates, or no query to
- * rank them against, and the stage is not called at all — the attribution says `0
- * candidates, 0 kept`, which is a measurement rather than a silence.
+ * The same choice in its partial form: stopping at the first region that does not fit can
+ * leave headroom a **lower-ranked** region would have used, and that is accepted rather
+ * than packed. Packing would re-rank the stage's answer by size — the caller asked for
+ * the most relevant regions, not the most relevant small ones — and it would cost the one
+ * property that makes the outcome readable: what smelt spares is a **prefix of the
+ * stage's own order**, so a reader with the ranking and the budget can reconstruct
+ * exactly which regions survived and why the next one did not. A knapsack would leave a
+ * set nobody can re-derive from the receipt.
+ *
+ * **Nothing is invented when there is nothing to do, and nothing is sent.** No
+ * candidates, no query to rank them against, or a plan whose own predicted output is
+ * already over budget — and the stage is not called at all. The last of those is the
+ * reason the prediction is taken *before* the call rather than inside the walk: a plan
+ * that does not fit affords no spare, so every answer is refused in advance, and asking
+ * would ship the caller's source to a third party for a result that could not be used.
+ * `skipped` names which precondition was missing, which is a measurement rather than a
+ * silence, and no count that was never taken is reported beside it.
+ *
+ * **One caveat for a caller wiring this directly.** `sparedBytes` is `savingBytes`
+ * summed, and a planner that proposed an elision costing more than it removes would make
+ * that number negative — "bytes back" that are bytes spent. Every planner in this
+ * repository refuses such an elision (a marker that costs more than the lines it replaces
+ * makes the output bigger, so it is never minted), so the case is unreachable through
+ * `smelt()`; a third-party {@link Planner} reaching `applyRerank` through the public
+ * entrypoint owns it.
  */
 
 /** The query and the plan one stage is asked about, already resolved. */
@@ -100,7 +122,8 @@ export interface RerankOutcome {
  *
  * @throws {RerankStageError} for **every** way the stage can fail: it threw (a timeout,
  *   a 401, an unreachable host, an unimplemented stub), it answered with an id it was
- *   never sent, or it answered with the same id twice. A stage talks to another machine,
+ *   never sent, it answered with the same id twice, or it scored an entry with something
+ *   that is not a finite number. A stage talks to another machine,
  *   so its failures are expected rather than exceptional — and a plain `Error` escaping
  *   here would reach a CLI that calls it an internal bug and an MCP handler that crashes
  *   past its envelope. See {@link RerankStageError}.
@@ -113,7 +136,7 @@ export async function applyRerank(request: RerankRequest): Promise<RerankOutcome
   };
 
   const candidates = buildCandidates(plan, text);
-  // Two preconditions the stage cannot supply, each reported as the fact it is rather
+  // Three preconditions the stage cannot supply, each reported as the fact it is rather
   // than as a zero. `candidates` stays the measured size of the candidate set either
   // way — the planner really did propose that many — and `skipped` says why nothing was
   // asked, so a receipt never carries a count nobody took.
@@ -134,6 +157,23 @@ export async function applyRerank(request: RerankRequest): Promise<RerankOutcome
       },
     };
   }
+  // The third, and the only one that is about bytes: the planner could not fit this
+  // input, so the output is already over budget and sparing anything would take it
+  // further over. Every answer the stage could give is refused in advance — which is
+  // exactly why the question is not asked. Left inside the walk this would still spare
+  // nothing, and the caller's source would have left the machine to find that out.
+  const predicted = predictOutputBytes(Buffer.byteLength(text, 'utf8'), plan.elisions, pricing);
+  if (predicted > budgetBytes) {
+    return {
+      plan,
+      attribution: {
+        ...identity,
+        candidates: candidates.length,
+        kept: 0,
+        skipped: 'plan-over-budget',
+      },
+    };
+  }
 
   let ranked: readonly RerankedCandidate[];
   try {
@@ -146,7 +186,7 @@ export async function applyRerank(request: RerankRequest): Promise<RerankOutcome
     );
   }
   const selection = rankedSelection(stage.id, candidates, ranked);
-  const walk = spareWithinBudget(plan.elisions, selection, text, budgetBytes, pricing);
+  const walk = spareWithinBudget(plan.elisions, selection, predicted, budgetBytes, pricing);
 
   return {
     plan: {
@@ -197,7 +237,10 @@ function buildCandidates(plan: ElisionPlan, text: string): readonly RerankCandid
  * order from an HTTP response) and the walk below decides what survives a tight budget,
  * so leaving the order to whatever arrived would make "which regions were kept" depend
  * on an adapter's serialisation. Ties break on the original candidate index, which is
- * plan order: two regions the stage could not separate are separated by the file.
+ * plan order: two regions the stage could not separate are separated by the file. And a
+ * score that is not a finite number is refused before the sort ever sees it — `NaN`
+ * compares false against everything, so it would not disorder the ranking loudly, it
+ * would disorder it silently and differently per engine.
  */
 function rankedSelection(
   stageId: string,
@@ -222,6 +265,15 @@ function rankedSelection(
         stageId,
         `returned the candidate id ${JSON.stringify(entry.id)} twice. One candidate ranks ` +
           `once; a duplicate makes "how many were kept" a number nobody can read.`,
+      );
+    }
+    if (!Number.isFinite(entry.score)) {
+      throw new RerankStageError(
+        stageId,
+        `scored the candidate id ${JSON.stringify(entry.id)} ${String(entry.score)}. A score ` +
+          `orders the selection here — it decides which regions survive a tight budget — ` +
+          `and NaN or an infinity compares false against everything, so the "ranking" ` +
+          `would be whatever the sort happened to do with it.`,
       );
     }
     seen.add(index);
@@ -259,11 +311,14 @@ interface BudgetWalk {
 function spareWithinBudget(
   elisions: readonly PlannedElision[],
   selection: readonly number[],
-  text: string,
+  plannedBytes: number,
   budgetBytes: number,
   pricing: MarkerPricing,
 ): BudgetWalk {
-  let predicted = predictOutputBytes(Buffer.byteLength(text, 'utf8'), elisions, pricing);
+  // Measured once, by the caller, because the same number decides whether to make the
+  // call at all. Two `predictOutputBytes` of one plan would be two answers to one
+  // question — the fork `plan/budget.ts` exists to prevent.
+  let predicted = plannedBytes;
   const spared = new Set<number>();
   let sparedBytes = 0;
   for (const index of selection) {
@@ -279,9 +334,10 @@ function spareWithinBudget(
   // run. Which of the other two walls it was, is the difference between "your cut-off
   // ended it" and "there was nothing else to ask for" — a misconfigured `topK` and an
   // input the planner barely touched look identical from a count alone.
-  return {
-    spared,
-    sparedBytes,
-    stopped: selection.length === elisions.length ? 'exhausted' : 'cap',
-  };
+  //
+  // An EMPTY selection is `exhausted`, not `cap`: the stage found nothing worth sparing,
+  // and there is no cut-off to blame for a list that ran out at zero. Calling that `cap`
+  // would tell a reader to raise a `topK` that was never reached.
+  const exhausted = selection.length === 0 || selection.length === elisions.length;
+  return { spared, sparedBytes, stopped: exhausted ? 'exhausted' : 'cap' };
 }

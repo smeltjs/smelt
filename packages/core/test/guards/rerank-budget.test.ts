@@ -33,7 +33,13 @@ import type { GuardMutation } from './_mutations.ts';
  *     would blame the user's own `topK` for a refusal smelt made. That is a Law 2
  *     failure with a plausible cover story, which is the kind that survives review.
  *
- * The mutations at the bottom are exactly those two breaks.
+ *  3. **A run that can spare nothing asks nobody.** When the planner's own plan is
+ *     already over budget, every spare is refused in advance — so the stage is not
+ *     called at all. This is the one cost of a rerank that is not measured in bytes: the
+ *     call itself sends the caller's source to a third party, and doing that for an
+ *     answer that cannot be used is a Law 1-shaped failure a byte count never shows.
+ *
+ * The mutations at the bottom are exactly those three breaks.
  */
 
 const TEXT = Array.from({ length: 60 }, (_unused, i) => `line ${String(i)} filler filler`).join(
@@ -84,6 +90,37 @@ describe('a stage cannot spend past the budget the caller typed', () => {
         plain.elisions.length,
       );
     }
+  });
+
+  it('does not call the stage at all when the plan itself is already over budget', async () => {
+    // The check must be taken BEFORE the call, not inside the walk. Inside, the walk
+    // would still spare nothing and the byte counts would look identical — and the
+    // caller's source would have left the machine to produce that identical number.
+    const proposed = plan(300);
+    const predicted = predictOutputBytes(INPUT_BYTES, proposed.elisions, PRICING);
+    let called = false;
+    const watched: RerankStage = {
+      id: 'watched',
+      rerank: (candidates: readonly RerankCandidate[]) => {
+        called = true;
+        return Promise.resolve(candidates.map((candidate) => ({ ...candidate, score: 1 })));
+      },
+    };
+    const outcome = await applyRerank({
+      stage: watched,
+      plan: proposed,
+      text: TEXT,
+      query: 'line 30',
+      budgetBytes: predicted - 1,
+      pricing: PRICING,
+    });
+    expect(called).toBe(false);
+    expect(outcome.plan).toBe(proposed);
+    // A skip, not a stop: nothing only a run can measure is reported beside it.
+    expect(outcome.attribution.skipped).toBe('plan-over-budget');
+    expect(outcome.attribution.returned).toBeUndefined();
+    expect(outcome.attribution.sparedBytes).toBeUndefined();
+    expect(outcome.attribution.stopped).toBeUndefined();
   });
 
   it('spares nothing at all when the best region alone breaks the budget', async () => {
@@ -186,6 +223,24 @@ export const MUTATIONS: GuardMutation[] = [
       '    }\n',
     replace: '',
     why: 'the slot spares every region a stage asks for and never looks at the ceiling the caller typed — the output grows past --budget, the exit stays 0, and a topK written in a config file has quietly become the thing that decides how much context survives',
+  },
+  {
+    id: 'rerank-calls-the-stage-over-budget',
+    file: 'rerank/protect.ts',
+    find:
+      '  if (predicted > budgetBytes) {\n' +
+      '    return {\n' +
+      '      plan,\n' +
+      '      attribution: {\n' +
+      '        ...identity,\n' +
+      '        candidates: candidates.length,\n' +
+      '        kept: 0,\n' +
+      "        skipped: 'plan-over-budget',\n" +
+      '      },\n' +
+      '    };\n' +
+      '  }\n',
+    replace: '',
+    why: "the stage is asked even when the plan cannot afford a single spare — the byte counts come back identical, so nothing in the receipt changes, and the only difference is that the caller's source was sent to a third party for an answer that was refused before it arrived",
   },
   {
     id: 'rerank-stop-reason-fabricated',

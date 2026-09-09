@@ -840,6 +840,13 @@ all. A plan that fits beats a plan that does not, and a reranker cannot cut, so 
 lever left is not sparing. The rule in one line: a K smelt invents is refused; a budget you
 typed is honoured.
 
+Stopping is deliberate rather than packing: a lower-ranked region might have fitted in the
+headroom left behind, and taking it would re-rank your answer by size instead of by
+relevance. What you get back is a **prefix of your own ranking**, which is the version you
+can reconstruct from the report. And if the planner could not meet your budget in the first
+place, your reranker is **not called at all** — nothing could have been spared, so nothing
+of your source is sent anywhere to find that out; the report line says so.
+
 A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
 refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
 `smelt_file`), never as a crash in smelt.
@@ -1530,10 +1537,13 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   score-descending (ties in the order the candidates were sent) and stops at the first
   region that would push the predicted output past `budgetBytes`. A stage can only spare,
   never add, and it can no longer spend past the ceiling — a plan that fitted still fits.
-  See the **Rerank budget rung** below for the ruling. No candidates or no query and the
-  stage is not called at all; every way a stage can fail — including throwing, which a
-  hosted one ordinarily does — comes back as a `RerankStageError`, never as an unhandled
-  crash. What it did comes back as a **RerankAttribution**
+  See the **Rerank budget rung** below for the ruling. No candidates, no query, or a plan
+  whose own predicted output is already over budget, and the stage is not called at all —
+  the last of those because a plan that does not fit affords no spare, so asking would
+  send the caller's source to a third party for an answer refused before it arrived.
+  Every way a stage can fail — including throwing, which a hosted one ordinarily does, and
+  scoring an entry with something that is not a finite number — comes back as a
+  `RerankStageError`, never as an unhandled crash. What it did comes back as a **RerankAttribution**
   (`{adapter, model?, candidates, returned?, kept?, sparedBytes?, stopped?, skipped?}`)
   on `SmeltResult`, which the stderr report, the `--json` envelope and
   `smelt_file`'s report block all render from — one value, three surfaces, no front door
@@ -1552,16 +1562,24 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   best-ranked region alone breaks the budget, **nothing is spared**: a plan that fits
   beats a plan that does not, and the stage cannot cut, so the only lever left is not
   sparing. The walk stops at the first region that does not fit rather than skipping on
-  to a smaller one, because skipping would re-rank the stage's answer by size — a
-  relevance decision the slot has no standing to make. Three fields report it, present
+  to a smaller one — accepting that this can leave headroom a lower-ranked region would
+  have used. Packing it would re-rank the stage's answer by size (a relevance decision the
+  slot has no standing to make) and would cost the property that makes the outcome
+  readable: what smelt spares is a **prefix of the stage's own order**, so a reader with
+  the ranking and the budget can re-derive exactly which regions survived and why the next
+  one did not. When the plan is over budget before the stage is even asked, the run is a
+  **skip** (`skipped: 'plan-over-budget'`) rather than a stop: nothing ran, so nothing only
+  a run can measure is reported. Three fields report the runs that did happen, present
   exactly when the stage ran: `returned` (how many it asked for), `sparedBytes` (what the
   spares put back — the regions restored, less the markers that no longer land) and
   `stopped` — `'budget'` (the next region would not fit; the only outcome where `kept` is
   below `returned`), `'cap'` (every returned region was spared and the stage returned
-  fewer than it was offered — its own cut-off bound the run) or `'exhausted'` (every
-  returned region was spared and the stage had returned all of them). Guarded by
+  fewer than it was offered — its own cut-off bound the run) or `'exhausted'` (the walk
+  ran off the end of the list with the budget still holding and no cut-off to blame:
+  either every candidate came back, or none did). Guarded by
   `test/guards/rerank-budget.test.ts`. _Avoid_: calling `topK` a quantity — it is a cap;
-  and calling the budget stop a cap — it is smelt's ruling, not the user's.
+  calling the budget stop a cap — it is smelt's ruling, not the user's; and calling the
+  over-budget skip a stop — the stage never ran.
 - **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
   smelt setting that can send a caller's source to a third party. Two kinds: `module`
   (an ESM file of the consumer's own, resolved against the config file, default-exporting

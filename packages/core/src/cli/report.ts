@@ -199,10 +199,14 @@ function rerankLine(rerank: RerankAttribution, lava: Palette): string {
  * here rather than a line that quietly prints nothing, the same totality the language
  * and harness registries get.
  */
-const RERANK_SKIPPED: Readonly<Record<'ran' | 'no-candidates' | 'no-query', string>> = {
+const RERANK_SKIPPED: Readonly<
+  Record<'ran' | 'no-candidates' | 'no-query' | 'plan-over-budget', string>
+> = {
   ran: '',
   'no-candidates': '   not run: the planner proposed nothing to cut',
   'no-query': '   not run: this run named no focus terms to rank against',
+  'plan-over-budget':
+    '   not run: the planner’s own plan is over budget, so nothing could be spared',
 };
 
 /**
@@ -218,8 +222,14 @@ const RERANK_SKIPPED: Readonly<Record<'ran' | 'no-candidates' | 'no-query', stri
 const RERANK_STOPPED: Readonly<
   Record<NonNullable<RerankAttribution['stopped']>, (rerank: RerankAttribution) => string>
 > = {
+  // The count is the stage's answer, not a stand-in for it: an attribution that carries
+  // `stopped` without `returned` is one this pipeline does not produce, and printing
+  // `kept` there instead would render "the stage offered 3" over a run where it offered
+  // eight. So the half of the sentence that has no measurement behind it is not printed.
   budget: (rerank) =>
-    `   stopped at the budget: the stage offered ${group(rerank.returned ?? rerank.kept)}`,
+    rerank.returned === undefined
+      ? '   stopped at the budget'
+      : `   stopped at the budget: the stage offered ${group(rerank.returned)}`,
   cap: () => '',
   exhausted: () => '',
 };

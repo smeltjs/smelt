@@ -253,6 +253,24 @@ describe('the report says what a configured reranker did, and why it stopped', (
     expect(report({ adapter: 'voyage', candidates: 12, kept: 0, skipped: 'no-query' })).toContain(
       'rerank  voyage  (12 candidates, 0 kept)   not run: this run named no focus terms to rank against',
     );
+    // The third: the planner could not fit this input, so no answer could have been
+    // used and none was asked for. No bytes of the caller's source left the machine.
+    expect(
+      report({ adapter: 'voyage', candidates: 9, kept: 0, skipped: 'plan-over-budget' }),
+    ).toContain(
+      'rerank  voyage  (9 candidates, 0 kept)   not run: the planner’s own plan is over ' +
+        'budget, so nothing could be spared',
+    );
+  });
+
+  it('omits the offered count rather than printing one it does not have', () => {
+    // This pipeline never produces `stopped` without `returned`; a hand-built
+    // attribution can. Falling back to `kept` would render "the stage offered 3" over a
+    // run where it offered eight — a fabricated number in the one line that exists to
+    // explain a real one.
+    const line = report({ adapter: 'voyage', candidates: 5, kept: 0, stopped: 'budget' });
+    expect(line).toContain('rerank  voyage  (5 candidates, 0 kept)   stopped at the budget');
+    expect(line).not.toContain('offered');
   });
 
   it('prints no rerank line at all when no stage was configured', () => {

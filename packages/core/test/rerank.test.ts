@@ -238,6 +238,22 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
     );
   });
 
+  it('refuses a score that is not a finite number — the order would be undefined', async () => {
+    // `score` orders the selection, so it decides which regions survive a tight budget.
+    // NaN compares false against everything: left in, the "ranking" would be whatever
+    // the engine's sort happened to do with it, silently and differently per engine.
+    for (const score of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const wild: RerankStage = {
+        id: 'wild',
+        rerank: (candidates: readonly RerankCandidate[]) =>
+          Promise.resolve([{ ...candidates[0]!, score }]),
+      };
+      await expect(slot({ stage: wild, plan: realPlan(), text: TEXT, query: 'q' })).rejects.toThrow(
+        RerankStageError,
+      );
+    }
+  });
+
   it('refuses the same id twice — "how many were kept" must be readable', async () => {
     const doubled: RerankStage = {
       id: 'doubled',
@@ -364,6 +380,65 @@ describe('the budget rung: the slot spares only as far as the budget reaches', (
     });
     expect(outcome.plan.elisions).toEqual([plan.elisions[1]]);
     expect(outcome.attribution.kept).toBe(1);
+  });
+
+  it('does not call the stage at all when the planner’s own plan is over budget', async () => {
+    // The cost a rerank has that is not measured in bytes: the call itself. A plan that
+    // does not fit affords no spare, so every answer is refused in advance — and asking
+    // anyway would ship the caller's source to a third party for a result that could not
+    // be used. This is a SKIP, not a stop: the stage never ran, so nothing only a run can
+    // measure is reported.
+    const proposed = realPlan();
+    let called = false;
+    const stage: RerankStage = {
+      id: 'never',
+      rerank: (candidates: readonly RerankCandidate[]) => {
+        called = true;
+        return Promise.resolve(candidates.map((c) => ({ ...c, score: 1 })));
+      },
+    };
+    const outcome = await slot({
+      stage,
+      plan: proposed,
+      text: TEXT,
+      query: 'q',
+      budgetBytes: PREDICTED - 1,
+    });
+    expect(called).toBe(false);
+    expect(outcome.plan).toBe(proposed);
+    expect(outcome.attribution).toEqual({
+      adapter: 'never',
+      candidates: proposed.elisions.length,
+      kept: 0,
+      skipped: 'plan-over-budget',
+    });
+  });
+
+  it('still calls the stage when the plan lands exactly on the budget', async () => {
+    // The boundary the skip must not swallow: a plan that fits *exactly* affords no
+    // spare either, but it is the ordinary in-budget case and the stage's answer is a
+    // real refusal at the rung rather than a question never asked.
+    const outcome = await slot({
+      stage: ranks(['0', '1']),
+      plan: realPlan(),
+      text: TEXT,
+      query: 'q',
+      budgetBytes: PREDICTED,
+    });
+    expect(outcome.attribution.skipped).toBeUndefined();
+    expect(outcome.attribution.returned).toBe(2);
+    expect(outcome.attribution.kept).toBe(0);
+    expect(outcome.attribution.stopped).toBe('budget');
+  });
+
+  it('says `exhausted` when the stage returned nothing, never `cap`', async () => {
+    // A list that ran out at zero has no cut-off to blame, and `cap` would tell a reader
+    // to raise a `topK` that was never reached.
+    const { stage } = spares([]);
+    const outcome = await slot({ stage, plan: realPlan(), text: TEXT, query: 'q' });
+    expect(outcome.attribution.returned).toBe(0);
+    expect(outcome.attribution.kept).toBe(0);
+    expect(outcome.attribution.stopped).toBe('exhausted');
   });
 
   it('says `cap` when the stage’s own cut-off ended the walk, not the budget', async () => {
@@ -507,6 +582,37 @@ describe('a smelter with a stage wired in', () => {
     const report = formatReport({ result: reranked, source: 'x', budgetBytes, inputText: TEXT });
     expect(report).not.toContain('OVER BUDGET');
     expect(report).toContain('stopped at the budget');
+  });
+
+  it('never reaches the stage when the run is already over budget, and says so', async () => {
+    // Through the real `smelt()` path: a budget the planner could not meet means the
+    // stage is not asked, so no bytes of this input leave the machine. The report says
+    // "not run" with the reason, which is the difference between a reranker that had
+    // nothing to do and one that was never wired up.
+    const budgetBytes = 60;
+    let called = false;
+    const stage: RerankStage = {
+      id: 'never',
+      rerank: (candidates) => {
+        called = true;
+        return Promise.resolve(candidates.map((c) => ({ ...c, score: 1 })));
+      },
+    };
+    const result = await createSmelter({ strategy: 'lexical', rerank: stage }).smelt(TEXT, {
+      budgetBytes,
+      focus: ['line 30'],
+    });
+    expect(called).toBe(false);
+    expect(result.outputBytes).toBeGreaterThan(budgetBytes);
+    expect(result.rerank).toEqual({
+      adapter: 'never',
+      candidates: result.elisions.length,
+      kept: 0,
+      skipped: 'plan-over-budget',
+    });
+    expect(formatReport({ result, source: 'x', budgetBytes, inputText: TEXT })).toContain(
+      'not run: the planner’s own plan is over budget, so nothing could be spared',
+    );
   });
 
   it('stays byte-for-byte reversible over the smaller plan (Law 3 is untouched)', async () => {

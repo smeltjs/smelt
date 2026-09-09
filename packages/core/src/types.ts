@@ -587,17 +587,27 @@ export interface RerankAttribution {
    *   {@link returned}.
    * - `'cap'` — every returned region was spared, and the stage returned fewer than it
    *   was offered: its own cut-off bound the run, not the budget.
-   * - `'exhausted'` — every returned region was spared and the stage returned every
-   *   candidate it was offered. There was nothing left to spare.
+   * - `'exhausted'` — the walk ran off the end of the stage's list with the budget still
+   *   holding, and there was no cut-off left to blame: either the stage returned every
+   *   candidate it was offered, or it returned none at all.
    */
   readonly stopped?: 'budget' | 'cap' | 'exhausted';
   /**
    * Present exactly when the stage was **not** called, naming the precondition it could
-   * not supply: `'no-candidates'` (the planner proposed nothing to cut) or `'no-query'`
-   * (the run named no focus terms, and a ranker with no query would be scoring against
-   * the empty string and calling the result relevance). Absent means the stage ran.
+   * not supply — and then {@link returned}, {@link sparedBytes} and {@link stopped} are
+   * all absent, because a call that never happened measured none of them:
+   *
+   * - `'no-candidates'` — the planner proposed nothing to cut.
+   * - `'no-query'` — the run named no focus terms, and a ranker with no query would be
+   *   scoring against the empty string and calling the result relevance.
+   * - `'plan-over-budget'` — the planner's own plan already predicts an output above the
+   *   run's budget, so no region could be spared whatever came back. Asking anyway would
+   *   send the caller's source to a third party for an answer that could not be used,
+   *   which is the one cost of a rerank that is not measured in bytes.
+   *
+   * Absent means the stage ran.
    */
-  readonly skipped?: 'no-candidates' | 'no-query';
+  readonly skipped?: 'no-candidates' | 'no-query' | 'plan-over-budget';
 }
 
 /**

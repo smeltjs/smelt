@@ -830,6 +830,13 @@ all. A plan that fits beats a plan that does not, and a reranker cannot cut, so 
 lever left is not sparing. The rule in one line: a K smelt invents is refused; a budget you
 typed is honoured.
 
+Stopping is deliberate rather than packing: a lower-ranked region might have fitted in the
+headroom left behind, and taking it would re-rank your answer by size instead of by
+relevance. What you get back is a **prefix of your own ranking**, which is the version you
+can reconstruct from the report. And if the planner could not meet your budget in the first
+place, your reranker is **not called at all** — nothing could have been spared, so nothing
+of your source is sent anywhere to find that out; the report line says so.
+
 A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
 refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
 `smelt_file`), never as a crash in smelt.
