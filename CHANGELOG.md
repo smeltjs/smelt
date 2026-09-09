@@ -42,9 +42,10 @@ the runner rather than by hand.
   seam the plan was made with) and `stopped` — `budget`, `cap` or `exhausted`. A `topK`
   of 8 that reports 3 kept now carries the reason beside it instead of leaving the reader
   to guess whether their ranker or their budget made the decision. The stderr report line
-  gains a `B back` clause and, on a budget stop, `stopped at the budget: the stage offered
-  N`; the `--json` envelope carries `result` verbatim, so `result.rerank` gains the three
-  fields additively and nothing was renamed or dropped.
+  gains a `B back` clause and, on a budget stop, a clause naming the budget as the reason
+  and how many regions the stage had offered. The `--json` envelope carries `result`
+  verbatim, so `result.rerank` gains the three fields additively — nothing renamed,
+  nothing dropped.
 
 ### Docs
 
