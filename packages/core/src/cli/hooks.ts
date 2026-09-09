@@ -13,6 +13,7 @@ import type { InstallScope } from '../harness/scope.ts';
 import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import { presetToggles, withToggleFlags } from './installed.ts';
 import type { PresetToggles, ToggleFlags } from './installed.ts';
+import { countedFiles, doneBlock } from './lava.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import type { AppliedFile } from './merge-policy.ts';
 import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
@@ -350,9 +351,8 @@ async function applyWithoutAsking(
   );
 
   const plan = planInstall(io.cwd, choices);
-  for (const applied of await applyPlanFiles(plan.files, { kind: 'policy' })) {
-    io.output(sayApplied(applied));
-  }
+  const applied = await applyPlanFiles(plan.files, { kind: 'policy' });
+  for (const one of applied) io.output(sayApplied(one));
   for (const skip of plan.skipped) io.output(`  skipped ${skip.name} — ${skip.why}\n`);
   for (const step of plan.manual) {
     io.output(
@@ -361,11 +361,29 @@ async function applyWithoutAsking(
   }
   for (const note of plan.notes) io.output(`note: ${note}\n`);
   io.output(
-    `Done. Re-run with different toggles to edit them; ` +
-      `\`${CLI_NAME} hooks remove --yes\` takes it all back out.\n`,
+    doneBlock({
+      ok: true,
+      what: `${CLI_NAME} hooks install`,
+      summary: countedFiles(applied.map((one) => one.action)),
+      note:
+        `Re-run with different toggles to edit them; ` +
+        `\`${CLI_NAME} hooks remove --yes\` takes it all back out.`,
+      next: INSTALLED_NEXT,
+    }),
   );
   return 0;
 }
+
+/**
+ * What to run after a hooks install, in the order a person needs it: prove the wiring
+ * fires, then use it. Shared by the `--yes` path and the wizard, because two closing
+ * blocks that disagree about the next command is exactly the drift the block exists to
+ * end.
+ */
+const INSTALLED_NEXT: readonly (readonly [string, string])[] = [
+  [`${CLI_NAME} doctor`, 'prove the wiring actually fires, and what is behind'],
+  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
+];
 
 /** One toggle, as both the wizard prompt and the --yes summary spell it. */
 const onOff = (on: boolean): string => (on ? 'on' : 'off');
@@ -576,14 +594,20 @@ async function confirmAndInstall(
     return 'done';
   }
 
-  for (const applied of await applyPlanFiles(plan.files, { kind: 'wizard', ask })) {
-    io.output(sayApplied(applied));
-  }
+  const applied = await applyPlanFiles(plan.files, { kind: 'wizard', ask });
+  for (const one of applied) io.output(sayApplied(one));
 
   for (const note of plan.notes) io.output(`note: ${note}\n`);
   io.output(
-    `Done. Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
-      `\`${CLI_NAME} hooks remove\` takes it all back out.\n`,
+    doneBlock({
+      ok: true,
+      what: `${CLI_NAME} hooks install`,
+      summary: countedFiles(applied.map((one) => one.action)),
+      note:
+        `Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
+        `\`${CLI_NAME} hooks remove\` takes it all back out.`,
+      next: INSTALLED_NEXT,
+    }),
   );
   return 'done';
 }
@@ -629,10 +653,13 @@ async function removeFlow(
     return 0;
   }
 
+  let removed = 0;
+  let spared = 0;
   for (const removal of removals) {
     const verb = removal.action === 'delete' ? 'delete' : 'modify';
     if (io.yes !== true && (await ask(`  ${removal.name} — ${verb} it? (yes/no)> `)) !== 'yes') {
       io.output(`  skipped ${removal.name} — not touched\n`);
+      spared += 1;
       continue;
     }
     if (removal.action === 'delete') {
@@ -642,7 +669,23 @@ async function removeFlow(
       writeFileSync(removal.path, removal.content ?? '');
       io.output(`  cleaned ${removal.name}\n`);
     }
+    removed += 1;
   }
-  io.output(`Done.\n`);
+  io.output(
+    doneBlock({
+      ok: true,
+      what: `${CLI_NAME} hooks remove`,
+      // Counted off what this loop actually did, not off what `planRemove` found: a
+      // wizard run may decline any of them, one file at a time. Its own vocabulary,
+      // too — `countedFiles` speaks about writing, and this verb does the opposite.
+      summary:
+        `took ${String(removed)} ${removed === 1 ? 'file' : 'files'} back out` +
+        (spared === 0 ? '' : `, left ${String(spared)} alone`),
+      next: [
+        [`${CLI_NAME} doctor`, 'read back what is left, and what is behind'],
+        [`${CLI_NAME} hooks install`, 'put the guard preset back'],
+      ],
+    }),
+  );
   return 0;
 }

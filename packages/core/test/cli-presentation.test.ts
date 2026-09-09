@@ -134,6 +134,25 @@ describe('smelt doctor', () => {
   });
 });
 
+describe("the wizards' closing block", () => {
+  it('ends `smelt setup` with what it did and what to type next', async () => {
+    // The whole recipe, applied with --yes into a scratch project, so the block is the
+    // one a real install prints — counts included.
+    const root = mkdtempSync(join(tmpdir(), 'smelt-presentation-'));
+    roots.push(root);
+    const { code, stdout } = await run(['setup', '--yes', '--harness', 'claude-code'], root, '', {
+      home: join(root, 'home'),
+    });
+    expect(code).toBe(EXIT.ok);
+    // Only the block: everything above it is the apply listing, which the setup guards
+    // already pin and which names absolute paths.
+    const block = stdout.slice(stdout.indexOf('\n━'));
+    await expect(normalize(block, root)).toMatchFileSnapshot(
+      '__snapshots__/cli-done-block.setup.txt',
+    );
+  });
+});
+
 describe('the stated surfaces did not move', () => {
   it('smelt --json is byte-identical to the committed envelope', async () => {
     const root = projectRoot();

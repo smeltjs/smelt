@@ -274,6 +274,11 @@ one file it will not write is one it would have to write whole (the opencode plu
 Cline's hook wrapper) when the file there is somebody else's — that is reported
 skipped, with the reason.
 
+Every wizard — `setup`, `hooks install`, `hooks remove`, `init` — ends the same way: a
+rule, a verdict counted off what was actually applied (`wrote 2, left 1 unchanged,
+skipped 1 — 4 files in all`), and the two or three commands that follow from it. Under
+`--json` the receipt is the whole output, as it always was.
+
 For an agent, the whole interface is flags, and the receipt is the output:
 
 ```sh

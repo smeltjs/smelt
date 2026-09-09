@@ -7,6 +7,8 @@ import type { Strategy } from '../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../plan/structural.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 
+import { countedFiles, doneBlock } from './lava.ts';
+import type { FileAction } from './lava.ts';
 import { CLI_NAME } from './shell.ts';
 import { wizardAsk } from './wizard.ts';
 import type { AnswerStream } from './shell.ts';
@@ -619,9 +621,13 @@ async function confirmAndWrite(
     io.output(`yes to write, no to leave everything untouched, back to change a setting.\n`);
   }
 
+  // Counted as the loop goes, so the closing block states what was written rather
+  // than what was planned — a file declined at its own prompt is not a file written.
+  const applied: FileAction[] = [];
   for (const write of writes) {
     if (write.unchanged) {
       io.output(`  ${write.name} — unchanged, not rewritten\n`);
+      applied.push('unchanged');
       continue;
     }
     if (write.exists) {
@@ -631,13 +637,14 @@ async function confirmAndWrite(
       const answer = await ask(`  ${write.name} exists — overwrite it? (yes/no)> `);
       if (answer !== 'yes') {
         io.output(`  skipped ${write.name} — the existing file was not touched\n`);
+        applied.push('skipped');
         continue;
       }
     }
     writeFileSync(write.path, write.content);
     io.output(`  wrote ${write.name}\n`);
+    applied.push('written');
   }
-  io.output(`Done.\n`);
   if (choices.rerank === 'voyage') {
     // The two things the wizard deliberately did not do for them: install the adapter
     // and supply a key. Printed at the moment they matter, and the key is named, never
@@ -651,9 +658,17 @@ async function confirmAndWrite(
     );
   }
   io.output(
-    `Also: \`${CLI_NAME} hooks install\` wires the smelt guard into agent-harness ` +
-      `hooks (Claude Code, Codex, and more) — it detects installed harnesses and asks ` +
-      `before writing anything.\n`,
+    doneBlock({
+      ok: true,
+      what: `${CLI_NAME} init`,
+      summary: countedFiles(applied),
+      note: `${CONFIG_FILE_NAME} is defaults only — every flag still wins over it.`,
+      next: [
+        [`${CLI_NAME} setup`, 'wire the guard preset into the harness you use here'],
+        [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
+        [`${CLI_NAME} doctor`, 'read back what is installed, and what is behind'],
+      ],
+    }),
   );
   return 'done';
 }

@@ -35,7 +35,7 @@ import { DEFAULT_STRATEGY } from '../plan/planners.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 import { CLI_NAME, EXIT } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
-import { lavaBanner } from './lava.ts';
+import { countedFiles, doneBlock, lavaBanner } from './lava.ts';
 
 /**
  * `smelt setup` — the SetupRecipe (CONTEXT.md) applied end-to-end: config, the hooks
@@ -699,6 +699,30 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
   for (const check of checks) {
     say(`${check.ok ? ' ✓' : ' ✗'} ${check.name} — ${check.detail}\n`);
   }
+
+  // The closing block, and the only place this flow states a total. Both halves are
+  // counted off what was applied and what was proven — never off the plan, and never
+  // off the recipe.
+  const passed = checks.filter((check) => check.ok).length;
+  say(
+    doneBlock({
+      ok,
+      what: `${CLI_NAME} setup`,
+      summary:
+        `${countedFiles(files.map((file) => file.action))}; ` +
+        `${String(passed)} of ${String(checks.length)} checks passed`,
+      ...(ok
+        ? {}
+        : {
+            note: 'A check did not pass — the lines above say which, and this run exits non-zero.',
+          }),
+      next: [
+        [`${CLI_NAME} doctor`, 'read back what was just written, and what is behind'],
+        [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what was cut'],
+        [`${CLI_NAME} stats`, 'the store, once a run has put something in it'],
+      ],
+    }),
+  );
 
   return ok;
 }

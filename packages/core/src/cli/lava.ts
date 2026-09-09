@@ -439,6 +439,114 @@ function renderDivider(width: number, on: boolean, unicode: boolean): string {
 }
 
 /**
+ * How wide a wizard's closing rule is drawn. Wide enough to be a line rather than a
+ * dash, narrow enough for an 80-column terminal with room to spare.
+ */
+const DONE_WIDTH = 60;
+
+/** The closing block a wizard ends on: what happened, and what to run next. */
+export interface DoneBlock {
+  /** Whether what just ran succeeded — the mark the block opens with. */
+  readonly ok: boolean;
+  /** What finished, in the words a person typed: `smelt setup`. */
+  readonly what: string;
+  /**
+   * What it did, **counted** — `wrote 3, skipped 1 — 4 files in all`, unterminated
+   * (the block ends the sentence). The caller counts it off what it actually applied,
+   * never off what it planned: a closing block that says "wrote 4 files" for a run
+   * that skipped one is the most quietly wrong line a wizard can print, because it is
+   * the line people believe and stop reading at.
+   */
+  readonly summary: string;
+  /** The sentence this verb owes the reader about what it just wrote. Optional. */
+  readonly note?: string;
+  /** What to run next: the command, and the one line that says why. */
+  readonly next: readonly (readonly [command: string, why: string])[];
+}
+
+/**
+ * The block every wizard ends on — `init`, `hooks install`, `hooks remove`, `setup`.
+ *
+ * Three wizards used to stop at `Done.` and a sentence, each phrased its own way, and
+ * a person who had just installed smelt was left with no answer to the only question
+ * they had: *what do I type now?* This is that answer, in the shape every one of them
+ * shares — a rule, a verdict, what was measured, and the two or three commands that
+ * follow from it.
+ *
+ * Rendered through the palette like everything else, and `PLAIN` (the default) is the
+ * plain text a pipe, a `--yes` receipt and every guard reads. The wizards pass no
+ * palette: their bytes go through the {@link colorize} sink at the verb boundary,
+ * which paints the rule's gradient there — one switch, one place, as ADR-0001 has it.
+ */
+export function doneBlock(block: DoneBlock, lava: Palette = PLAIN): string {
+  const width = block.next.reduce((wide, [command]) => Math.max(wide, command.length), 0);
+  return [
+    '',
+    lava.divider(DONE_WIDTH),
+    `  ${lava.glyph(block.ok ? 'ok' : 'bad')} Done. ${block.what} ${block.summary}.`,
+    ...(block.note === undefined ? [] : [`    ${lava.paint('dim', block.note)}`]),
+    ...(block.next.length === 0
+      ? []
+      : [
+          '',
+          `  ${lava.heading('Next')}`,
+          ...block.next.map(
+            ([command, why]) =>
+              `    ${lava.paint('brand', command.padEnd(width))}  ${lava.paint('dim', why)}`,
+          ),
+        ]),
+    '',
+  ].join('\n');
+}
+
+/**
+ * What one action did to one file — the four outcomes every apply loop in this CLI
+ * has, stated once so three wizards cannot spell the same tally three ways.
+ */
+export type FileAction = 'written' | 'updated' | 'unchanged' | 'skipped';
+
+/**
+ * How each outcome reads on its own, and beside the others. Two phrasings because
+ * English needs them: `left 2 files unchanged` alone, `left 2 unchanged` in a list
+ * whose total is stated at the end.
+ */
+const TALLY: Readonly<
+  Record<FileAction, { alone: (n: string, files: string) => string; beside: (n: string) => string }>
+> = {
+  written: { alone: (n, files) => `wrote ${n} ${files}`, beside: (n) => `wrote ${n}` },
+  updated: { alone: (n, files) => `updated ${n} ${files}`, beside: (n) => `updated ${n}` },
+  unchanged: {
+    alone: (n, files) => `left ${n} ${files} unchanged`,
+    beside: (n) => `left ${n} unchanged`,
+  },
+  skipped: { alone: (n, files) => `skipped ${n} ${files}`, beside: (n) => `skipped ${n}` },
+};
+
+/**
+ * `wrote 3, skipped 1 — 4 files in all` — what a run did, counted off what it did.
+ *
+ * Takes the applied outcomes rather than the plan, and names only the buckets that are
+ * not empty, so the sentence is short when the run was simple and complete when it was
+ * not. The three wizards share it for the same reason they share the block: three
+ * hand-counted summaries are three chances to say "wrote 4 files" about three.
+ */
+export function countedFiles(actions: readonly FileAction[]): string {
+  const files = actions.length === 1 ? 'file' : 'files';
+  const buckets = (Object.keys(TALLY) as FileAction[])
+    .map((action) => ({ action, n: actions.filter((one) => one === action).length }))
+    .filter((bucket) => bucket.n > 0);
+  if (buckets.length === 0) return 'wrote nothing';
+  const only = buckets[0];
+  if (buckets.length === 1 && only !== undefined) {
+    return TALLY[only.action].alone(String(only.n), only.n === 1 ? 'file' : 'files');
+  }
+  return (
+    `${buckets.map((bucket) => TALLY[bucket.action].beside(String(bucket.n))).join(', ')}` +
+    ` — ${String(actions.length)} ${files} in all`
+  );
+}
+
+/**
  * Style one block of wizard output. `on === false` returns the text untouched —
  * the property every guard's byte-identity leans on.
  *
@@ -469,6 +577,11 @@ export function colorize(text: string, on: boolean): string {
       ) {
         return lava.paint('bad', line);
       }
+      // The closing block's rule, drawn plain by `doneBlock` and painted here: the
+      // wizards write words and the sink paints them, so this is where the gradient
+      // belongs. `lavaBanner` already paints its own, and a painted line is no longer
+      // all-`━`, so neither one can be painted twice.
+      if (/^━{4,}$/u.test(line)) return lava.divider(line.length);
       if (line.trim().startsWith('note:')) return lava.paint('warn', line);
       if (line.endsWith('> ') || /»/u.test(line)) return lava.paint('strong', line);
       // The file listing every wizard prints: what happened to a file is the fact a

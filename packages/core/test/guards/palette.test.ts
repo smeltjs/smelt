@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,7 +6,17 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
-import { colorAllowed, palette, percent, PLAIN, supportsUnicode } from '@guard/cli/lava';
+import {
+  colorAllowed,
+  colorize,
+  countedFiles,
+  doneBlock,
+  palette,
+  percent,
+  PLAIN,
+  supportsUnicode,
+} from '@guard/cli/lava';
+import { runInit } from '@guard/cli/init';
 import { EXIT, runCli } from '@guard/cli/run';
 import { cliUsage, frontDoor } from '@guard/cli/usage';
 
@@ -57,6 +67,13 @@ function projectRoot(): string {
   );
   writeFileSync(join(root, 'corpus.txt'), corpus());
   return root;
+}
+
+/** A wizard's answers, one line at a time, as the injected stream shape. */
+function scripted(answers: readonly string[]): AsyncIterable<string> {
+  return (async function* (): AsyncGenerator<string> {
+    yield `${answers.join('\n')}\n`;
+  })();
 }
 
 /** Long enough that a small budget forces elisions. */
@@ -250,6 +267,80 @@ describe('the switches are obeyed', () => {
   });
 });
 
+describe('the closing block: what happened, and what to type next', () => {
+  const block = {
+    ok: true,
+    what: 'smelt setup',
+    summary: 'wrote 4 files; 3 of 3 checks passed',
+    note: 'Re-run with different toggles to edit them.',
+    next: [
+      ['smelt doctor', 'read back what was just written'],
+      ['smelt <file> --budget 4000', 'smelt one file'],
+    ] as const,
+  };
+
+  it("is plain text, and the wizards' sink is what paints it", () => {
+    const plain = doneBlock(block);
+    expect(plain).not.toContain(ESC);
+    // The wizards emit the block plain and their verb wraps the stream in `colorize`:
+    // one switch, one place. Off, that sink is the identity; on, it paints the rule.
+    expect(colorize(plain, false)).toBe(plain);
+    expect(colorize(plain, true)).toContain(`${ESC}38;2;`);
+    // …and the words survive the paint, contiguous, the way every other guard's
+    // substrings do.
+    expect(colorize(plain, true)).toContain('Done. smelt setup wrote 4 files');
+  });
+
+  it('opens with the verdict and closes with the commands, aligned', () => {
+    const lines = doneBlock(block).split('\n');
+    expect(lines[1]).toMatch(/^━{10,}$/u);
+    expect(lines[2]).toBe('  ✓ Done. smelt setup wrote 4 files; 3 of 3 checks passed.');
+    expect(lines[3]).toBe('    Re-run with different toggles to edit them.');
+    expect(doneBlock(block)).toContain('  Next');
+    // The command column is padded to the widest command, so the reasons line up.
+    expect(doneBlock(block)).toContain('    smelt doctor                read back');
+    // A failed run wears the other mark, and says so where a reader is already looking.
+    expect(doneBlock({ ...block, ok: false })).toContain('  ✗ Done.');
+  });
+
+  it('counts what was applied, and says only what happened', () => {
+    expect(countedFiles(['written'])).toBe('wrote 1 file');
+    expect(countedFiles(['written', 'written'])).toBe('wrote 2 files');
+    expect(countedFiles(['unchanged', 'unchanged'])).toBe('left 2 files unchanged');
+    expect(countedFiles(['skipped'])).toBe('skipped 1 file');
+    expect(countedFiles(['updated', 'updated'])).toBe('updated 2 files');
+    expect(countedFiles([])).toBe('wrote nothing');
+    // Several buckets: each one named, and the total stated once rather than implied.
+    expect(countedFiles(['written', 'written', 'unchanged', 'skipped'])).toBe(
+      'wrote 2, left 1 unchanged, skipped 1 — 4 files in all',
+    );
+  });
+});
+
+describe('the closing block counts what was applied, not what was planned', () => {
+  it('a file the user declined is not a file the block says it wrote', async () => {
+    // The whole hazard in one run: `smelt init` plans two files, the person says no to
+    // the one that already exists, and the closing block is the last thing they read.
+    // A block that counted the *plan* would tell them their file was overwritten.
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-done-block-'));
+    roots.push(cwd);
+    writeFileSync(join(cwd, 'smelt.rerank.ts'), '// hand-written — do not touch\n');
+    let output = '';
+    await runInit({
+      // budget, store=memory, strategy, measure, rerank=module, confirm, decline
+      input: scripted(['4000', '1', '1', '1', '2', 'yes', 'no']),
+      output: (text) => void (output += text),
+      cwd,
+    });
+    expect(output).toContain('skipped smelt.rerank.ts');
+    expect(output).toContain('Done. smelt init wrote 1, skipped 1 — 2 files in all.');
+    expect(output).not.toContain('wrote 2 files');
+    expect(readFileSync(join(cwd, 'smelt.rerank.ts'), 'utf8')).toBe(
+      '// hand-written — do not touch\n',
+    );
+  });
+});
+
 describe('Law 4 reaches the formatter', () => {
   it('never rounds a non-zero rate to zero', () => {
     expect(percent(0)).toBe('0.0%');
@@ -335,6 +426,14 @@ export const MUTATIONS: GuardMutation[] = [
       '  }) as CliIo;',
     replace: '  return { ...io, color: false, colorErr: false };',
     why: 'the obvious spelling of "the same io, unpainted" — which reads every own property on the way past, evaluating the lazy `initInput` getter that exists precisely so fd 0 is not touched, and turns a colour flag into an EAGAIN on a slow pipe',
+  },
+  {
+    kind: 'src',
+    id: 'done-block-counts-the-plan-not-the-run',
+    file: 'cli/init.ts',
+    find: "        applied.push('skipped');",
+    replace: "        applied.push('written');",
+    why: 'the closing block counting a file the person declined as a file it wrote — the most quietly wrong line a wizard can print, because it is the last one they read and the one they believe',
   },
   {
     kind: 'src',

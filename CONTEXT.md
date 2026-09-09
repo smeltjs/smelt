@@ -504,8 +504,11 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   terminal while stdout is a file. It owns **roles** (`heading`, `rule`,
   `hash`, `number`, `path`, `good`, `bad`, `warn`, `dim`, `strong` — what a span _is_,
   never what colour it should be), the **primitives** (`kv`, `table`, `bar`, `glyph`,
-  `percent`, `divider`, `logo`) and nothing else: no verb builds an ANSI sequence
-  inline, so the day the brand changes it changes in one file. Three rules make it safe,
+  `percent`, `divider`, `logo`) and — one composition above them — the **done block**
+  every wizard ends on (`doneBlock`, with `countedFiles` for its verdict: a rule, what
+  the run did counted off what it _applied_, and the commands that follow). Nothing
+  else: no verb builds an ANSI sequence inline, so the day the brand changes it changes
+  in one file. Three rules make it safe,
   and `test/guards/palette.test.ts` holds all three. **Off is the identity** — colour
   off is byte-for-byte the plain rendering, which is what every `--json` envelope, every
   `--yes` receipt, every pipe, `NO_COLOR`, `--no-color` and every guard's assertion
