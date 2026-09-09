@@ -11,7 +11,11 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
-## Unreleased
+## 0.7.0 — 2026-09-09
+
+`@smeltjs/core@0.7.0` · `@smeltjs/mcp@0.6.0` · `@smeltjs/rerank-voyage@0.1.0` (first
+publish — an opt-in package you install yourself; nothing loads it unless your
+`smelt.config.json` says so)
 
 The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
 contract — is unchanged. Everything below is the nine-PR install, rerank, store-prune and

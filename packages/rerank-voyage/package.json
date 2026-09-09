@@ -52,7 +52,7 @@
     "prepublishOnly": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.includes('pnpm')) { console.error('Publish with pnpm publish, not npm publish: npm leaves the workspace:^ range un-substituted.'); process.exit(1); }\""
   },
   "peerDependencies": {
-    "@smeltjs/core": ">=0.6.0 <1"
+    "@smeltjs/core": ">=0.7.0 <1"
   },
   "devDependencies": {
     "@smelt/guard-kit": "workspace:*",
