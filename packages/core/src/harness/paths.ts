@@ -35,13 +35,20 @@ export function smeltBinPath(distDir?: string): string {
   return distDir === undefined ? stableBinPath() : stableBinPath(distDir);
 }
 
-/** Inside the project, a project-relative path travels with the repo; outside, absolute. */
-export function portablePath(cwd: string, absolute: string): string {
-  const rel = relative(cwd, absolute);
+/**
+ * Inside the project, a project-relative path travels with the repo; outside,
+ * absolute. `undefined` is the user scope's root — there is none, because a
+ * machine-level config travels with nothing and its hooks run from whatever project
+ * the agent opened, so every path it names is absolute (`renderRoot` in
+ * `harness/scope.ts` is what hands this `undefined`).
+ */
+export function portablePath(root: string | undefined, absolute: string): string {
+  if (root === undefined) return absolute;
+  const rel = relative(root, absolute);
   return rel.startsWith('..') || isAbsolute(rel) ? absolute : rel.split(sep).join('/');
 }
 
 /** `node "<script>"` — how every harness config invokes something of smelt's. */
-export function nodeCommand(cwd: string, script: string, args = ''): string {
-  return `node "${portablePath(cwd, script)}"${args === '' ? '' : ` ${args}`}`;
+export function nodeCommand(root: string | undefined, script: string, args = ''): string {
+  return `node "${portablePath(root, script)}"${args === '' ? '' : ` ${args}`}`;
 }

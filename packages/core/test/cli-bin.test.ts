@@ -50,6 +50,16 @@ interface Finished {
   readonly stderr: string;
 }
 
+/** The variables the colour decision reads. Stripped so a test can state its own. */
+const COLOR_VARS = ['NO_COLOR', 'FORCE_COLOR', 'COLORTERM', 'TERM'] as const;
+
+/** The developer's environment, minus every variable `colorDepth` looks at. */
+function withoutColorVars(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const copy: Record<string, string | undefined> = { ...env };
+  for (const name of COLOR_VARS) delete copy[name];
+  return copy;
+}
+
 /**
  * Spawn the built bin.
  *
@@ -63,11 +73,18 @@ function runBin(
   args: readonly string[],
   stdin?: { readonly bytes: Uint8Array; readonly delayMs: number; readonly holdOpen?: boolean },
   cwd?: string,
+  env?: Readonly<Record<string, string>>,
 ): Promise<Finished> {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [binPath, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(cwd === undefined ? {} : { cwd }),
+      // The colour variables are stripped from the inherited environment before the
+      // overrides go on: a developer with NO_COLOR (or FORCE_COLOR, or a COLORTERM
+      // their emulator exported) in their shell would otherwise fail the cases that
+      // are *about* those variables — a test that passes on one machine and not the
+      // next is not a test.
+      env: { ...withoutColorVars(process.env), ...env },
     });
     const stdoutChunks: Buffer[] = [];
     let stderr = '';
@@ -220,9 +237,62 @@ describe('the built binary, as a real process', () => {
 
     const stats = await runBin(['stats'], undefined, shellDir);
     expect(stats.code).toBe(EXIT.ok);
-    expect(stats.stdout).toContain('retrieveCalls 1');
-    expect(stats.stdout).toContain('uniqueRetrieved 1');
+    // The report is aligned into columns, so the counters are matched by name and
+    // value rather than by a fixed single space — and a pipe gets no ANSI at all.
+    expect(stats.stdout).toMatch(/^ {2}retrieveCalls {2,}1$/mu);
+    expect(stats.stdout).toMatch(/^ {2}uniqueRetrieved {2,}1$/mu);
+    expect(stats.stdout).not.toContain('\u001b[');
   }, 15_000);
+
+  it('honours NO_COLOR and FORCE_COLOR at the process boundary, and never paints an envelope', async () => {
+    // The switches live in `bin.ts`, which is the one file no in-process test can
+    // reach: what `colorAllowed` decides is only true of the CLI if the binary
+    // actually asks it. Spawned, stdout is a pipe — so plain is the default, and
+    // FORCE_COLOR is the only way a person gets paint out of one.
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-bin-color-'));
+    writeFileSync(
+      join(cwd, 'smelt.config.json'),
+      `${JSON.stringify({
+        smeltConfig: 1,
+        defaultBudgetBytes: 4000,
+        store: { kind: 'directory', path: '.smelt-store' },
+      })}\n`,
+    );
+
+    const piped = await runBin(['stats'], undefined, cwd);
+    expect(piped.code, piped.stderr).toBe(EXIT.ok);
+    expect(piped.stdout).not.toContain('\u001b[');
+
+    // FORCE_COLOR is how a person asks for paint through a pipe — and its level is
+    // what they get: `1` is sixteen colours, and no `38;2` goes to a terminal that
+    // never said it could render one.
+    const forced = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(forced.code, forced.stderr).toBe(EXIT.ok);
+    expect(forced.stdout).toContain('\u001b[');
+    expect(forced.stdout).not.toContain('\u001b[38;2;');
+
+    const truecolor = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '3' });
+    expect(truecolor.stdout).toContain('\u001b[38;2;');
+
+    const dumb = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1', TERM: 'dumb' });
+    // FORCE_COLOR outranks TERM: the person asked, and TERM is the terminal's guess.
+    expect(dumb.stdout).toContain('\u001b[');
+    const plainTerm = await runBin(['stats'], undefined, cwd, { TERM: 'dumb' });
+    expect(plainTerm.stdout).not.toContain('\u001b[');
+
+    const refused = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1', NO_COLOR: '1' });
+    expect(refused.stdout).not.toContain('\u001b[');
+
+    const flagged = await runBin(['stats', '--no-color'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(flagged.stdout).not.toContain('\u001b[');
+
+    // And the envelope, with the terminal shouting for colour: still bytes for a machine.
+    const envelope = await runBin(['stats', '--json'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(envelope.stdout).not.toContain('\u001b[');
+    expect(() => JSON.parse(envelope.stdout) as unknown).not.toThrow();
+
+    rmSync(cwd, { recursive: true, force: true });
+  }, 20_000);
 
   it('runs the init wizard on a pipe that stays open, and still exits', async () => {
     // The process-boundary half of the wizard, and the shape that matters: the pipe is
@@ -271,6 +341,59 @@ describe('the built binary, as a real process', () => {
     expect(code).toBe(EXIT.ok);
     expect(stdout).toContain('Nothing was changed.');
     expect(existsSync(rulesFile)).toBe(true);
+  }, 20_000);
+});
+
+describe('a closed output stream is a refusal, not a crash', () => {
+  /**
+   * The shape a person actually hits: `yes | smelt hooks install | head`. The flood
+   * answers `y` to a question that wants `on` or `off`, so the wizard re-asks
+   * forever; `head` closes the pipe after its two lines, and every prompt after that
+   * is a write into a stream nobody is reading.
+   *
+   * That failure arrives on the stream's own asynchronous `'error'` event, which no
+   * `try`/`catch` around the write can see — so it can only be asserted here, from a
+   * real process with a real pipe. Unheard, it was an unhandled `'error'`: a Node
+   * stack trace and an exit code nobody chose.
+   */
+  it('exits with the usage code and one line, with no stack trace', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-epipe-'));
+    try {
+      const child = spawn(
+        process.execPath,
+        [binPath, 'hooks', 'install', '--harness', 'claude-code'],
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          cwd,
+          // A home of its own: harness detection reads it, and nothing here may look at
+          // the developer's.
+          env: { ...process.env, HOME: cwd },
+        },
+      );
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+      // `head`'s half: stop reading as soon as anything arrives.
+      child.stdout.once('data', () => child.stdout.destroy());
+      // `yes`'s half: enough answers that the wizard is still printing prompts long
+      // after the pipe closed. Writing into a dead stdin is expected once the child
+      // has gone, and is not this test's failure.
+      child.stdin.on('error', () => {});
+      child.stdin.write('y\n'.repeat(200_000));
+
+      const watchdog = setTimeout(() => child.kill('SIGKILL'), HOLD_OPEN_WATCHDOG_MS);
+      const code = await new Promise<number | null>((resolvePromise) =>
+        child.on('close', resolvePromise),
+      );
+      clearTimeout(watchdog);
+
+      expect(code, stderr).toBe(EXIT.usage);
+      expect(stderr).toContain("nothing is reading smelt's output");
+      // A stack trace is the thing this exists to remove: no frames, no "Error:".
+      expect(stderr).not.toContain('    at ');
+      expect(stderr).not.toContain('Unhandled');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   }, 20_000);
 });
 

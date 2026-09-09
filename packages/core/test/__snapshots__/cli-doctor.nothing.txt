@@ -1,0 +1,2 @@
+smelt doctor — binary 9.9.9-test, reading <project>
+Nothing of smelt's is installed here. `smelt setup` would change that.

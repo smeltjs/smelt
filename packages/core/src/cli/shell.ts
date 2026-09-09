@@ -145,6 +145,13 @@ export interface CliIo {
    */
   readonly cwd?: string;
   /**
+   * The home directory: harness detection, and — at `--scope user` — the root every
+   * install path is resolved against. Defaults to the real one; tests pass a temp
+   * directory, which is the only way a machine-wide install is testable without
+   * rewriting the developer's own `~/.claude/settings.json`.
+   */
+  readonly home?: string;
+  /**
    * Interactive input for the wizards — `init`, `hooks`, `agents split`, `setup` —
    * which read answers line by line, which the one-shot `stdin()` above cannot
    * provide. `bin.ts` passes the real stdin stream; tests pass a scripted one.
@@ -153,9 +160,106 @@ export interface CliIo {
    */
   readonly initInput?: AnswerStream;
   /**
-   * True when stdout is an interactive, colour-honouring terminal and `NO_COLOR` is
-   * unset — the lava renderer's only switch. Absent or false, every wizard's bytes
-   * are exactly what they have always been; `bin.ts` computes it once.
+   * True when stdout may carry ANSI: an interactive, colour-honouring terminal (or a
+   * `FORCE_COLOR` somebody set on purpose), with `NO_COLOR` and `--no-color` unset.
+   * Absent or false, every wizard's bytes are exactly what they have always been;
+   * `bin.ts` computes it once, through `lava.ts`'s `colorAllowed`.
    */
   readonly color?: boolean;
+  /**
+   * The same question for **stderr**, answered separately because the two streams go
+   * to different places: `smelt big.log --budget 4000 > small.log` is the documented
+   * way to run smelt, and it leaves the report on a terminal while stdout is a file.
+   * A palette keyed to stdout would print that report — the half a person actually
+   * reads — plain. Absent means {@link CliIo.color}.
+   */
+  readonly colorErr?: boolean;
+  /**
+   * True when a **person** is at both ends: stdout is a terminal and stdin is not a
+   * pipe. The front door's only switch — bare `smelt` prints the logo and the three
+   * commands a newcomer needs, while `cat log | smelt` goes on reading stdin exactly
+   * as it always has. Absent means "not interactive", which is what every test and
+   * every agent invocation is.
+   */
+  readonly tty?: boolean;
+  /**
+   * How much colour the terminal has — `'none' | 16 | 256 | 'truecolor'`, computed once
+   * by `bin.ts` through `lava.ts`'s `colorDepth`. A **capability**, not a switch: the
+   * two streams may differ about whether they are painted ({@link CliIo.color} and
+   * {@link CliIo.colorErr}) and never about what the terminal can render. Absent means
+   * truecolor wherever colour is on at all — which is what a test that says
+   * `color: true` and nothing else is asking for.
+   *
+   * Spelled out rather than imported as `ColorDepth`: this file imports nothing (see
+   * the module doc), and the two spellings are held together by `PaletteSource`, which
+   * every palette builder takes a `CliIo` through.
+   */
+  readonly depth?: 'none' | 16 | 256 | 'truecolor';
+  /**
+   * Whether the terminal's locale said it can render more than ASCII — the glyph set
+   * `✓ ✗ ⚠` and the block-drawing bar fall back to `+ x !` and `#` where it did not.
+   * Absent means yes, which is what smelt has always printed.
+   */
+  readonly unicode?: boolean;
+  /**
+   * The process environment — passed in rather than read off `process`, so a verb that
+   * has to look at one is still a pure function over an injected pair.
+   *
+   * Only ever read by *name*, and only for a name a config file supplied: the `rerank`
+   * opt-in's `apiKeyEnv` (`smelt` loading the stage, `smelt doctor` reporting whether
+   * that variable is set). No smelt verb reads a variable of smelt's own invention —
+   * `SMELT_RERANK_API_KEY` does not exist and will not, because a key smelt picked up
+   * from an environment nobody pointed it at is exactly the "opt-in you never opted
+   * into" ADR-0004 refuses. Absent means an empty environment, never `process.env`.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+/**
+ * The errno codes a write to a stream nobody is reading raises, and `undefined` for
+ * every other failure — which is somebody else's bug and must keep travelling.
+ *
+ * `EPIPE` is the reader closing the pipe (`smelt hooks install | head`). `EINVAL` is
+ * a descriptor that is no longer writable in the mode Node is using — what
+ * `yes | smelt hooks install` produces: the flooded stdin tears the socketpair down
+ * underneath a wizard that is still printing prompts. `ERR_STREAM_DESTROYED` is the
+ * same fact raised by the stream layer rather than by the syscall.
+ *
+ * Both spellings matter, because the two arrive by different routes: a synchronous
+ * `write` throw (handled by {@link refusingSink}) and an asynchronous `'error'` event
+ * on the stream itself, which no `try`/`catch` around the write can see at all — that
+ * one is `bin.ts`'s to listen for, and unheard it is an unhandled `'error'` event,
+ * which is a stack trace and a non-zero exit nobody chose.
+ */
+export function closedSinkCode(error: unknown): string | undefined {
+  const code = (error as { code?: string } | null | undefined)?.code;
+  if (typeof code !== 'string') return undefined;
+  return ['EPIPE', 'EINVAL', 'ERR_STREAM_DESTROYED'].includes(code) ? code : undefined;
+}
+
+/**
+ * An output sink that **refuses** instead of crashing when nobody is on the other end.
+ *
+ * A wizard writes its prompts before it reads an answer, so it is the one verb shape
+ * that writes into a stream a caller may already have closed. Unwrapped, that write
+ * throws past every `catch` in the CLI and the user gets a stack trace and exit 4 —
+ * "unexpected internal error — this is a bug" — for the entirely ordinary act of
+ * piping a wizard into `head`. Wrapped, it is one line and the usage exit, which is
+ * what it always was: a wizard driven by something that is not listening.
+ *
+ * Only the closed-sink codes are answered; see {@link closedSinkCode}.
+ */
+export function refusingSink(
+  write: (text: string) => void,
+  refusal: (why: string) => Error,
+): (text: string) => void {
+  return (text) => {
+    try {
+      write(text);
+    } catch (error) {
+      const code = closedSinkCode(error);
+      if (code === undefined) throw error;
+      throw refusal(code);
+    }
+  };
 }

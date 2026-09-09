@@ -1,6 +1,7 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
 import { MCP_RUN_ARGS } from '../setup/recipe.ts';
+import { tomlMcpManual } from './profile.ts';
 import type { ShimmedHarnessProfile } from './profile.ts';
 
 /**
@@ -33,6 +34,9 @@ const HOOKS: HarnessHookSchema = {
   deny: (reason) => ({ decision: 'deny', reason }),
 };
 
+/** Grok's settings file — `~/.grok/config.toml` for the machine, per xAI's reference. */
+const CONFIG_TOML = '.grok/config.toml';
+
 export const grok: ShimmedHarnessProfile = {
   id: 'grok',
   name: 'Grok CLI',
@@ -42,6 +46,9 @@ export const grok: ShimmedHarnessProfile = {
   detectHome: ['.grok'],
   instructionFile: 'AGENTS.md',
   instructions: 'snippet',
+  // The same TOML dialect as Codex, in Grok's own settings file — the table the step
+  // below writes, spelled as a person would add it.
+  mcp: tomlMcpManual(CONFIG_TOML),
   caveats: ['deny-only hooks: input rewrite is not supported, so rewrite mode falls back to deny'],
   hooks: HOOKS,
   install: [
@@ -55,7 +62,11 @@ export const grok: ShimmedHarnessProfile = {
     },
     {
       kind: 'toml-mcp-registration',
-      file: '.grok/config.toml',
+      file: CONFIG_TOML,
+      // `~/.grok/config.toml` is the documented user-level config (docs.x.ai/build/
+      // settings/reference, verified 2026-09-08). The hooks file's user-level home is
+      // not documented anywhere we could find, so that step stays project-only.
+      user: { file: CONFIG_TOML },
       path: ['mcp_servers', 'smelt'],
       entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },

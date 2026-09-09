@@ -8,7 +8,7 @@ import { assertKeyedById } from '@smelt/guard-kit';
 // Through @guard, so the mutation runner can point these at a deliberately broken copy
 // of `src` and watch them go red. See scripts/mutate.mjs.
 import { cliUsage } from '@guard/cli/args';
-import { planInstall } from '@guard/cli/hooks';
+import { planInstall } from '@guard/harness/plan';
 import { harnessLabel, hasShim, shimAdapterOf } from '@guard/harness/profile';
 import {
   GUARD_ONLY_FILES,

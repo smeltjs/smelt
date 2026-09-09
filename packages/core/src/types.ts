@@ -208,6 +208,11 @@ export interface SmeltResult {
   readonly elisions: readonly AppliedElision[];
   /** Present only when the caller supplied a {@link Measure}. Never invented. */
   readonly measured?: MeasuredSize;
+  /**
+   * Present only when the caller supplied a {@link RerankStage}. Never invented — an
+   * absent field means no reranker ran, which is what every default run does.
+   */
+  readonly rerank?: RerankAttribution;
 }
 
 /**
@@ -286,8 +291,13 @@ export interface RuleLedgerEntry {
 }
 
 /**
- * Local, content-addressed storage for elided bytes. No network, no eviction in v1 —
- * evicting is how "reversible" quietly becomes "reversible for a while".
+ * Local, content-addressed storage for elided bytes. No network, and **nothing on this
+ * interface evicts** — evicting on smelt's own initiative is how "reversible" quietly
+ * becomes "reversible for a while". The one eviction that exists is a method on
+ * {@link DirectoryElisionStore} and not on this interface (`prune`, behind
+ * `smelt store prune`): a user asks for it, the store journals it, and a later
+ * `retrieve` of the evicted hash says so. Putting it here would offer eviction to every
+ * adapter — including one an agent's tool could reach.
  */
 export interface ElisionStore {
   /**
@@ -299,7 +309,16 @@ export interface ElisionStore {
    * reason is stored and never attributed.
    */
   put(content: string, reason?: ElisionReason): string;
-  /** The stored content, or `undefined` if this store never held that hash. */
+  /**
+   * The stored content, or `undefined` if this store never held that hash. Uncounted.
+   *
+   * @throws {EvictedHashError} — {@link DirectoryElisionStore} only — when the bytes
+   *   were deliberately removed by `smelt store prune`. Absence with a receipt is not
+   *   the same fact as absence without one, and answering `undefined` for both would
+   *   let a caller report "never elided" for bytes its own user deleted.
+   * @throws {StoreCorruptionError} — {@link DirectoryElisionStore} only — when the
+   *   stored bytes no longer hash to their own name.
+   */
   peek(hash: string): string | undefined;
   /**
    * The stored content, *counted* as a retrieval. This is what the model's tool calls.
@@ -310,6 +329,13 @@ export interface ElisionStore {
    *   `UnknownHashError` on purpose: "we hold damaged bytes" and "it never existed"
    *   are different answers, and a caller that conflates them will report the wrong
    *   one to its user.
+   * @throws {EvictedHashError} — {@link DirectoryElisionStore} only — when a
+   *   `smelt store prune` deleted the bytes, naming the date it took them. The third
+   *   answer, for the same reason there is a second: "you removed it" is not "it never
+   *   existed", and it is the one a model can act on. **It still counts as a miss** —
+   *   `retrieveCalls` and `misses` move exactly as they would for an unknown hash,
+   *   because the model asked for material back and did not get it, and an eviction
+   *   that stopped counting would let a prune improve the expansion rate.
    *
    * A {@link DirectoryElisionStore} whose journal cannot be written (a read-only
    * store directory, a full disk) still returns the bytes — verified bytes are never
@@ -438,19 +464,91 @@ export interface RerankedCandidate extends RerankCandidate {
 /**
  * Relevance reranking — a *seam*, not a feature.
  *
- * Hosted rerankers are good and smelt will never bundle one, because bundling would
- * break Law 1: the moment smelt ships a default reranker, `smelt()` can make a network
- * call that the caller did not ask for and cannot see. A consumer that wants one
- * implements this interface, wires its own key, and owns the fact that its context now
- * leaves the machine. That decision must be legible in the consumer's own source.
+ * Hosted rerankers are good and smelt still bundles none in its default graph, because
+ * bundling would break Law 1: the moment a reranker ships as a default, `smelt()` can
+ * make a network call the caller did not ask for and cannot see. What ADR-0004 reopened
+ * is narrower than that — an **explicit config opt-in**, never a default: a consumer
+ * writes a `rerank` block into `smelt.config.json`, installs the adapter package
+ * themselves, and reads their own key out of their own environment. With no `rerank`
+ * key, nothing loads and nothing is called, exactly as before.
+ *
+ * A consumer wiring the stage programmatically implements this interface directly and
+ * owns the fact that its context now leaves the machine.
  */
 export interface RerankStage {
   readonly id: string;
-  /** May make network calls — that is the consumer's choice, made in the consumer's code. */
+  /**
+   * The model this stage ranks with, when it names one — carried into the report and
+   * the `--json` receipt beside {@link id}.
+   *
+   * Optional, and required of nothing: a stage that ranks locally has no model to name.
+   * It exists for the same Law 4 reason {@link Measure} requires `id` — a relevance
+   * score without the ranker that produced it named is not a measurement, and
+   * `voyage/rerank-2.5` is a fact where `reranked` is a rumour.
+   */
+  readonly model?: string;
+  /**
+   * Rank `candidates` against `query` and return **the selection to spare** — not a
+   * ranking of everything you were given.
+   *
+   * This is the one thing about the contract a stage author must get right, and the one
+   * mistake here that fails silently. The candidates are the regions a planner has
+   * already decided to remove; every entry you return is a region smelt will therefore
+   * *not* remove. So returning all of them spares all of them: the run emits its input
+   * unchanged, under budget or not, and exits 0 with a report saying every candidate was
+   * kept. Nothing errors, because nothing is wrong — you asked for everything back.
+   *
+   * Apply your own cut-off before returning: a hosted reranker's `top_k`, a
+   * `.slice(0, k)`, a threshold you chose. smelt applies none on top of yours, because a
+   * K smelt invented would silently decide how much of the caller's context survives.
+   *
+   * May make network calls — that is the consumer's choice, made in the consumer's code.
+   * Throwing is fine and expected: smelt wraps whatever comes out in a
+   * {@link RerankStageError}, so a timeout or a 401 is reported as the refusal it is
+   * rather than as a bug in smelt.
+   */
   rerank(
     candidates: readonly RerankCandidate[],
     query: string,
   ): Promise<readonly RerankedCandidate[]>;
+}
+
+/**
+ * What a {@link RerankStage} did to one run, as data — the outbound call made visible.
+ *
+ * Law 2 says every elision is explainable and Law 4 says no number is unmeasured. A
+ * stage that reaches the network on the caller's behalf owes both: **which** ranker ran,
+ * how many regions were at stake, and how many of them it saved from the cut. Every
+ * surface renders this one value — the stderr report, the `--json` envelope (inside
+ * `result`, so the receipt and the report cannot disagree) and the `smelt_file` report
+ * block — so no front door assembles an attribution of its own.
+ *
+ * A run where the stage was never called still produces one of these, and says so in
+ * {@link skipped} rather than by reporting a zero nobody measured: "configured and had
+ * nothing to do" and "configured and never ran" are different facts, and one of them is
+ * a misconfiguration.
+ */
+export interface RerankAttribution {
+  /** {@link RerankStage.id} — `'voyage'`, `'module/./smelt.rerank.ts'`. */
+  readonly adapter: string;
+  /** {@link RerankStage.model}, when the stage names one. Never invented. */
+  readonly model?: string;
+  /**
+   * Regions the planner proposed to elide — the candidate set, counted off the plan.
+   * Always the measured size, including when {@link skipped} says the stage never saw
+   * them: the planner really did propose that many, and reporting `0` because nothing
+   * was sent would be a count nobody took.
+   */
+  readonly candidates: number;
+  /** Of those, how many the stage returned and smelt therefore did **not** cut. */
+  readonly kept: number;
+  /**
+   * Present exactly when the stage was **not** called, naming the precondition it could
+   * not supply: `'no-candidates'` (the planner proposed nothing to cut) or `'no-query'`
+   * (the run named no focus terms, and a ranker with no query would be scoring against
+   * the empty string and calling the result relevance). Absent means the stage ran.
+   */
+  readonly skipped?: 'no-candidates' | 'no-query';
 }
 
 /**

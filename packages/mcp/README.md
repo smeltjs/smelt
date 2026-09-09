@@ -76,15 +76,31 @@ args = ["@smeltjs/mcp"]
 
 ### Grok CLI
 
-Same TOML dialect, in Grok's settings — per xAI's settings reference
-(<https://docs.x.ai/build/settings/reference>, verified 2026-09-08; official CLI =
-`xai-org/grok-build`):
+Same TOML dialect, in Grok's settings — `~/.grok/config.toml`, per xAI's settings
+reference (<https://docs.x.ai/build/settings/reference>, verified 2026-09-08; official
+CLI = `xai-org/grok-build`):
 
 ```toml
 [mcp_servers.smelt]
 command = "npx"
 args = ["@smeltjs/mcp"]
 ```
+
+### opencode
+
+The `mcp` key in `opencode.json` — per opencode's MCP docs
+(<https://opencode.ai/docs/mcp-servers/>, carried in the capability matrix's opencode
+row), project config beside the file or `~/.config/opencode/opencode.json` for the
+machine:
+
+```json
+{
+  "mcp": { "smelt": { "type": "local", "command": ["npx", "@smeltjs/mcp"] } }
+}
+```
+
+Note opencode [#2319](https://github.com/sst/opencode/issues/2319): MCP tools can
+bypass opencode's plugin hooks, so the guard sees built-in tools only.
 
 Any other MCP client: the server is a plain stdio server — `npx @smeltjs/mcp`, run
 from the project directory.

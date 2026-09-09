@@ -1,0 +1,15 @@
+smelt stats  <project>/.smelt/store
+1 blob, 4.5 KB on disk
+
+  expansion  ░░░░░░░░░░░░░░░░░░░░░░░░  0.0%   0 of 1 elisions asked for back
+
+  elisionsStored            1
+  bytesStored           4,559
+  retrieveCalls             0
+  uniqueRetrieved           0
+  misses                    0
+  expansionRate             0
+  allElisionsRetrieved  false
+
+  rule       stored  retrieved  rate
+  head-tail       1          0  0.0%

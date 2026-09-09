@@ -13,6 +13,8 @@ export const aider: HarnessProfile = {
   tier: 'advisory',
   detect: ['.aider.conf.yml'],
   detectHome: ['.aider.conf.yml'],
+  // Project-only at user scope: Aider auto-reads no rules file at all (the caveat
+  // below), so there is no home-level location to write one to.
   instructionFile: 'CONVENTIONS.md',
   instructions: 'snippet',
   caveats: [

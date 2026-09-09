@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 
-import type { ConfiguredStore } from '../cli/config.ts';
+import type { ConfiguredStore } from '../config.ts';
 import { DEFAULT_STRATEGY } from '../plan/planners.ts';
 import type { Strategy } from '../plan/planners.ts';
 import { MemoryElisionStore } from '../store.ts';
@@ -35,7 +35,7 @@ import type { ElisionStore } from '../types.ts';
  * sentence that refuses it, for the caller to throw in its own currency.
  *
  * Nothing here *finds* a `smelt.config.json` either. Config discovery is a CLI
- * concern by design (see `cli/config.ts`); {@link openStore} takes a decision that
+ * concern by design (see `config.ts`); {@link openStore} takes a decision that
  * has already been made and opens it, so no library call's behaviour depends on the
  * directory it was invoked from.
  */
@@ -211,7 +211,7 @@ export function readTree(fullPath: string, shownAs: string, naming: TreeNaming):
 /**
  * Law: **a store decision, opened.**
  *
- * The *decision* — which kind, and where — is `configuredStore()` in `cli/config.ts`,
+ * The *decision* — which kind, and where — is `configuredStore()` in `config.ts`,
  * one reading of one config key. This is the other half: turning that decision into a
  * live {@link ElisionStore}. It was the missing half. The MCP package needed exactly
  * this and could not import it, so it re-derived the decision *and* the construction

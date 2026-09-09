@@ -6,17 +6,15 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CliUsageError } from '../src/errors.ts';
-import { parseConfig } from '../src/cli/config.ts';
-import {
-  planInstall,
-  presetToggles,
-  runHooks,
-  SNIPPET_END_MD,
-  SNIPPET_START_MD,
-} from '../src/cli/hooks.ts';
+import { parseConfig } from '../src/config.ts';
+import { runHooks } from '../src/cli/hooks.ts';
+import { presetToggles } from '../src/cli/installed.ts';
+import { planInstall } from '../src/harness/plan.ts';
+import { SNIPPET_END_MD, SNIPPET_START_MD } from '../src/harness/snippet.ts';
 import { harnessById } from '../src/harness/registry.ts';
 import type { SmeltInvocation } from '../src/hooks/invocation.ts';
 import { runInit } from '../src/cli/init.ts';
+import { EXIT, runCli } from '../src/cli/run.ts';
 
 /**
  * The `smelt hooks` installer, driven entirely in-process — the same pattern as
@@ -344,7 +342,7 @@ describe('the other tiers write what their matrix row supports', () => {
 
   it('opencode: the plugin file carries the matrix caveat and imports the guard core', async () => {
     const { output } = await hooks('install', 'opencode', DEFAULT_ANSWERS);
-    const pluginPath = join(dir, '.opencode/plugin/smelt-guard.js');
+    const pluginPath = join(dir, '.opencode/plugins/smelt-guard.js');
     const plugin = readFileSync(pluginPath, 'utf8');
     expect(plugin).toContain('tool.execute.before');
     expect(plugin).toContain('hooks/guard-core.js');
@@ -355,6 +353,65 @@ describe('the other tiers write what their matrix row supports', () => {
     const { spawnSync } = await import('node:child_process');
     const checked = spawnSync(process.execPath, ['--check', pluginPath], { encoding: 'utf8' });
     expect(checked.status, checked.stderr).toBe(0);
+  });
+
+  /**
+   * OPENCODE RENAMED THE DIRECTORY IT LOADS PLUGINS FROM.
+   *
+   * Today's docs are `.opencode/plugins/` (and `~/.config/opencode/plugins/`); smelt
+   * wrote the singular `.opencode/plugin/` up to 0.6.0. The rule for a rename like that
+   * is one artefact, two names: the new one is the only one written, and the old one is
+   * still *recognised* — otherwise an existing install is a file nobody owns, doctor
+   * stops reporting it, `remove` stops removing it, and the next install writes a second
+   * copy beside it with nothing anywhere saying so.
+   */
+  describe('an install at the former plugin path', () => {
+    /** What 0.6.0 left on disk: ours, in the directory this release no longer writes. */
+    function oldInstall(): string {
+      const old = join(dir, '.opencode/plugin/smelt-guard.js');
+      mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
+      writeFileSync(old, '// smelt:hooks v1 — written by an earlier release\n');
+      return old;
+    }
+
+    it('is read back as the install it is, not as a file nobody owns', async () => {
+      const old = oldInstall();
+      // The toggle reader is the sharpest witness: it decides what a re-run offers to
+      // keep, so a reader blind to the old name would offer to turn the guard off.
+      expect(presetToggles(dir).guard).toBe(true);
+
+      let stdout = '';
+      await runCli(['doctor', '--json'], {
+        stdout: (text) => void (stdout += text),
+        stderr: () => {},
+        stdin: () => '',
+        version: '9.9.9-test',
+        cwd: dir,
+        home,
+      });
+      const receipt = JSON.parse(stdout) as { hookFiles: string[] };
+      expect(receipt.hookFiles).toContain('.opencode/plugin/smelt-guard.js');
+      expect(existsSync(old)).toBe(true); // doctor reads; it never writes (ADR-0003)
+    });
+
+    it('is named by an install, which writes the new path and touches the old one', async () => {
+      const old = oldInstall();
+      const { output } = await hooks('install', 'opencode', DEFAULT_ANSWERS);
+      expect(existsSync(join(dir, '.opencode/plugins/smelt-guard.js'))).toBe(true);
+      // Install writes; it does not delete. The note is how somebody learns the old
+      // copy is there and what takes it out.
+      expect(readFileSync(old, 'utf8')).toContain('written by an earlier release');
+      expect(output).toContain('.opencode/plugin/smelt-guard.js');
+      expect(output).toContain('smelt hooks remove --harness opencode');
+    });
+
+    it('comes out under both names on remove', async () => {
+      const old = oldInstall();
+      await hooks('install', 'opencode', DEFAULT_ANSWERS);
+      await hooks('remove', 'opencode', ['yes', 'yes', 'yes', 'yes', 'yes']);
+      expect(existsSync(join(dir, '.opencode/plugins/smelt-guard.js'))).toBe(false);
+      expect(existsSync(old)).toBe(false);
+    });
   });
 
   it('cline: the hook wrapper is executable and execs the cline shim', async () => {
@@ -377,6 +434,199 @@ describe('the other tiers write what their matrix row supports', () => {
     const rules = readFileSync(join(dir, '.kilocode/rules/smelt.md'), 'utf8');
     expect(rules).toContain('advisory');
     expect(rules).toContain('kilocode#5827');
+  });
+});
+
+/**
+ * The non-interactive interface. It is the same plan and the same apply loop the
+ * wizard drives — what differs is who consents (`Consent` in cli/hooks.ts) — so these
+ * cases are about the parts that are genuinely its own: the toggles, the refusals,
+ * and the one file shape a policy run may not write.
+ */
+describe('smelt hooks install --yes', () => {
+  async function yes(
+    action: 'install' | 'remove',
+    harness: string | undefined,
+    toggles: Record<string, boolean> = {},
+  ): Promise<WizardRun> {
+    let output = '';
+    const code = await runHooks(action, harness, {
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+      yes: true,
+      toggles,
+    });
+    return { code, output };
+  }
+
+  it("applies with no stream at all, at the wizard's own defaults", async () => {
+    const { code, output } = await yes('install', 'claude-code');
+    expect(code).toBe(0);
+    expect(output).toContain('toggles: guard on, stats on, map off, lint off');
+    const events = readJson('.claude/settings.json')['hooks'] as Record<string, unknown[]>;
+    expect(Object.keys(events).toSorted()).toEqual(['PreToolUse', 'Stop']);
+    expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toContain(SNIPPET_START_MD);
+  });
+
+  it('a toggle flag wins over the default, and a re-run keeps what is installed', async () => {
+    await yes('install', 'claude-code', { mapOnStart: true });
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toContain('map . --budget');
+
+    // No --map on the second run: "absent" means as installed, not off.
+    const { output } = await yes('install', 'claude-code');
+    expect(output).toContain('map on');
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toContain('map . --budget');
+  });
+
+  it('refuses a file it would have to write whole, and says which', async () => {
+    mkdirSync(join(dir, '.opencode/plugins'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugins/smelt-guard.js');
+    writeFileSync(plugin, 'export const theirs = true;\n');
+
+    const { code, output } = await yes('install', 'opencode');
+    expect(code).toBe(0);
+    expect(readFileSync(plugin, 'utf8')).toBe('export const theirs = true;\n');
+    expect(output).toContain('smelt-guard.js');
+    expect(output).toContain('written whole');
+    // The merged file beside it was still installed: one refusal is not a halt.
+    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toContain(SNIPPET_START_MD);
+  });
+
+  it('the wizard can still overwrite a whole-owned file that is not ours, on a yes', async () => {
+    // The one case a policy run refuses and a human can allow — and the only one where
+    // bytes that were not smelt's are gone, which is why it is a literal `yes` and why
+    // it is spelled `overwritten` rather than `merged` or `repaired`.
+    mkdirSync(join(dir, '.opencode/plugins'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugins/smelt-guard.js');
+    writeFileSync(plugin, 'export const theirs = true;\n');
+
+    let output = '';
+    await runHooks('install', 'opencode', {
+      // Six steps, the confirm, then a yes for each existing file the plan names.
+      input: Readable.from([`${['', '', '', '', '', '', 'yes', 'yes', 'yes'].join('\n')}\n`]),
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+    });
+    expect(output).toContain('smelt-guard.js exists — overwrite it? (yes/no)');
+    expect(readFileSync(plugin, 'utf8')).toContain('tool.execute.before');
+  });
+
+  it('remove --yes takes it back out with no confirm and no per-file question', async () => {
+    await yes('install', 'claude-code');
+    const { code, output } = await yes('remove', 'claude-code');
+    expect(code).toBe(0);
+    expect(output).not.toContain('confirm (yes / no)');
+    expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(dir, '.claude/settings.json'))).toBe(false);
+  });
+
+  it('with no --harness, installs every detected harness', async () => {
+    // Detection reads the project *and* the home directory, and `--yes` takes what it
+    // finds — the same set the wizard would have preselected. A `--yes` that quietly
+    // installed one of two detected harnesses would be a half-install with a clean
+    // exit, which is this repository's own definition of a bug.
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    mkdirSync(join(home, '.codex'), { recursive: true });
+
+    const { code, output } = await yes('install', undefined);
+    expect(code).toBe(0);
+    expect(output).toContain('claude-code');
+    expect(output).toContain('codex');
+    expect(existsSync(join(dir, '.claude/settings.json'))).toBe(true);
+    expect(existsSync(join(dir, '.codex/hooks.json'))).toBe(true);
+    // And nothing it did not detect.
+    expect(existsSync(join(dir, '.gemini/settings.json'))).toBe(false);
+  });
+
+  it('names --harness when nothing is detected and nothing was named', async () => {
+    await expect(yes('install', undefined)).rejects.toThrow(CliUsageError);
+    await expect(yes('install', undefined)).rejects.toThrow(/--harness/);
+  });
+});
+
+/**
+ * Without `--yes`, the same four flags pre-answer the wizard's questions: they set
+ * what Enter accepts, rather than being a second, silent way to install.
+ */
+describe('a toggle takes on or off, and says so when it does not get one', () => {
+  async function refusal(argv: readonly string[]): Promise<{ code: number; stderr: string }> {
+    let stderr = '';
+    const code = await runCli(argv, {
+      stdout: () => {},
+      stderr: (text) => {
+        stderr += text;
+      },
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    return { code, stderr };
+  }
+
+  it.each([
+    ['hooks', ['hooks', 'install', '--yes', '--harness', 'claude-code']],
+    ['setup', ['setup', '--yes', '--json', '--harness', 'claude-code']],
+  ])('%s names the flag and both values', async (_verb, base) => {
+    for (const flag of ['guard', 'stats', 'map', 'lint']) {
+      const { code, stderr } = await refusal([...base, `--${flag}`, 'yes']);
+      expect(code, flag).toBe(EXIT.usage);
+      expect(stderr, flag).toContain(`--${flag}`);
+      expect(stderr, flag).toContain('on or off');
+      expect(stderr, flag).toContain('"yes"');
+    }
+  });
+
+  it('the two verbs mean the same thing by the same word', async () => {
+    // Not a tautology: the flags are parsed twice, once per verb, and `on` meaning
+    // one thing to setup and another to hooks is exactly what one owner prevents.
+    const code = await runCli(['setup', '--yes', '--harness', 'claude-code', '--map', 'on'], {
+      stdout: () => {},
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    expect(code).toBe(EXIT.ok);
+    const fromSetup = JSON.stringify(readJson('.claude/settings.json')['hooks']);
+    // Only the settings file goes: the config setup wrote stays, so the two runs
+    // plan against the same budget and the only variable left is the flag.
+    rmSync(join(dir, '.claude'), { recursive: true, force: true });
+    await runHooks('install', 'claude-code', {
+      output: () => {},
+      cwd: dir,
+      home,
+      yes: true,
+      toggles: { mapOnStart: true },
+    });
+    expect(JSON.stringify(readJson('.claude/settings.json')['hooks'])).toBe(fromSetup);
+  });
+});
+
+describe('the toggle flags pre-answer the wizard', () => {
+  it('Enter through every step takes the flag values, not the built-in defaults', async () => {
+    let output = '';
+    await runHooks('install', 'claude-code', {
+      input: Readable.from([`${['', '', '', '', '', '', 'yes'].join('\n')}\n`]),
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+      toggles: { statsOnStop: false, lintOnStart: true },
+    });
+    expect(output).toContain('stats on Stop? (on/off) [off]');
+    expect(output).toContain('instruction-file lint on SessionStart? (on/off) [on]');
+    const events = readJson('.claude/settings.json')['hooks'] as Record<string, unknown[]>;
+    expect(Object.keys(events).toSorted()).toEqual(['PreToolUse', 'SessionStart']);
+    expect(JSON.stringify(events['SessionStart'])).toContain('agents lint .');
   });
 });
 

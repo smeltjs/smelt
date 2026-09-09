@@ -1,88 +1,49 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
-import {
-  guardCoreScriptPath,
-  nodeCommand,
-  portablePath,
-  shimScriptPath,
-  smeltBinPath,
-} from '../harness/paths.ts';
-import { hasShim, TIER_HONESTY } from '../harness/profile.ts';
-import type {
-  HarnessInstallContext,
-  HarnessJsonHooks,
-  HarnessProfile,
-} from '../harness/profile.ts';
-import {
-  GUARD_EVENTS,
-  GUARD_ONLY_FILES,
-  HARNESSES,
-  harnessById,
-  harnessNames,
-  JSON_HOOK_FILES,
-  LIFECYCLE_EVENTS,
-  lifecycleHarnesses,
-  MANAGED_EVENTS,
-} from '../harness/registry.ts';
-import {
-  instructionSnippet,
-  OURS_TOKEN,
-  SNIPPET_END_MD,
-  SNIPPET_START_MD,
-} from '../harness/snippet.ts';
-import { DEFAULT_SUGGESTION_BUDGET_BYTES, DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
-import type { EnforcementMode } from '../hooks/guard-core.ts';
-import { pathStability, smeltInvocation } from '../hooks/invocation.ts';
-import type { SmeltInvocation } from '../hooks/invocation.ts';
-import {
-  editJsonProperty,
-  editTopLevelProperty,
-  jsonStyle,
-  stripMarkerBlock,
-  upsertMarkerBlock,
-} from '../text/json-edit.ts';
-import { editTomlTable } from '../text/toml-edit.ts';
-
-import { SETUP_RECIPE } from '../setup/recipe.ts';
-import {
-  confirmLoop,
-  confirmYesNo,
-  listPlannedFiles,
-  walkSteps,
-  wizardAsk,
-  writePlannedFile,
-} from './wizard.ts';
+import { detectedHarnesses, planInstall, planRemove } from '../harness/plan.ts';
+import type { HooksChoices } from '../harness/plan.ts';
+import { TIER_HONESTY } from '../harness/profile.ts';
+import type { HarnessProfile } from '../harness/profile.ts';
+import { HARNESSES, harnessById, harnessNames, lifecycleHarnesses } from '../harness/registry.ts';
+import { resolveScope, scopeRoot } from '../harness/scope.ts';
+import type { InstallScope } from '../harness/scope.ts';
+import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
+import { presetToggles, withToggleFlags } from './installed.ts';
+import type { PresetToggles, ToggleFlags } from './installed.ts';
+import { countedFiles, doneBlock, palette } from './lava.ts';
+import type { Palette } from './lava.ts';
+import { applyPlanFiles } from './merge-policy.ts';
+import type { AppliedFile } from './merge-policy.ts';
+import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
 import type { Ask } from './wizard.ts';
 import { CLI_NAME } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
-import {
-  CONFIG_FILE_NAME,
-  CONFIG_VERSION,
-  findConfigFile,
-  parseConfig,
-  renderConfig,
-} from './config.ts';
-import type { SmeltConfig, SmeltConfigHooks } from './config.ts';
+import { CONFIG_FILE_NAME } from '../config.ts';
 
 /**
- * `smelt hooks install` / `smelt hooks remove` — the multi-harness guard preset.
+ * `smelt hooks install` / `smelt hooks remove` — the wizard over the guard preset.
  *
- * The design: one zero-dependency guard core
+ * The design behind the verb: one zero-dependency guard core
  * (`src/hooks/guard-core.ts`), thin per-harness shims mapping each harness's native
- * hook schema onto it, and this installer, which writes the harness config that wires
- * a shim in — plus an instruction-file snippet as belt and braces, because the
- * snippet is also what teaches the model to run `smelt retrieve` after a deny.
+ * hook schema onto it, and an installer that writes the harness config wiring a shim
+ * in — plus an instruction-file snippet as belt and braces, because the snippet is
+ * also what teaches the model to run `smelt retrieve` after a deny.
  *
- * Every per-harness fact lives in that harness's {@link HarnessProfile}
- * (`src/harness/<id>.ts`), including what to write and how to take it back out. This
- * module owns only what is the *same* for every harness: the hooks merge (which entries
- * are ours, what a re-run replaces), the wizard, and the two plans below — folds over
- * `profile.install`, with no case list of its own. The byte-faithful editing itself —
- * one top-level JSON property, one delimited text block — is `src/text/json-edit.ts`,
- * which knows nothing about harnesses.
+ * What is left in this module is the **wizard**, and only the wizard: the steps, the
+ * confirm, the prose. The three things it used to hold as well now sit where their
+ * other caller can reach them without importing a wizard —
+ *
+ *  - `harness/plan.ts` — what a run would write, and what `remove` takes back out.
+ *  - `cli/merge-policy.ts` — whether an existing file may be written, and the one
+ *    apply loop both verbs drive.
+ *  - `cli/installed.ts` — the toggles a re-run reads back off what is installed.
+ *
+ * `smelt setup` imports those three and nothing from here, which is the seam
+ * `test/guards/module-seams.test.ts` pins: the two verbs share a plan and a policy,
+ * not a wizard.
  *
  * Harnesses come in three honesty tiers (docs/research/2026-09-02-harness-capability-matrix.md),
  * and which harness sits at which is `HarnessProfile.tier` — read through
@@ -99,7 +60,8 @@ import type { SmeltConfig, SmeltConfigHooks } from './config.ts';
  *
  * The wizard discipline is `smelt init`'s, verbatim: every step accepts `back`,
  * nothing is written until a final confirm that lists every file, and an existing
- * file is never overwritten without an explicit per-file `yes` — guarded by
+ * file is never overwritten without an explicit per-file `yes` — the rule itself is
+ * `cli/merge-policy.ts`'s `wizard` consent, guarded by
  * `test/guards/hooks-preset.test.ts`, with mutation `hooks-install-overwrite-without-consent`
  * proving the guard goes red.
  */
@@ -108,660 +70,47 @@ import type { SmeltConfig, SmeltConfigHooks } from './config.ts';
 export interface HooksIo {
   /**
    * Scripted answers in, one line at a time. Structural on purpose; see
-   * {@link AnswerStream}.
+   * {@link AnswerStream}. Required only for the interactive path — `--yes` never asks.
    */
-  readonly input: AnswerStream;
+  readonly input?: AnswerStream;
   readonly output: (text: string) => void;
   /** Project directory: detection, config discovery, and every write are relative to it. */
   readonly cwd: string;
-  /** Home directory for detection only. Tests point it at a temp dir; nothing writes here. */
+  /**
+   * Home directory: harness detection, and — at user scope — where every file goes.
+   * Tests point it at a temp dir, which is the only way a user-scope install is
+   * testable without writing into the developer's own home.
+   */
   readonly home?: string;
+  /**
+   * This project or this machine. Absent means detect: `user` when {@link cwd} *is*
+   * {@link home}, `project` otherwise. The wizard states what it found and, where it
+   * found `user`, offers to flip it.
+   */
+  readonly scope?: InstallScope;
   /**
    * The release running the install — stamped into the instruction block so
    * `smelt doctor` can tell what wrote it. Absent (legacy callers) writes no stamp.
    */
   readonly version?: string;
-}
-
-export { instructionSnippet, SNIPPET_END_MD, SNIPPET_START_MD };
-
-/** A harness whose config directory exists in the project or the home directory. */
-export function detectedHarnesses(cwd: string, home: string): readonly HarnessProfile[] {
-  return HARNESSES.filter(
-    (profile) =>
-      profile.detect.some((path) => existsSync(join(cwd, path))) ||
-      profile.detectHome.some((path) => existsSync(join(home, path))),
-  );
-}
-
-/* ------------------------------------------------------------------------------------
- * Generated content
- * ---------------------------------------------------------------------------------- */
-
-/** Claude-style hook entry: one command under an optional matcher. */
-function commandEntry(matcher: string | undefined, command: string): unknown {
-  return {
-    ...(matcher === undefined ? {} : { matcher }),
-    hooks: [{ type: 'command', command }],
-  };
-}
-
-/**
- * The hook command a harness's entries run: its own shim script, through node.
- *
- * @throws {Error} when a profile declares a JSON hook file but ships no shim — a
- *   registry bug, pinned by `test/guards/harness-registry.test.ts`, not a user error.
- */
-function shimCommand(profile: HarnessProfile, cwd: string, distDir?: string): string {
-  /* v8 ignore next 5 -- unreachable: pinned by the harness-registry guard */
-  if (!hasShim(profile)) {
-    throw new Error(
-      `smelt: harness "${profile.id}" wires a hook command but ships no shim script.`,
-    );
-  }
-  return nodeCommand(cwd, shimScriptPath(profile, distDir));
-}
-
-/**
- * A lifecycle hook's command, in whichever spelling this machine can still run after
- * an upgrade: the bare `smelt` where it is on PATH, `node "<script>"` otherwise.
- *
- * The guard hook is deliberately **not** built this way — a shim is a script, not a
- * bin, and `smelt` has no verb that runs one — which is why only the three lifecycle
- * commands go through here.
- */
-function smeltLifecycleCommand(cwd: string, args: string, invocation: SmeltInvocation): string {
-  return invocation.kind === 'path'
-    ? `${invocation.command} ${args}`
-    : nodeCommand(cwd, invocation.script ?? smeltBinPath(), args);
-}
-
-/**
- * One harness's hook entries: the guard under each matcher its schema spells, plus
- * the session-lifecycle hooks for the harnesses whose schema carries them. Every
- * toggle the wizard offers is a key that is present or absent here — an absent key is
- * how a re-run turns a toggle *off*, because the merge deletes what it no longer sees.
- *
- * The two `SessionStart` toggles — the opening map and the instruction-file lint —
- * are **concatenated into one array**, not spread as two objects. Spreading would put
- * the same computed key twice in one literal, and the second would silently replace
- * the first: turning the lint on would turn the map off, with no error anywhere. It is
- * the shape of bug this file exists to refuse, one layer up from the config it writes.
- */
-function jsonHookEvents(
-  step: HarnessJsonHooks,
-  ctx: HarnessInstallContext,
-  command: string,
-  invocation: SmeltInvocation,
-): Record<string, readonly unknown[]> {
-  // The trailing shell comment tags the entry as this installer's (see isOursEntry):
-  // a bare `cli/bin.js` substring would also match some other npm CLI's built binary,
-  // and a `smelt <verb>` spelling carries no path at all to recognise.
-  const lifecycle = (args: string): string =>
-    `${smeltLifecycleCommand(ctx.cwd, args, invocation)} 2>/dev/null || true # ${OURS_TOKEN}`;
-  const stats = lifecycle('stats');
-  const map = lifecycle(
-    `${MAP_ON_START_ARGS} --budget ${String(ctx.budgetBytes)} --cache .smelt/tags`,
-  );
-  const lint = lifecycle(AGENTS_LINT_ARGS);
-
-  const sessionStart = [
-    ...(ctx.mapOnStart ? [commandEntry(SESSION_START_MATCHER, map)] : []),
-    ...(ctx.lintOnStart ? [commandEntry(SESSION_START_MATCHER, lint)] : []),
-  ];
-
-  return {
-    ...(ctx.guard
-      ? {
-          [step.event]: step.matchers.map((matcher) =>
-            step.entry === 'bare-command' ? { command } : commandEntry(matcher, command),
-          ),
-        }
-      : {}),
-    ...(step.lifecycle && ctx.statsOnStop
-      ? { [LIFECYCLE_EVENTS.stats]: [commandEntry(undefined, stats)] }
-      : {}),
-    ...(step.lifecycle && sessionStart.length > 0 ? { [LIFECYCLE_EVENTS.map]: sessionStart } : {}),
-  };
-}
-
-/** The matcher both `SessionStart` entries fire under — a session opening, however. */
-const SESSION_START_MATCHER = 'startup|resume|clear|compact';
-
-/**
- * The two `SessionStart` commands' distinguishing arguments, and **the substrings a
- * re-run recognises each entry by**. Spelled once so the writer and the reader cannot
- * drift: `presetToggles` tells the two entries apart by the command each one runs, and
- * a wizard that wrote `agents lint .` while its reader looked for `agents lint` would
- * read every re-run's lint toggle back as off and quietly delete it.
- */
-const MAP_ON_START_ARGS = 'map .';
-export const AGENTS_LINT_ARGS = 'agents lint .';
-
-/**
- * True for a hook entry this installer wrote. Matched on the shim script paths and the
- * `smelt:hooks` token the stats/map commands carry — never on a substring as generic
- * as `cli/bin.js`, which another npm CLI's built binary could share: remove and
- * re-install may only ever touch entries that are provably smelt's.
- */
-function isOursEntry(entry: unknown): boolean {
-  const text = JSON.stringify(entry) ?? '';
-  return text.includes('hooks/shims/') || text.includes(OURS_TOKEN);
-}
-
-/**
- * Merge our hook entries into a JSON settings file, preserving everything foreign
- * **byte-faithfully**: the merged `hooks` value is spliced into the original text, so
- * unknown top-level keys, string escapes, number spellings, indentation and key order
- * outside the `hooks` property ride through verbatim (an installer
- * that reformats somebody's settings file has edited what it was never asked to).
- * Inside `hooks`, unmanaged events and other people's entries under managed events
- * are preserved; our previous entries are replaced (that is what makes a re-run edit
- * toggles), and events left with no entries disappear. A semantic no-op returns the
- * input text unchanged. Returns `undefined` when the existing file is not a JSON
- * object — the caller skips the file rather than clobbering something it cannot
- * understand.
- */
-export function mergeJsonHooks(
-  existingText: string | undefined,
-  events: Record<string, readonly unknown[]>,
-  shape: { readonly version?: number } = {},
-): string | undefined {
-  let root: Record<string, unknown> = {};
-  if (existingText !== undefined) {
-    try {
-      const parsed: unknown = JSON.parse(existingText);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
-      root = parsed as Record<string, unknown>;
-    } catch {
-      return undefined;
-    }
-  }
-  const hooksValue = root['hooks'];
-  const existingHooks =
-    typeof hooksValue === 'object' && hooksValue !== null && !Array.isArray(hooksValue)
-      ? (hooksValue as Record<string, unknown>)
-      : undefined;
-  const hooks = { ...existingHooks };
-
-  for (const event of MANAGED_EVENTS) {
-    const existing = Array.isArray(hooks[event]) ? (hooks[event] as unknown[]) : [];
-    const foreign = existing.filter((entry) => !isOursEntry(entry));
-    const ours = events[event] ?? [];
-    const merged = [...foreign, ...ours];
-    if (merged.length > 0) hooks[event] = merged;
-    else delete hooks[event];
-  }
-
-  const mergedHooks = Object.keys(hooks).length > 0 ? hooks : undefined;
-
-  // A brand-new file: nothing to preserve, render fresh two-space JSON.
-  if (existingText === undefined) {
-    const fresh: Record<string, unknown> = {};
-    if (mergedHooks !== undefined) fresh['hooks'] = mergedHooks;
-    if (shape.version !== undefined) fresh['version'] = shape.version;
-    return `${JSON.stringify(fresh, null, 2)}\n`;
-  }
-
-  const hooksChanged =
-    JSON.stringify(existingHooks ?? null) !== JSON.stringify(mergedHooks ?? null);
-  const needsVersion = shape.version !== undefined && root['version'] === undefined;
-  if (!hooksChanged && !needsVersion) return existingText;
-
-  // The style is read once, off the original: a second edit must match the first.
-  const style = jsonStyle(existingText);
-  let text: string | undefined = existingText;
-
-  if (hooksChanged) {
-    text = editTopLevelProperty(text, 'hooks', mergedHooks, style);
-    /* v8 ignore next -- unreachable: JSON.parse accepted the same text above */
-    if (text === undefined) return undefined;
-  }
-  if (needsVersion) {
-    text = editTopLevelProperty(text, 'version', shape.version, style);
-    /* v8 ignore next -- unreachable: every splice above keeps the text valid JSON */
-    if (text === undefined) return undefined;
-  }
-  return text;
-}
-
-/* ------------------------------------------------------------------------------------
- * Planning
- * ---------------------------------------------------------------------------------- */
-
-interface PlannedFile {
-  /** Display path, relative to the project. */
-  readonly name: string;
-  readonly path: string;
-  readonly content: string;
-  readonly exists: boolean;
-  readonly unchanged: boolean;
-  /** chmod after writing (the cline hook must be executable). */
-  readonly mode?: number;
-}
-
-interface SkippedFile {
-  readonly name: string;
-  readonly why: string;
-}
-
-interface PlannedRemoval {
-  readonly name: string;
-  readonly path: string;
-  /** `'delete'` removes the file; `'modify'` writes `content` (ours stripped out). */
-  readonly action: 'delete' | 'modify';
-  readonly content?: string;
-}
-
-export interface HooksChoices {
-  harnesses: HarnessProfile[];
-  /** The release writing these bytes — stamped into the snippet for `smelt doctor`. */
-  writtenBy?: string;
-  guard: boolean;
-  statsOnStop: boolean;
-  mapOnStart: boolean;
-  lintOnStart: boolean;
-  enforcement: EnforcementMode;
-  thresholdBytes: number;
   /**
-   * How smelt is re-invoked on this machine. Defaults to reading the machine
-   * (`smeltInvocation()`); a caller passes one to plan against something else, which
-   * is what lets a test see both spellings of a lifecycle hook without a global PATH.
+   * Answer every question from the flags and the installed state, and apply without
+   * a confirm — the non-interactive interface `--yes` is. The apply loop is the same
+   * one the wizard drives; only who consents differs (`Consent`, `cli/merge-policy.ts`).
    */
-  invocation?: SmeltInvocation;
+  readonly yes?: boolean;
   /**
-   * The package `dist` the shim and guard-core paths are named under. Defaults to
-   * this install's own; a caller passes one to plan for a layout that is not the
-   * running one — which is how the stability reporting below is exercised without a
-   * Homebrew machine.
+   * The four toggles as flags answered them. An absent one is *not* `off`: it means
+   * leave it as the install found it, which is what {@link presetToggles} reads.
    */
-  distDir?: string;
-}
-
-interface InstallPlan {
-  readonly files: readonly PlannedFile[];
-  readonly skipped: readonly SkippedFile[];
-  readonly notes: readonly string[];
-}
-
-function planFile(cwd: string, name: string, content: string, mode?: number): PlannedFile {
-  const path = join(cwd, name);
-  const exists = existsSync(path);
-  const unchanged = exists && readFileSync(path, 'utf8') === content;
-  return { name, path, content, exists, unchanged, ...(mode === undefined ? {} : { mode }) };
-}
-
-function readIfExists(path: string): string | undefined {
-  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
-}
-
-/**
- * Every file `install` would write, computed against the current disk state — pure
- * planning, nothing written. A fold over each chosen profile's `install` list and its
- * instruction layer; all per-harness knowledge is in the profiles. Shared instruction
- * files (several harnesses read AGENTS.md) are planned once.
- *
- * @throws {CliUsageError} when an existing `smelt.config.json` is malformed — the
- *   same refusal every other subcommand makes; an installer that guessed around a
- *   broken config would write settings the guard then ignores.
- */
-export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
-  const files = new Map<string, PlannedFile>();
-  const skipped: SkippedFile[] = [];
-  const notes: string[] = [];
-
-  // Every path this plan writes down has to still be there tomorrow. The verdict is
-  // taken per **script actually named** — the guard shim, the guard core the opencode
-  // plugin imports, and the CLI binary the lifecycle hooks run — never from the
-  // invocation value: that one is stable whenever `smelt` is on PATH, and an earlier
-  // cut of this reported the lifecycle hooks fine while writing the guard hook, the
-  // security-relevant one, as a bare Cellar path with nothing said.
-  const invocation = choices.invocation ?? smeltInvocation();
-  const written: string[] = [];
-  if (invocation.script !== undefined) written.push(invocation.script);
-  for (const profile of choices.harnesses) {
-    if (hasShim(profile)) written.push(shimScriptPath(profile, choices.distDir));
-    else written.push(guardCoreScriptPath(choices.distDir));
-  }
-  const said = new Set<string>();
-  for (const script of written) {
-    const stability = pathStability(script);
-    if (stability.stable || said.has(stability.why)) continue;
-    said.add(stability.why);
-    notes.push(
-      `hook command uses an unstable path (${stability.why}) — re-run setup after upgrading`,
-    );
-  }
-  if (invocation.caveat !== undefined) notes.push(invocation.caveat);
-
+  readonly toggles?: ToggleFlags;
   /**
-   * A step's base text: the previous step's planned output for this same path when
-   * one exists, disk otherwise. Codex's `.codex/config.toml` carries two independent
-   * edits — the `[features]` marker block and the `mcp_servers.smelt` table — and
-   * without this, the second step to touch a shared file would read stale disk bytes
-   * and its `files.set` would silently discard the first step's edit.
+   * Whether the terminal's locale said it can render more than ASCII. The glyph set
+   * (`✓ ✗ ⚠`), the closing block's rule and the banner's bar fall back to `+ x !` and
+   * `-` where it did not. Absent means yes, which is what this wizard has always
+   * printed. Computed once by `bin.ts`; see `lava.ts`'s `supportsUnicode`.
    */
-  const currentContent = (path: string): string | undefined =>
-    files.get(path)?.content ?? readIfExists(path);
-
-  // -- smelt.config.json: the guard's runtime settings live here, not in any harness
-  // file, so every shim reads one source of truth.
-  const configPath = findConfigFile(cwd) ?? join(cwd, CONFIG_FILE_NAME);
-  const existingConfig =
-    readIfExists(configPath) === undefined
-      ? undefined
-      : parseConfig(readFileSync(configPath, 'utf8'), configPath);
-  const hooksBlock: SmeltConfigHooks = {
-    thresholdBytes: choices.thresholdBytes,
-    enforcement: choices.enforcement,
-  };
-  const budgetBytes = existingConfig?.defaultBudgetBytes ?? DEFAULT_SUGGESTION_BUDGET_BYTES;
-  files.set(configPath, {
-    name: portablePath(cwd, configPath),
-    path: configPath,
-    content: renderConfigWithHooks(existingConfig, hooksBlock),
-    exists: existsSync(configPath),
-    unchanged: readIfExists(configPath) === renderConfigWithHooks(existingConfig, hooksBlock),
-  });
-
-  const ctx: HarnessInstallContext = {
-    cwd,
-    ...(choices.writtenBy === undefined ? {} : { writtenBy: choices.writtenBy }),
-    guard: choices.guard,
-    statsOnStop: choices.statsOnStop,
-    mapOnStart: choices.mapOnStart,
-    lintOnStart: choices.lintOnStart,
-    thresholdBytes: choices.thresholdBytes,
-    budgetBytes,
-    ...(choices.distDir === undefined ? {} : { distDir: choices.distDir }),
-  };
-  const snippet = instructionSnippet(choices.thresholdBytes, budgetBytes, choices.writtenBy);
-
-  const planJsonHooks = (
-    name: string,
-    events: Record<string, readonly unknown[]>,
-    shape: { readonly version?: number } = {},
-  ): void => {
-    const path = join(cwd, name);
-    // Nothing to install and nothing to strip: don't create an empty hooks file.
-    if (Object.keys(events).length === 0 && !existsSync(path)) return;
-    const merged = mergeJsonHooks(readIfExists(path), events, shape);
-    if (merged === undefined) {
-      skipped.push({
-        name,
-        why: 'exists but is not a JSON object — fix or remove it, then re-run',
-      });
-      return;
-    }
-    files.set(path, planFile(cwd, name, merged));
-  };
-
-  const planBlockFile = (
-    name: string,
-    block: string,
-    start: string,
-    end: string,
-    skipWhen?: { readonly contains: string; readonly why: string },
-  ): void => {
-    const path = join(cwd, name);
-    const existing = currentContent(path);
-    // A file that already carries its owner's version of what this block does is
-    // theirs to edit, not ours: say so, and touch nothing.
-    if (
-      skipWhen !== undefined &&
-      existing !== undefined &&
-      !existing.includes(start) &&
-      existing.includes(skipWhen.contains)
-    ) {
-      skipped.push({ name, why: skipWhen.why });
-      return;
-    }
-    files.set(path, planFile(cwd, name, upsertMarkerBlock(existing, block, start, end)));
-  };
-
-  for (const profile of choices.harnesses) {
-    for (const step of profile.install) {
-      switch (step.kind) {
-        case 'json-hooks':
-          planJsonHooks(
-            step.file,
-            jsonHookEvents(step, ctx, shimCommand(profile, cwd, choices.distDir), invocation),
-            step.shape ?? {},
-          );
-          break;
-        case 'marker-block':
-          planBlockFile(step.file, step.block(ctx), step.start, step.end, step.skipWhen);
-          break;
-        case 'own-file':
-          if (step.guardOnly && !ctx.guard) break;
-          files.set(join(cwd, step.file), planFile(cwd, step.file, step.content(ctx), step.mode));
-          break;
-        case 'mcp-registration': {
-          // Byte-faithful beside whatever servers the user already registered —
-          // sibling entries, key order and indentation all ride through.
-          const existing = readIfExists(join(cwd, step.file));
-          const merged = editJsonProperty(
-            existing ?? '{}',
-            step.path,
-            step.entry(ctx),
-            existing === undefined ? undefined : jsonStyle(existing),
-          );
-          if (merged === undefined) {
-            skipped.push({
-              name: step.file,
-              why: 'exists but is not a JSON object — fix or remove it, then re-run',
-            });
-            break;
-          }
-          files.set(join(cwd, step.file), planFile(cwd, step.file, merged));
-          break;
-        }
-        case 'toml-mcp-registration': {
-          // The TOML sibling of 'mcp-registration': table-form or dotted-form, beside
-          // whatever the user already has — via currentContent, so a profile whose
-          // marker-block step already wrote this file (Codex's [features] block) is
-          // edited on top of that plan rather than overwritten by a fresh disk read.
-          const path = join(cwd, step.file);
-          const existing = currentContent(path);
-          const merged = editTomlTable(existing ?? '', step.path, step.entry(ctx));
-          if (merged === undefined) {
-            skipped.push({
-              name: step.file,
-              why: 'the server is already registered both as a table and as dotted keys — fix by hand, then re-run',
-            });
-            break;
-          }
-          files.set(path, planFile(cwd, step.file, merged));
-          break;
-        }
-      }
-    }
-
-    if (profile.instructions === 'snippet') {
-      planBlockFile(profile.instructionFile, snippet, SNIPPET_START_MD, SNIPPET_END_MD);
-    } else {
-      files.set(
-        join(cwd, profile.instructionFile),
-        planFile(cwd, profile.instructionFile, profile.instructions(ctx)),
-      );
-    }
-
-    for (const caveat of profile.caveats) notes.push(`${profile.name}: ${caveat}`);
-  }
-
-  return { files: [...files.values()], skipped, notes };
-}
-
-/** Where the installed config points the persistent store, relative to the config file. */
-export const DEFAULT_STORE_DIR = SETUP_RECIPE.store.defaultDir;
-
-/**
- * Existing config re-rendered with the hooks block, other fields carried verbatim —
- * except that a config with **no** store block gains a directory store. The deny
- * reasons and the instruction snippet teach `smelt retrieve <hash>`, and retrieval
- * across processes needs a persistent store (`smelt retrieve` refuses a memory
- * store, exit 2) — an install whose own guard promises a command the installed
- * config cannot run would be the exact silent-failure shape this project refuses.
- * An *explicit* `{"kind":"memory"}` is respected; the guard then conditions its
- * retrieve promise on the store kind instead (`retrieveSentence` in guard-core).
- *
- * That store injection is this verb's **policy**, which is why it lives here; the
- * bytes are written by `renderConfig` in `config.ts`, the one writer, so a key added
- * to the schema reaches this file and `init`'s together or not at all.
- *
- * "Carried verbatim" is spelled as a spread rather than as a list of the fields to
- * copy, and that is load-bearing: the list version silently dropped every key nobody
- * remembered to add to it — `agents` was added to the schema and this function kept
- * writing configs without it, which is a setting the user believed was in force,
- * caught by `test/guards/config-writer.test.ts`. Only the two fields this verb
- * actually decides are named.
- */
-export function renderConfigWithHooks(
-  existing: SmeltConfig | undefined,
-  hooks: SmeltConfigHooks,
-): string {
-  return renderConfig({
-    ...existing,
-    smeltConfig: CONFIG_VERSION,
-    store: existing?.store ?? { kind: 'directory', path: DEFAULT_STORE_DIR },
-    hooks,
-  });
-}
-
-/**
- * Everything `remove` would delete or strip, computed against the current disk state.
- * The mirror image of {@link planInstall}, over the same data: each install step's
- * kind is also how it comes back out — a JSON hook file is strip-merged, a marker
- * block is stripped, a file that is entirely ours is deleted.
- */
-export function planRemove(
-  cwd: string,
-  harnesses: readonly HarnessProfile[],
-): readonly PlannedRemoval[] {
-  const removals = new Map<string, PlannedRemoval>();
-
-  /**
-   * A step's base text for stripping: the previous step's planned removal for this
-   * same path when one exists (its `'delete'` action reads as "nothing left to
-   * strip further"), disk otherwise — `planInstall`'s `currentContent`, mirrored for
-   * the tear-down direction, so Codex's two steps on `.codex/config.toml` compose
-   * instead of the second stripping stale disk bytes and discarding the first.
-   */
-  const currentText = (path: string): string | undefined => {
-    const planned = removals.get(path);
-    if (planned !== undefined) return planned.action === 'delete' ? undefined : planned.content;
-    return readIfExists(path);
-  };
-
-  const planJsonStrip = (name: string): void => {
-    const path = join(cwd, name);
-    const existing = readIfExists(path);
-    if (existing === undefined) return;
-    const stripped = mergeJsonHooks(existing, {});
-    if (stripped === undefined || stripped === existing) return;
-    const remains: unknown = JSON.parse(stripped);
-    const empty =
-      typeof remains === 'object' &&
-      remains !== null &&
-      Object.keys(remains as Record<string, unknown>).filter((key) => key !== 'version').length ===
-        0;
-    removals.set(
-      path,
-      empty && existing.includes('hooks')
-        ? { name, path, action: 'delete' }
-        : { name, path, action: 'modify', content: stripped },
-    );
-  };
-
-  const planBlockStrip = (name: string, start: string, end: string): void => {
-    const path = join(cwd, name);
-    const existing = currentText(path);
-    if (existing === undefined || !existing.includes(start)) return;
-    const stripped = stripMarkerBlock(existing, start, end);
-    removals.set(
-      path,
-      stripped === undefined
-        ? { name, path, action: 'delete' }
-        : { name, path, action: 'modify', content: stripped },
-    );
-  };
-
-  const planWholeFileDelete = (name: string): void => {
-    const path = join(cwd, name);
-    const existing = readIfExists(path);
-    if (existing === undefined || !existing.includes(OURS_TOKEN)) return;
-    removals.set(path, { name, path, action: 'delete' });
-  };
-
-  /**
-   * The registration comes back out the way it went in: the server entry lifted,
-   * byte-faithfully, from its container. A container this install created — empty
-   * once the entry is gone — is removed with it, so a file that never carried the
-   * key round-trips to byte-identical; one that carries other servers keeps them.
-   */
-  const planMcpStrip = (name: string, keys: readonly [string, string]): void => {
-    const path = join(cwd, name);
-    const existing = currentText(path);
-    if (existing === undefined) return;
-    const removed = editJsonProperty(existing, keys, undefined);
-    if (removed === undefined || removed === existing) return;
-    let remains: unknown;
-    try {
-      remains = JSON.parse(removed);
-    } catch {
-      return; // unreachable — the editor only returns parseable text; refuse to guess
-    }
-    const empty =
-      typeof remains === 'object' && remains !== null && Object.keys(remains).length === 0;
-    removals.set(
-      path,
-      empty ? { name, path, action: 'delete' } : { name, path, action: 'modify', content: removed },
-    );
-  };
-
-  /** {@link planMcpStrip}'s TOML sibling — the table lifted out, byte-faithfully. */
-  const planTomlMcpStrip = (name: string, keys: readonly [string, string]): void => {
-    const path = join(cwd, name);
-    const existing = currentText(path);
-    if (existing === undefined) return;
-    const removed = editTomlTable(existing, keys, undefined);
-    if (removed === undefined || removed === existing) return;
-    removals.set(
-      path,
-      removed.trim() === ''
-        ? { name, path, action: 'delete' }
-        : { name, path, action: 'modify', content: removed },
-    );
-  };
-
-  for (const profile of harnesses) {
-    for (const step of profile.install) {
-      switch (step.kind) {
-        case 'json-hooks':
-          planJsonStrip(step.file);
-          break;
-        case 'marker-block':
-          planBlockStrip(step.file, step.start, step.end);
-          break;
-        case 'own-file':
-          planWholeFileDelete(step.file);
-          break;
-        case 'mcp-registration':
-          planMcpStrip(step.file, step.path);
-          break;
-        case 'toml-mcp-registration':
-          planTomlMcpStrip(step.file, step.path);
-          break;
-      }
-    }
-    if (profile.instructions === 'snippet') {
-      planBlockStrip(profile.instructionFile, SNIPPET_START_MD, SNIPPET_END_MD);
-    } else {
-      planWholeFileDelete(profile.instructionFile);
-    }
-  }
-
-  return [...removals.values()];
+  readonly unicode?: boolean;
 }
 
 /* ------------------------------------------------------------------------------------
@@ -781,19 +130,50 @@ export async function runHooks(
   harnessFlag: string | undefined,
   io: HooksIo,
 ): Promise<number> {
-  const wizard = wizardAsk(
-    io.input,
-    io.output,
-    `${CLI_NAME} hooks: input ended before the wizard finished. ` +
-      `Files already confirmed and written stay; nothing further was written.`,
-  );
+  if (io.yes !== true && io.input === undefined) throw noInteractiveInput(action);
+  const wizard =
+    io.yes === true || io.input === undefined
+      ? undefined
+      : wizardAsk(
+          io.input,
+          io.output,
+          `${CLI_NAME} hooks: input ended before the wizard finished. ` +
+            `Files already confirmed and written stay; nothing further was written.`,
+        );
+  const ask: Ask =
+    wizard?.ask ??
+    (async () => {
+      // --yes never asks; a question reached with no stream is a bug in the flow,
+      // not an answer the user owes.
+      throw new CliUsageError(
+        `${CLI_NAME} hooks: a question was reached with no interactive input — ` +
+          `this is a bug in the flow, not an answer you owe.`,
+      );
+    });
   try {
     return action === 'install'
-      ? await installFlow(io, wizard.ask, harnessFlag)
-      : await removeFlow(io, wizard.ask, harnessFlag);
+      ? await installFlow(io, ask, harnessFlag)
+      : await removeFlow(io, ask, harnessFlag);
   } finally {
-    await wizard.release();
+    await wizard?.release();
   }
+}
+
+/**
+ * The refusal for "no `--yes`, and no stream to ask on" — one sentence, thrown by the
+ * verb before the flow starts *and* by the flow itself, because they are the same
+ * fact. A non-null assertion in the flow would have been the flow trusting the verb to
+ * have checked, which is exactly the kind of promise nothing enforces.
+ */
+export function noInteractiveInput(action: 'install' | 'remove'): CliUsageError {
+  return new CliUsageError(
+    `${CLI_NAME}: hooks ${action} is interactive unless you answer it up front, and ` +
+      `this invocation has no interactive input stream. Non-interactive:\n` +
+      `  ${CLI_NAME} hooks ${action} --yes [--harness <id>] [--scope <where>]` +
+      (action === 'install'
+        ? ` [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]`
+        : ''),
+  );
 }
 
 function resolveHarnessFlag(flag: string): HarnessProfile {
@@ -818,6 +198,24 @@ async function installFlow(
 ): Promise<number> {
   const home = io.home ?? homedir();
   const detected = detectedHarnesses(io.cwd, home);
+  const detectedScope = resolveScope(io.scope, { cwd: io.cwd, home });
+
+  // The toggles a run starts from, whichever path it takes: the wizard's defaults,
+  // overridden by what is installed for these harnesses, overridden by the flags.
+  // Under --yes that is the whole answer; in the wizard it is what Enter accepts.
+  const choices: HooksChoices = {
+    harnesses: harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...detected],
+    ...(io.version === undefined ? {} : { writtenBy: io.version }),
+    ...withToggleFlags(presetToggles(io.cwd, { scope: detectedScope, home }), io.toggles ?? {}),
+    enforcement: 'deny',
+    thresholdBytes: DEFAULT_THRESHOLD_BYTES,
+    scope: detectedScope,
+    home,
+  };
+
+  // Everything above is what both paths decide from; --yes needs nothing more, and
+  // the banner below is the wizard's, not its.
+  if (io.yes === true) return applyWithoutAsking(io, choices, home);
 
   io.output(
     `${CLI_NAME} hooks install — wires the smelt guard into agent-harness hooks.\n` +
@@ -825,12 +223,28 @@ async function installFlow(
       `until you confirm at the end.\n\n`,
   );
 
-  const choices: HooksChoices = {
-    harnesses: harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...detected],
-    ...(io.version === undefined ? {} : { writtenBy: io.version }),
-    ...presetToggles(io.cwd),
-    enforcement: 'deny',
-    thresholdBytes: DEFAULT_THRESHOLD_BYTES,
+  /**
+   * Take a scope, and re-read the toggles **that scope's** files carry.
+   *
+   * A re-run edits rather than resets, and what it edits is what is installed *at the
+   * scope being installed to*. Reading the machine's toggles and then writing the
+   * project's spellings is the reset this reading exists to prevent, one directory
+   * over: the user answers "project", and the project's own guard/stats/map/lint
+   * settings are replaced by the machine's. Unchanged when the answer is the scope
+   * already settled on, so going `back` past this question does not discard toggles
+   * the user typed after it.
+   *
+   * The flags are re-applied on top, for the same reason they were applied above: a
+   * `--map on` the user typed is an answer, and a scope flip is not a reason to
+   * forget it. Absent flags leave the new scope's own reading standing.
+   */
+  const useScope = (next: InstallScope): void => {
+    if (choices.scope === next) return;
+    choices.scope = next;
+    Object.assign(
+      choices,
+      withToggleFlags(presetToggles(io.cwd, { scope: next, home }), io.toggles ?? {}),
+    );
   };
 
   // With --harness the selection step is skipped, so the tier label — and its one
@@ -840,6 +254,13 @@ async function installFlow(
   }
 
   const steps: readonly ((io_: HooksIo, ask_: Asker) => Promise<'ok' | 'back'>)[] = [
+    // Asked only where detection said `user` — from any other directory `project` is
+    // the only reading that makes sense, and a question with one possible answer is a
+    // question that trains people to hit Enter.
+    async (io_, ask_) =>
+      io.scope !== undefined || detectedScope === 'project'
+        ? 'ok'
+        : stepScope(io_, ask_, useScope, home),
     async (io_, ask_) =>
       harnessFlag !== undefined ? 'ok' : stepHarnesses(io_, ask_, choices, detected),
     async (io_, ask_) =>
@@ -906,6 +327,95 @@ async function installFlow(
   }
 }
 
+/**
+ * `--yes`: no questions, and every answer said out loud before it is applied. The
+ * plan and the apply loop are the wizard's own — what differs is only who consents
+ * (`{kind:'policy'}`, the merge policy above), because a second apply loop for the
+ * path nobody watches is how the two would drift.
+ *
+ * @throws {CliUsageError} when nothing was detected and nothing was named — the one
+ *   question `--yes` cannot answer from the machine, so it names the flag that does.
+ */
+async function applyWithoutAsking(
+  io: HooksIo,
+  choices: HooksChoices,
+  home: string,
+): Promise<number> {
+  if (choices.harnesses.length === 0) {
+    throw new CliUsageError(
+      `${CLI_NAME} hooks install --yes: no harness config directory found in ${io.cwd} ` +
+        `or ${home}, and none named. Name one with --harness <id>. ` +
+        `Known: ${HARNESSES.map((profile) => profile.id).join(', ')}.`,
+    );
+  }
+  const scope = choices.scope ?? 'project';
+  const root = scopeRoot(scope, { cwd: io.cwd, home });
+  io.output(
+    `${CLI_NAME} hooks install --yes — applying, into ${root}:\n` +
+      choices.harnesses.map((profile) => `  ${tierLabel(profile)}\n`).join('') +
+      `  toggles: ${toggleLine(choices)}\n` +
+      `  an existing file is merged, never overwritten; a file smelt writes whole is ` +
+      `left alone unless it is already smelt's\n`,
+  );
+
+  const plan = planInstall(io.cwd, choices);
+  const applied = await applyPlanFiles(plan.files, { kind: 'policy' });
+  for (const one of applied) io.output(sayApplied(one));
+  for (const skip of plan.skipped) io.output(`  skipped ${skip.name} — ${skip.why}\n`);
+  for (const step of plan.manual) {
+    io.output(
+      `  ${step.name} is ${step.harness}'s own file — run this yourself:\n    ${step.command}\n`,
+    );
+  }
+  for (const note of plan.notes) io.output(`note: ${note}\n`);
+  const lava = palette({ unicode: io.unicode !== false });
+  io.output(
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks install`,
+        // The skips count too: a harness whose file this preset will not write is a
+        // file this run did not write, and a verdict that named only what was applied
+        // would quietly round four-of-six up to four-of-four.
+        summary: countedFiles(
+          [...applied.map((one) => one.action), ...plan.skipped.map(() => 'skipped' as const)],
+          lava,
+        ),
+        note:
+          `Re-run with different toggles to edit them; ` +
+          `\`${CLI_NAME} hooks remove --yes\` takes it all back out.`,
+        next: installedNext(lava),
+      },
+      lava,
+    ),
+  );
+  return 0;
+}
+
+/**
+ * What to run after a hooks install, in the order a person needs it: prove the wiring
+ * fires, then use it. Shared by the `--yes` path and the wizard, because two closing
+ * blocks that disagree about the next command is exactly the drift the block exists to
+ * end.
+ */
+function installedNext(lava: Palette): readonly (readonly [string, string])[] {
+  return [
+    [`${CLI_NAME} doctor`, 'prove the wiring fires, and what is behind'],
+    [`${CLI_NAME} <file> --budget 4000`, `smelt one file ${lava.dash()} the report says what went`],
+  ];
+}
+
+/** One toggle, as both the wizard prompt and the --yes summary spell it. */
+const onOff = (on: boolean): string => (on ? 'on' : 'off');
+
+/** `guard on, stats on, map off, lint off` — what a --yes run is about to wire. */
+function toggleLine(toggles: PresetToggles): string {
+  return (
+    `guard ${onOff(toggles.guard)}, stats ${onOff(toggles.statsOnStop)}, ` +
+    `map ${onOff(toggles.mapOnStart)}, lint ${onOff(toggles.lintOnStart)}`
+  );
+}
+
 function guardCopy(): string {
   return (
     `Denies raw Reads (and simple \`cat\`s) of files over the size threshold, with a ` +
@@ -913,6 +423,40 @@ function guardCopy(): string {
     `smelted first, \`smelt retrieve\` for the rest. Windowed reads (offset/limit) ` +
     `always pass.`
   );
+}
+
+/**
+ * The one scope question, asked only where detection said `user`. It states what was
+ * found and what each answer writes; Enter takes the detected answer.
+ */
+async function stepScope(
+  io: HooksIo,
+  ask: Asker,
+  useScope: (scope: InstallScope) => void,
+  home: string,
+): Promise<'ok' | 'back'> {
+  io.output(
+    `\nYou are in your home directory, so this looks like a machine-wide install:\n` +
+      `  every harness file goes to its own documented user-level location under ` +
+      `${home}, and ${CONFIG_FILE_NAME} to ${join(home, CONFIG_FILE_NAME)} — which ` +
+      `every project below it finds, because config discovery walks up.\n` +
+      `  A project install writes into ${io.cwd} instead, and only that project sees it.\n` +
+      `  A harness that documents no user-level location for a file is listed as ` +
+      `skipped, never guessed into ${home}.\n`,
+  );
+  for (;;) {
+    const answer = await ask(`scope (1 machine / 2 project) [1]> `);
+    if (answer === 'back') return 'back';
+    if (answer === '' || answer === '1') {
+      useScope('user');
+      return 'ok';
+    }
+    if (answer === '2') {
+      useScope('project');
+      return 'ok';
+    }
+    io.output(`1 for this machine, 2 for this project.\n`);
+  }
 }
 
 async function stepHarnesses(
@@ -1026,109 +570,16 @@ async function stepThreshold(
   }
 }
 
-/**
- * A re-run reads the toggles back off what is actually installed — every JSON hook
- * file this installer writes, plus the guard-only shim files, both derived from the
- * registry — so it edits instead of resetting. Harnesses that only wire the guard
- * (gemini, grok, cursor, hermes, opencode, cline) persist no stats/map entries, so
- * after a re-run scoped to them those toggles read back as off; the defaults below
- * apply only when nothing of smelt's is installed at all.
- *
- * The two `SessionStart` toggles share one event, so they are told apart by **the
- * command each entry runs**, not by the key it sits under. Reading `SessionStart` as
- * one boolean would make a re-run with the map on and the lint off write both back —
- * or neither — which is a toggle the user believed they had set.
- *
- * Exported for `smelt setup`, which applies the preset's *current* state the same way
- * — read off what is installed — rather than keeping a second copy of the defaults.
- */
-/**
- * Whether a JSON hook file's text carries entries of ours — the **one** predicate for
- * this fact, shared by the readers (`smelt doctor`, `smelt setup`'s repair policy) and
- * backed by the same `isOursEntry` the writer's strip-merge uses. The guard command
- * itself carries only the shim path (no token), so a text-level `OURS_TOKEN` search
- * would miss a guard-only install — the exact drift this exists to prevent.
- */
-export function jsonHooksContainOurs(text: string): boolean {
-  let hooks: Record<string, unknown> | undefined;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    const hooksValue =
-      typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)['hooks']
-        : undefined;
-    hooks =
-      typeof hooksValue === 'object' && hooksValue !== null && !Array.isArray(hooksValue)
-        ? (hooksValue as Record<string, unknown>)
-        : undefined;
-  } catch {
-    hooks = undefined;
+/** One applied file, as this verb's prose spells it. */
+function sayApplied(applied: AppliedFile): string {
+  if (applied.action === 'unchanged') return `  ${applied.name} — unchanged, not rewritten\n`;
+  if (applied.action === 'skipped') {
+    return `  skipped ${applied.name} — ${applied.detail ?? 'not written'}\n`;
   }
-  if (hooks === undefined) return false;
-  return MANAGED_EVENTS.some((event) =>
-    Array.isArray(hooks[event])
-      ? (hooks[event] as unknown[]).some((entry) => isOursEntry(entry))
-      : false,
-  );
+  return `  wrote ${applied.name}\n`;
 }
 
-export function presetToggles(
-  cwd: string,
-): Pick<HooksChoices, 'guard' | 'statsOnStop' | 'mapOnStart' | 'lintOnStart'> {
-  const defaults = { guard: true, statsOnStop: true, mapOnStart: false, lintOnStart: false };
-  let anyOurs = false;
-  let guard = false;
-  let statsOnStop = false;
-  let mapOnStart = false;
-  let lintOnStart = false;
-
-  for (const name of JSON_HOOK_FILES) {
-    const text = readIfExists(join(cwd, name));
-    if (text === undefined) continue;
-    let hooks: Record<string, unknown> | undefined;
-    try {
-      const parsed: unknown = JSON.parse(text);
-      const hooksValue =
-        typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)['hooks']
-          : undefined;
-      hooks =
-        typeof hooksValue === 'object' && hooksValue !== null && !Array.isArray(hooksValue)
-          ? (hooksValue as Record<string, unknown>)
-          : undefined;
-    } catch {
-      hooks = undefined;
-    }
-    if (hooks === undefined) continue;
-    const installed = hooks;
-    const oursUnder = (event: string): readonly unknown[] =>
-      Array.isArray(installed[event])
-        ? (installed[event] as unknown[]).filter((entry) => isOursEntry(entry))
-        : [];
-    const hasOurs = (event: string): boolean => oursUnder(event).length > 0;
-    /** One of ours under `event` whose command carries `needle`. */
-    const hasOursRunning = (event: string, needle: string): boolean =>
-      oursUnder(event).some((entry) => (JSON.stringify(entry) ?? '').includes(needle));
-    if (!MANAGED_EVENTS.some((event) => hasOurs(event))) continue;
-    anyOurs = true;
-    guard ||= GUARD_EVENTS.some((event) => hasOurs(event));
-    statsOnStop ||= hasOurs(LIFECYCLE_EVENTS.stats);
-    mapOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.map, MAP_ON_START_ARGS);
-    lintOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.lint, AGENTS_LINT_ARGS);
-  }
-
-  for (const name of GUARD_ONLY_FILES) {
-    const text = readIfExists(join(cwd, name));
-    if (text !== undefined && text.includes(OURS_TOKEN)) {
-      anyOurs = true;
-      guard = true;
-    }
-  }
-
-  return anyOurs ? { guard, statsOnStop, mapOnStart, lintOnStart } : defaults;
-}
-
-const fileLabel = (file: PlannedFile): string => {
+const fileLabel = (file: { readonly exists: boolean; readonly unchanged: boolean }): string => {
   if (file.unchanged) return 'unchanged — nothing to write';
   return file.exists ? 'exists — will ask before overwriting' : 'new';
 };
@@ -1139,9 +590,18 @@ async function confirmAndInstall(
   choices: HooksChoices,
 ): Promise<'done' | 'back'> {
   const plan = planInstall(io.cwd, choices);
+  const root = scopeRoot(choices.scope ?? 'project', {
+    cwd: io.cwd,
+    home: choices.home ?? homedir(),
+  });
 
-  io.output(`\nAbout to write, into ${io.cwd}:\n`);
+  io.output(`\nAbout to write, into ${root}:\n`);
   listPlannedFiles(io.output, plan.files, plan.skipped, fileLabel);
+  for (const step of plan.manual) {
+    io.output(
+      `  ${step.name} is ${step.harness}'s own file — run this yourself:\n    ${step.command}\n`,
+    );
+  }
   io.output(`Nothing has been written yet.\n`);
 
   const confirmed = await confirmLoop(
@@ -1154,28 +614,27 @@ async function confirmAndInstall(
     return 'done';
   }
 
-  for (const file of plan.files) {
-    if (file.unchanged) {
-      io.output(`  ${file.name} — unchanged, not rewritten\n`);
-      continue;
-    }
-    if (file.exists) {
-      // The one hard rule, same as `smelt init`: an existing file is never touched
-      // without an explicit per-file yes — not `y`, not Enter, a literal `yes`.
-      const answer = await ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
-      if (answer !== 'yes') {
-        io.output(`  skipped ${file.name} — the existing file was not touched\n`);
-        continue;
-      }
-    }
-    writePlannedFile(file);
-    io.output(`  wrote ${file.name}\n`);
-  }
+  const applied = await applyPlanFiles(plan.files, { kind: 'wizard', ask });
+  for (const one of applied) io.output(sayApplied(one));
 
   for (const note of plan.notes) io.output(`note: ${note}\n`);
+  const lava = palette({ unicode: io.unicode !== false });
   io.output(
-    `Done. Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
-      `\`${CLI_NAME} hooks remove\` takes it all back out.\n`,
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks install`,
+        summary: countedFiles(
+          [...applied.map((one) => one.action), ...plan.skipped.map(() => 'skipped' as const)],
+          lava,
+        ),
+        note:
+          `Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
+          `\`${CLI_NAME} hooks remove\` takes it all back out.`,
+        next: installedNext(lava),
+      },
+      lava,
+    ),
   );
   return 'done';
 }
@@ -1186,10 +645,13 @@ async function removeFlow(
   harnessFlag: string | undefined,
 ): Promise<number> {
   const harnesses = harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...HARNESSES];
-  const removals = planRemove(io.cwd, harnesses);
+  const home = io.home ?? homedir();
+  const scope = resolveScope(io.scope, { cwd: io.cwd, home });
+  const root = scopeRoot(scope, { cwd: io.cwd, home });
+  const removals = planRemove(io.cwd, harnesses, { scope, home });
 
   if (removals.length === 0) {
-    io.output(`${CLI_NAME} hooks remove: nothing of smelt's found to remove in ${io.cwd}.\n`);
+    io.output(`${CLI_NAME} hooks remove: nothing of smelt's found to remove in ${root}.\n`);
     return 0;
   }
 
@@ -1207,16 +669,24 @@ async function removeFlow(
       `edit or remove it there.\nNothing has been changed yet.\n`,
   );
 
-  if ((await confirmYesNo(ask, 'yes to proceed, no to leave everything untouched.')) === 'no') {
+  // --yes is the consent: the plan above was printed, and taking smelt's own wiring
+  // back out loses nothing that was not smelt's — every removal is a strip of our own
+  // entries or a file that is entirely ours.
+  if (
+    io.yes !== true &&
+    (await confirmYesNo(ask, 'yes to proceed, no to leave everything untouched.')) === 'no'
+  ) {
     io.output(`Nothing was changed.\n`);
     return 0;
   }
 
+  let removed = 0;
+  let spared = 0;
   for (const removal of removals) {
     const verb = removal.action === 'delete' ? 'delete' : 'modify';
-    const answer = await ask(`  ${removal.name} — ${verb} it? (yes/no)> `);
-    if (answer !== 'yes') {
+    if (io.yes !== true && (await ask(`  ${removal.name} — ${verb} it? (yes/no)> `)) !== 'yes') {
       io.output(`  skipped ${removal.name} — not touched\n`);
+      spared += 1;
       continue;
     }
     if (removal.action === 'delete') {
@@ -1226,7 +696,27 @@ async function removeFlow(
       writeFileSync(removal.path, removal.content ?? '');
       io.output(`  cleaned ${removal.name}\n`);
     }
+    removed += 1;
   }
-  io.output(`Done.\n`);
+  const lava = palette({ unicode: io.unicode !== false });
+  io.output(
+    doneBlock(
+      {
+        ok: true,
+        what: `${CLI_NAME} hooks remove`,
+        // Counted off what this loop actually did, not off what `planRemove` found: a
+        // wizard run may decline any of them, one file at a time. Its own vocabulary,
+        // too — `countedFiles` speaks about writing, and this verb does the opposite.
+        summary:
+          `took ${String(removed)} ${removed === 1 ? 'file' : 'files'} back out` +
+          (spared === 0 ? '' : `, left ${String(spared)} alone`),
+        next: [
+          [`${CLI_NAME} doctor`, 'read back what is left, and what is behind'],
+          [`${CLI_NAME} hooks install`, 'put the guard preset back'],
+        ],
+      },
+      lava,
+    ),
+  );
   return 0;
 }

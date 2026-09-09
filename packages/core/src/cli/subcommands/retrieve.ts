@@ -1,8 +1,8 @@
 import { CliUsageError } from '../../errors.ts';
 import { openStore } from '../../ops/inputs.ts';
 import { retrieveBytes } from '../../ops/verbs.ts';
-import { CONFIG_FILE_NAME, configuredStore } from '../config.ts';
-import type { LoadedConfig } from '../config.ts';
+import { CONFIG_FILE_NAME, configuredStore } from '../../config.ts';
+import type { LoadedConfig } from '../../config.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
@@ -111,7 +111,7 @@ export const retrieveCommand: Subcommand<RetrieveInvocation, ResolvedRetrieveRun
 };
 
 /**
- * The store leg alone, for the two commands whose entire job is the store between
+ * The store leg alone, for the three commands whose entire job is the store between
  * runs. The refusal is the point: `retrieve` exists so the marker's
  * `retrieve("hash")` works from a later shell — cross-run retrieval — and a memory
  * store dies with the process that filled it, so with a memory store (or no config
@@ -133,7 +133,7 @@ export const retrieveCommand: Subcommand<RetrieveInvocation, ResolvedRetrieveRun
  * @throws {CliUsageError} when no config exists, or the configured store is memory.
  */
 export function resolveStoreRun(
-  command: 'retrieve' | 'stats',
+  command: 'retrieve' | 'stats' | 'store prune',
   config: LoadedConfig | undefined,
 ): ResolvedStoreRun {
   const store = configuredStore(config);

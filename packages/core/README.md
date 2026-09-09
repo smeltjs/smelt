@@ -45,11 +45,21 @@ The parsers ship inside this tarball — no native build step, no post-install d
 That makes smelt a redistributor, so [`THIRD-PARTY.md`](./THIRD-PARTY.md) carries the
 licences, generated from package metadata rather than written by hand.
 
-**0.x.** In the box: structural planning (tree-sitter, with
-signatures and doc comments always kept), the lexical planner, a persistent
-content-addressed store, cache-prefix hygiene (detect, never rewrite), a repo-map
-planner modelled on Aider's, the `smelt init` wizard, and a committed measurement
-harness. An unsupported language under `strategy: 'structural'` is refused, never
-approximated. See [`docs/ARCHITECTURE.md`](https://github.com/smeltjs/smelt/blob/main/docs/ARCHITECTURE.md).
+**0.x.** In the box: structural planning (tree-sitter, with signatures and doc comments
+always kept), the lexical planner, a persistent content-addressed store, cache-prefix
+hygiene (detect, never rewrite), a repo-map planner modelled on Aider's, and a committed
+measurement harness. An unsupported language under `strategy: 'structural'` is refused,
+never approximated.
+
+The CLI that goes with it: `smelt setup` wires the whole recipe into the harnesses you
+use in one command (`--yes` for an agent, no terminal needed); `smelt doctor` reads that
+install back and **runs** the hooks it finds, so `wired` is a fact about behaviour rather
+than about text; both take `--scope project|user`, and a machine install goes to each
+harness's own documented user-level location; `smelt store prune` is the only eviction
+there is — explicit, journalled before it deletes, reported blob by blob; `smelt init`
+writes the config; and a `rerank` block in that config is the one opt-in that can send
+context off the machine, so nothing loads without it and `smelt doctor` says whether it
+is configured and whether its key variable is set. See
+[`docs/ARCHITECTURE.md`](https://github.com/smeltjs/smelt/blob/main/docs/ARCHITECTURE.md).
 
 Apache-2.0.

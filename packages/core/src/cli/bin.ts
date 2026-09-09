@@ -3,7 +3,8 @@ import { readFileSync, readSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import process from 'node:process';
 
-import { EXIT, runCli } from './run.ts';
+import { colorAllowed, colorDepth, supportsUnicode } from './lava.ts';
+import { closedSinkCode, EXIT, runCli } from './run.ts';
 
 /**
  * The `smelt` binary: the thinnest possible shell around {@link runCli}.
@@ -26,6 +27,13 @@ import { EXIT, runCli } from './run.ts';
  *    stream initialization), `process.stdin` is only handed over lazily to the one
  *    mode that needs a stream (`init`), and the read itself retries `EAGAIN` with a
  *    synchronous back-off until EOF.
+ *  - **A closed output stream is a refusal, not a crash.** Writing to a pipe nobody
+ *    reads raises asynchronously, on the stream's own `'error'` event, which no
+ *    `try`/`catch` around the write can see — so an unheard one is an unhandled
+ *    `'error'`: a stack trace and an exit code nobody chose, for `smelt hooks install
+ *    | head` or for answering a wizard with `yes`. The listener below turns it into
+ *    one line and the usage exit. It is here rather than in `run.ts` because the
+ *    streams are this file's: `runCli` only ever sees the two functions it is handed.
  *  - **Bytes that are not UTF-8 are refused, never mangled.** Decoding invalid bytes
  *    would silently replace them with U+FFFD, and the result would still smelt,
  *    round-trip, and verify — of the wrong bytes. That violates the reversibility
@@ -137,6 +145,33 @@ function packageVersion(): string {
   return parsed.version ?? '0.0.0';
 }
 
+/** Said once, however many streams break, and never from inside its own handler. */
+let sinkRefused = false;
+
+function refuseClosedSink(code: string): void {
+  if (sinkRefused) return;
+  sinkRefused = true;
+  try {
+    // Verb-agnostic on purpose: this listener sees every verb, and `smelt big.log
+    // --json | head` must not be told about a flag its verb does not own.
+    process.stderr.write(
+      `smelt: nothing is reading smelt's output (${code}) — refusing rather than ` +
+        `writing into a closed stream.\n`,
+    );
+  } catch {
+    // stderr is gone too; the exit code is the whole message.
+  }
+  process.exit(EXIT.usage);
+}
+
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error: unknown) => {
+    const code = closedSinkCode(error);
+    if (code === undefined) throw error;
+    refuseClosedSink(code);
+  });
+}
+
 try {
   process.exitCode = await runCli(process.argv.slice(2), {
     stdout: (text) => void process.stdout.write(text),
@@ -144,10 +179,27 @@ try {
     stdin: readStdin,
     version: packageVersion(),
     cwd: process.cwd(),
-    // The lava renderer's switch: a real interactive terminal that has not been
-    // told to keep its bytes plain. Piped output, agents and NO_COLOR all mean
-    // exactly the bytes the wizards have always written.
-    color: process.stdout.isTTY === true && process.env['NO_COLOR'] === undefined,
+    // Read only by name, and only for a name a config file supplied — see CliIo.env.
+    env: process.env,
+    // The lava palette's switches, computed once here because this is the only file
+    // that may look at the real streams. Piped output, agents and NO_COLOR all mean
+    // exactly the bytes smelt has always written; FORCE_COLOR is how a person asks
+    // for paint through a pipe. The two streams are asked separately: `smelt big.log
+    // --budget 4000 > small.log` puts the payload in a file and leaves the report on
+    // a terminal, and that report is the half a person reads.
+    color: colorAllowed(process.env, process.stdout.isTTY === true),
+    colorErr: colorAllowed(process.env, process.stderr.isTTY === true),
+    // How much colour the terminal has, asked once. A capability, not a switch, so it
+    // is asked about the *terminal* — either stream being one is enough — while the
+    // two booleans above stay per-stream. Without this, `38;2;…` went out
+    // unconditionally, and Terminal.app, tmux without -2 and every 16-colour emulator
+    // rendered the front door's gradient as garbage.
+    depth: colorDepth(process.env, process.stdout.isTTY === true || process.stderr.isTTY === true),
+    // A person at both ends — the front door's only switch. `isatty(0)` is the same
+    // plain syscall readStdin uses, so nothing here flips fd 0 into non-blocking mode.
+    tty: process.stdout.isTTY === true && isatty(0),
+    // What the locale said this terminal can draw. See `supportsUnicode`.
+    unicode: supportsUnicode(process.env),
     // The wizard verbs (`init`, `hooks`, `agents split`, `setup`) read answers line by
     // line, so they get the stream, not readStdin's one-shot slurp of fd 0. A
     // *getter*, because touching `process.stdin` at all flips fd 0 into non-blocking

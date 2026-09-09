@@ -3,7 +3,11 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FORBIDDEN_NODE_MODULES, FORBIDDEN_PACKAGES } from '@guard/net/policy';
+import {
+  FORBIDDEN_NODE_MODULES,
+  FORBIDDEN_PACKAGES,
+  OPT_IN_RERANK_PACKAGES,
+} from '@guard/net/policy';
 
 import type { GuardMutation } from './_mutations.ts';
 import { guardRoot, importSpecifiers, packageRoot, stripStringsAndComments } from './_source.ts';
@@ -144,14 +148,22 @@ describe('bench honesty guard (Law 4 — the harness that states the numbers)', 
       // inside a string literal, which stripping blanks out. Scan the import/require
       // specifiers of the RAW source too, against the same forbidden lists the
       // src-tree walk uses.
+      //
+      // The opt-in rerank adapters are on the same list, and they have to be: they
+      // reach the network without importing a transport of their own, so a runner that
+      // pulled one in would be a tier-1 path on the wire while every shape above stays
+      // green. The tier-3 rerank arm therefore builds its stage inside `tier3.mjs`.
       const banned = importSpecifiers(raw).filter(
         (specifier) =>
-          FORBIDDEN_NODE_MODULES.includes(specifier) || FORBIDDEN_PACKAGES.includes(specifier),
+          FORBIDDEN_NODE_MODULES.includes(specifier) ||
+          FORBIDDEN_PACKAGES.includes(specifier) ||
+          OPT_IN_RERANK_PACKAGES.includes(specifier),
       );
       expect(
         banned,
-        `bench/${file} imports a network transport — network access belongs only in ` +
-          'the tier modules and net.mjs, so that a tier-1 run is offline by construction',
+        `bench/${file} imports a network transport or an opt-in rerank adapter — network ` +
+          'access belongs only in the tier modules and net.mjs, so that a tier-1 run is ' +
+          'offline by construction',
       ).toEqual([]);
     }
   });
@@ -244,6 +256,14 @@ export const MUTATIONS: GuardMutation[] = [
     find: 'export const RESULTS_HEADER = [',
     replace: "import 'node:https';\n\nexport const RESULTS_HEADER = [",
     why: 'a network transport imported statically into a non-tier bench module — the specifier lives inside a string literal, which the stripped-source shape scan blanks out, so only the import-specifier scan can see it',
+  },
+  {
+    kind: 'artifact',
+    id: 'bench-rerank-adapter-outside-tiers',
+    file: 'bench/run.mjs',
+    find: "const { measureExpansion, voyageStageOrReason } = await import('./tier3.mjs');",
+    replace: "await import('@smeltjs/rerank-voyage');",
+    why: 'the opt-in rerank adapter loaded straight from the runner — it reaches the network without importing a transport of its own, so every shape scan stays green while a non-tier module goes on the wire; only listing the adapters beside the transports catches it',
   },
   {
     kind: 'artifact',

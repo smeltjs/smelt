@@ -1,3 +1,10 @@
+███████╗███╗   ███╗███████╗██╗     ████████╗
+██╔════╝████╗ ████║██╔════╝██║     ╚══██╔══╝
+███████╗██╔████╔██║█████╗  ██║        ██║
+╚════██║██║╚██╔╝██║██╔══╝  ██║        ██║
+███████║██║ ╚═╝ ██║███████╗███████╗   ██║
+╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝
+
 smelt — shrink text for a model, without lying about what was removed.
 
 USAGE
@@ -6,15 +13,16 @@ USAGE
   smelt map <dir> --budget <bytes> [--focus <term>]... [--ignore <entry>]... [--cache <dir>]
   smelt retrieve <hash>
   smelt stats [--json]
-  smelt hooks install [--harness <id>]
-  smelt hooks remove [--harness <id>]
+  smelt hooks install [--harness <id>] [--scope <where>] [--yes] [--<toggle> on|off]...
+  smelt hooks remove [--harness <id>] [--scope <where>] [--yes]
   smelt agents lint [dir] [--strict] [--json]
-  smelt doctor [--json]
+  smelt doctor [--scope <where>] [--json]
+  smelt store prune --older-than <age> [--keep-retrieved] [--dry-run] [--json]
   smelt --reconstruct <result.json>
   smelt --reconstruct < result.json
   smelt init
   smelt agents split [dir]
-  smelt setup [--harness <id>]... [--yes] [--no-mcp] [--json]
+  smelt setup [--harness <id>]... [--scope <where>] [--yes] [--no-mcp] [--json]
 
 Smelted text goes to stdout and the report goes to stderr, so the two can be piped
 apart:  smelt big.log --budget 4000 > small.log
@@ -48,12 +56,15 @@ RETRIEVE & STATS
   rate measures. An unknown hash and damaged bytes are distinct refusals (exit 3):
   "never elided" and "the store was corrupted" call for different responses.
 
-  smelt stats prints the same store's counters, one `name value` per line —
-  elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved, expansionRate,
-  allElisionsRetrieved — then the ledger, one rule.<id>.stored and
-  rule.<id>.retrieved per rule that cut anything: which rule's cuts get asked
-  for back. Reading them is NOT counted as a retrieval. --json emits the
-  RetrieveStats and the ledger verbatim in their own versioned envelope.
+  smelt stats reports on the same store: where it is and what it holds on
+  disk, the expansion rate with a bar, the counters — elisionsStored,
+  bytesStored, retrieveCalls, uniqueRetrieved, misses, expansionRate,
+  allElisionsRetrieved — and then the ledger as a table, one row per rule that
+  cut anything (stored, retrieved, rate), heaviest first: which rule's cuts get
+  asked for back. Reading them is NOT counted as a retrieval. --json emits the
+  RetrieveStats and the ledger verbatim in their own versioned envelope, and is
+  the surface to parse — the text one is for a person, and it is never coloured
+  into a pipe.
 
   Both need somewhere for elisions to outlive the run that made them: a
   smelt.config.json with a directory store (`smelt init` writes one). With a
@@ -71,8 +82,17 @@ HOOKS
   (Gemini, Grok, Hermes, Cursor, opencode, Cline — schemas from the capability
   matrix, not yet smoke-tested), advisory (KiloCode, Aider — instructions only,
   nothing enforced). Same discipline as init: every file listed before a final
-  confirm, no existing file overwritten without a per-file yes, re-runs edit
-  toggles. smelt hooks remove takes it back out. Guard settings live in
+  confirm, nothing overwritten without a per-file yes in the wizard, re-runs
+  edit toggles. For an agent, answer it up front:
+
+    smelt hooks install --yes [--harness <id>] [--scope <where>]
+      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]
+
+  A toggle you do not name keeps whatever is already installed; nothing is,
+  and the defaults are guard on, stats on, map off, lint off. Under --yes an
+  existing file is merged byte-faithfully rather than overwritten, and a file
+  smelt writes whole is left alone unless it is already smelt's.
+  smelt hooks remove takes it back out. Guard settings live in
   smelt.config.json ("hooks": {"thresholdBytes", "enforcement": "deny"|"rewrite"});
   deny is the default — rewrite substitutes commands in-flight only where a
   harness supports it, and never silently.
@@ -113,13 +133,15 @@ SETUP
   smelt → retrieve round trip to prove the loop. Interactive from a terminal; for
   an agent, answer everything up front:
 
-    smelt setup --yes [--harness <id>]... [--no-mcp] [--json]
+    smelt setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]
+      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]
 
   The defaults are the recipe's: budget 4000 bytes
   (written only when the config carries none), a directory store at
   .smelt/store (only when the config carries none). Existing
-  files are never overwritten — they are skipped with a note; hooks install edits
-  them, and it asks per file. Re-running on a current machine writes nothing and
+  files are merged byte-faithfully, never overwritten; one smelt would write whole
+  is left alone unless it is already smelt's. A toggle you do not name keeps
+  whatever is installed. Re-running on a current machine writes nothing and
   exits 0. --json prints a receipt: every file, every check, the exit's meaning.
 
 DOCTOR
@@ -133,6 +155,25 @@ DOCTOR
 
     upgrade → smelt doctor → smelt setup
 
+
+STORE
+  smelt store prune is the only command that deletes an elision, and the only
+  eviction smelt has: nothing prunes on a timer, on a size cap, or when a
+  store is opened. You name the age cut — --older-than 30d, 12h or 2w, no
+  default — and every blob last written before it is evicted, unless
+  --keep-retrieved spares the hashes the journal shows were asked for back.
+  --dry-run prints the same report and frees nothing.
+
+  Each eviction is journalled first and deleted second, so nothing goes
+  unrecorded: a later smelt retrieve of an evicted hash exits 3 with
+  EvictedHashError naming the date it went — never "it was never elided". The
+  counters do not move either. elisionsStored still counts what was evicted, so
+  a prune cannot raise the expansion rate by shrinking its own denominator, and
+  the per-rule ledger is untouched: the rule did make that cut. Only
+  bytesStored falls, because only bytesStored measures the disk.
+
+  Like retrieve and stats it needs a directory store in smelt.config.json:
+  a memory store has already forgotten everything by the time you could prune it.
 
 OPTIONS
   --budget <bytes>     Required, unless smelt.config.json sets defaultBudgetBytes.
@@ -166,13 +207,41 @@ OPTIONS
                        claude-code, codex, gemini, grok, hermes, cursor, opencode,
                        cline, kilocode, aider.
                        Repeatable for setup; hooks takes one per run.
-  --yes                setup only. Non-interactive setup: the recipe's defaults, printed
-                       loudly as they are applied. Existing files are never
-                       overwritten — skipped with a note; hooks install edits
-                       them, and it asks per file.
+  --scope <where>      project | user. Where the install lives: this project, or this
+                       machine. Defaults to user when the working directory is your home
+                       directory, project everywhere else. At user scope the config is
+                       ~/smelt.config.json — which every project below finds, since
+                       discovery walks up — the store is ~/.smelt/store,
+                       and each harness file goes to that harness's own documented
+                       user-level location; one that documents none is reported skipped,
+                       never guessed.
+  --older-than <age>   store only. Required by prune: the age cut, as <n>d, <n>h or <n>w
+                       (whole numbers, at least 1). Blobs last written before it
+                       are evicted. There is no default — a cut-off
+                       smelt invented would decide which of your elisions stop
+                       being reversible.
+  --keep-retrieved     store only. Spare any hash the journal shows was retrieved at
+                       least once, however old it is: material the model has
+                       asked for once it may ask for again.
+  --dry-run            store only. List what would be evicted and free nothing. The
+                       report is otherwise identical, so the two runs compare
+                       field for field.
+  --yes                Answer everything up front: the recipe's defaults for setup,
+                       the install's current toggles for hooks, printed loudly as
+                       they are applied. An existing file is merged, never
+                       overwritten; one smelt would write whole is skipped unless it
+                       is already smelt's.
   --no-mcp             setup only. Setup only: skip the MCP registration step — the
                        printed command and its note — for a hooks-only
                        setup.
+  --guard on|off       The PreToolUse size-guard. Answers the wizard question of
+                       the same name.
+  --stats on|off       `smelt stats` when a session ends — observation only,
+                       never blocking.
+  --map on|off         An opening `smelt map` at session start, so the agent
+                       starts oriented.
+  --lint on|off        `smelt agents lint .` at session start, reporting on the
+                       instruction files this session loads.
   --strict             agents only. Turn any lint finding into exit 1, for CI. Findings are
                        advisory by default: the rules are heuristics about somebody
                        else's house style, and enforcing them uninvited would be
@@ -187,6 +256,8 @@ OPTIONS
                        the measured levels and every finding with its rule id.
   --reconstruct        Read a --json envelope and print the original text, byte for
                        byte. This is Law 3 you can run from a shell.
+  --no-color           Plain bytes, however pretty the terminal. Same effect as
+                       setting NO_COLOR; --json output is never coloured either way.
   -h, --help           This text.
   --version            The package version.
 

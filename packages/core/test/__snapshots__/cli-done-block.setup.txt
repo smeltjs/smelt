@@ -1,0 +1,8 @@
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ Done. smelt setup wrote 4 files; 3 of 3 checks passed.
+
+  Next
+    smelt doctor                read back what was written, and what is behind
+    smelt <file> --budget 4000  smelt one file — the report says what went
+    smelt stats                 the store, once a run has put something in it

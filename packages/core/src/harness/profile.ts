@@ -1,6 +1,9 @@
 import { shimFromSchema } from '../hooks/shim.ts';
 import type { HarnessHookSchema, ShimAdapter } from '../hooks/shim.ts';
+import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import type { TomlValue } from '../text/toml-edit.ts';
+
+import type { InstallScope } from './scope.ts';
 
 /**
  * Everything smelt knows about one agent harness, in one place.
@@ -51,6 +54,13 @@ export interface HarnessProfile {
   /** The standing-instructions file this harness reads (capability matrix column d). */
   readonly instructionFile: string;
   /**
+   * The **documented** user-level standing-instructions file, relative to `$HOME` —
+   * `.claude/CLAUDE.md`, `.codex/AGENTS.md`, `.gemini/GEMINI.md`. Absent means this
+   * harness documents none, and a user-scope install says so instead of writing the
+   * project spelling into the home directory, where nothing would read it.
+   */
+  readonly userInstructionFile?: string;
+  /**
    * The standing-instructions layer — belt and braces under every shim, and the *only*
    * layer an advisory harness has:
    *
@@ -71,6 +81,21 @@ export interface HarnessProfile {
    */
   readonly install: readonly HarnessInstallStep[];
   /**
+   * How **this** harness registers smelt's MCP server, in the words a person would
+   * use to do it by hand. Present exactly when {@link install} carries a registration
+   * step, and it is the same registration: `mcp-registration` and
+   * `toml-mcp-registration` are smelt writing this by itself, and there is no fourth
+   * spelling of it anywhere.
+   *
+   * It is a per-harness fact because the mechanism is: Claude Code has a CLI verb,
+   * Codex and Grok read a TOML table, opencode a JSON key. `smelt setup` used to print
+   * the recipe's Claude Code command for *every* harness — telling somebody who wired
+   * Codex to run a `claude` binary they may not have, about a file it does not read.
+   * Pinned against `packages/mcp/README.md`, the outside witness, by
+   * `test/guards/setup-recipe.test.ts`.
+   */
+  readonly mcp?: HarnessMcpManual;
+  /**
    * This harness's native pre-tool hook schema, as data. Present exactly when the
    * harness ships a shim script (`dist/hooks/shims/<id>.js`) — absent for the advisory
    * tier, and for opencode, whose hook API is a JavaScript plugin rather than a stdin
@@ -82,6 +107,21 @@ export interface HarnessProfile {
    * cannot express. Wins over {@link hooks} when both are present.
    */
   readonly shim?: ShimAdapter;
+}
+
+/**
+ * One harness's MCP registration, as a person performs it — what `smelt setup` prints
+ * for the registration it wrote, and what it hands back where the file is the
+ * harness's own to rewrite.
+ */
+export interface HarnessMcpManual {
+  /** The command to run, or the table to add, and where. Always project-truthful. */
+  readonly manual: string;
+  /**
+   * The machine-wide spelling, where the harness has a different one — Claude Code's
+   * `--scope user`. Absent means {@link manual} is the answer at either scope.
+   */
+  readonly manualUser?: string;
 }
 
 /** How much smelt is willing to claim about a harness. */
@@ -130,6 +170,30 @@ export function harnessLabel(profile: HarnessProfile): string {
 }
 
 /**
+ * The by-hand spelling of a `[mcp_servers.smelt]` table, for the two harnesses whose
+ * registration is TOML — composed from the recipe's own spawn array, beside the table
+ * `toml-mcp-registration` writes, so the sentence a user reads and the bytes smelt
+ * writes cannot say different things. `file` is the project spelling; the machine one
+ * is the same file under `$HOME`, which is where both harnesses document their config.
+ * `packages/mcp/README.md`'s per-harness sections are the outside witness
+ * (`test/guards/setup-recipe.test.ts`).
+ */
+export function tomlMcpManual(file: string): HarnessMcpManual {
+  // The table exactly as `packages/mcp/README.md` prints it, and as
+  // `toml-mcp-registration` writes it — three lines of real TOML, not a one-line
+  // paraphrase of one: what a person does here is paste this, and a paraphrase is
+  // something they would have to translate first.
+  const table =
+    `[mcp_servers.smelt]\n` +
+    `command = "${MCP_RUN_ARGS[0] ?? ''}"\n` +
+    `args = ${JSON.stringify(MCP_RUN_ARGS.slice(1))}`;
+  return {
+    manual: `add this table to ${file}:\n${table}`,
+    manualUser: `add this table to ~/${file}:\n${table}`,
+  };
+}
+
+/**
  * What the wizard settled on, as the installer's renderers see it: the toggles, the
  * guard's settings, and the project directory every path is relative to. A renderer
  * takes this and returns bytes; nothing writes.
@@ -137,6 +201,13 @@ export function harnessLabel(profile: HarnessProfile): string {
 export interface HarnessInstallContext {
   /** Project directory: every path a renderer emits is portable relative to it. */
   readonly cwd: string;
+  /**
+   * Project or machine. A renderer reads it through `renderRoot(ctx.scope, ctx)`: at
+   * project scope a script inside the repo is spelled relative to it, because the
+   * config travels with the repo; at user scope nothing travels and the hook runs from
+   * whatever project the agent opened, so every path it emits is absolute.
+   */
+  readonly scope: InstallScope;
   /** The release writing these bytes — stamped into shared blocks for `smelt doctor`. */
   readonly writtenBy?: string;
   readonly guard: boolean;
@@ -160,6 +231,29 @@ export interface HarnessInstallContext {
 export type HarnessFileContent = (ctx: HarnessInstallContext) => string;
 
 /**
+ * The **documented** user-level home of one install artefact, relative to `$HOME`.
+ *
+ * It lives on the profile beside the project path because it is a per-harness fact,
+ * exactly like the project path is: `HarnessProfile` keeps owning every per-harness
+ * fact, and `harness/scope.ts` is the one resolver that folds a scope and a pair of
+ * roots into a path. A step with no `user` location is project-only, and a user-scope
+ * install reports it skipped with the reason rather than guessing.
+ */
+export interface HarnessUserLocation {
+  /** The path, relative to the home directory. */
+  readonly file: string;
+  /**
+   * Present when the harness **owns and rewrites** this file, so smelt must not: the
+   * value is the exact command a human runs instead. Claude Code's user-scope MCP
+   * registration lives under the top-level `mcpServers` key of `~/.claude.json`, a
+   * file its own docs say to manage through `/config` and the `claude mcp` CLI rather
+   * than by editing — so the step becomes a printed command that setup hands over and
+   * doctor checks read-only.
+   */
+  readonly manual?: string;
+}
+
+/**
  * One artefact `hooks install` writes. The kind is also the un-write: `json-hooks` is
  * merged in and strip-merged out, `marker-block` is upserted and stripped,
  * `own-file` is written and deleted, `mcp-registration` is nested-merged in and
@@ -181,6 +275,8 @@ export interface HarnessJsonHooks {
   readonly kind: 'json-hooks';
   /** Project-relative path of the file. */
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
   /** The pre-tool event, in this harness's spelling (`PreToolUse`, `BeforeTool`, …). */
   readonly event: string;
   /**
@@ -209,6 +305,8 @@ export interface HarnessJsonHooks {
 export interface HarnessMarkerBlock {
   readonly kind: 'marker-block';
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
   readonly block: HarnessFileContent;
   /** The marker line opening the block — also how `remove` finds it. */
   readonly start: string;
@@ -225,12 +323,68 @@ export interface HarnessMarkerBlock {
 export interface HarnessOwnFile {
   readonly kind: 'own-file';
   readonly file: string;
+  /** Where this file lives for the whole machine, when the harness documents one. */
+  readonly user?: HarnessUserLocation;
+  /**
+   * A former project-relative spelling of {@link file}, read but never written.
+   *
+   * A harness that renames the directory it loads from leaves every existing install
+   * one directory over: a reader that knows only today's spelling calls that file
+   * nobody's — doctor stops reporting it, `remove` stops taking it out — and the next
+   * install writes a second copy beside it. Declaring the old name here is what keeps
+   * the artefact one artefact: `locateFormer` resolves it, the state reader falls back
+   * to it when today's spelling is absent, and `remove` deletes both.
+   */
+  readonly formerly?: string;
   readonly content: HarnessFileContent;
   /** chmod after writing (Cline's hook must be executable). */
   readonly mode?: number;
   /** True when the file exists only to wire the guard — the guard toggle gates it. */
   readonly guardOnly: boolean;
+  /**
+   * How to ask this file whether it still runs the guard — the fact that turns
+   * `smelt doctor`'s `wired` from a statement about text into one about behaviour, for
+   * the three harnesses whose wiring is a file smelt owns whole rather than an entry
+   * in somebody's JSON.
+   *
+   * It is **data on the profile**, beside the renderer that wrote the file, because
+   * the shape being read back is the shape that renderer wrote: `harness/hook-command.ts`
+   * folds over it and no reader anywhere asks which harness this is. A step with no
+   * probe is a file doctor can only say it saw.
+   */
+  readonly probe?: HarnessOwnFileProbe;
 }
+
+/**
+ * How a whole-owned hook file is verified — one variant per *shape smelt writes*, not
+ * one per harness.
+ *
+ *  - `command-line`: the file is a script whose one interesting line is a rendered
+ *    hook command behind a fixed prefix — Cline's `exec node "<shim>"` wrapper and
+ *    Hermes's `- command: node "<shim>"` YAML. The prefix is the renderer's own, so
+ *    the command is handed to `parseHookCommand` (the one reader) rather than grepped
+ *    for a second time with a second syntax.
+ *  - `esm-plugin`: the file is an ES module smelt wrote that imports the built guard
+ *    core and exports a hook factory — opencode's plugin, the one harness whose hook
+ *    API is JavaScript rather than a stdin schema. It is verified by loading it.
+ */
+export type HarnessOwnFileProbe = {
+  /** The harness's own name for the event this file wires — `PreToolUse`. */
+  readonly event: string;
+} & (
+  | {
+      readonly kind: 'command-line';
+      /** What the renderer wrote in front of the command: `exec `, `- command: `. */
+      readonly prefix: string;
+    }
+  | {
+      readonly kind: 'esm-plugin';
+      /** The `const <name> = "<path>"` binding the renderer put the core's path in. */
+      readonly core: string;
+      /** The export the harness calls to obtain the hook table. */
+      readonly factory: string;
+    }
+);
 
 /**
  * An MCP server registration inside a JSON config the harness reads — Claude Code's
@@ -246,6 +400,8 @@ export interface HarnessMcpRegistration {
   readonly kind: 'mcp-registration';
   /** Project-relative path of the config file. */
   readonly file: string;
+  /** Where this registration lives for the whole machine, when one is documented. */
+  readonly user?: HarnessUserLocation;
   /** The container key, then the server's name: `['mcpServers', 'smelt']`. */
   readonly path: readonly [string, string];
   /** The server entry as a JSON value — the bytes are the editor's. */
@@ -265,6 +421,8 @@ export interface HarnessTomlMcpRegistration {
   readonly kind: 'toml-mcp-registration';
   /** Project-relative path of the config file. */
   readonly file: string;
+  /** Where this registration lives for the whole machine, when one is documented. */
+  readonly user?: HarnessUserLocation;
   /** The container key, then the server's name: `['mcp_servers', 'smelt']`. */
   readonly path: readonly [string, string];
   /** The server entry as a TOML table's body — string/number/boolean/string-array. */

@@ -135,6 +135,11 @@ export async function renderFacts(root = REPO_ROOT) {
   // repeats. The components read them from here, so a changed command edits the
   // recipe module and this line follows — never the other way round.
   const recipe = smelt.SETUP_RECIPE;
+  // The MCP registration is a *harness's* fact, not the recipe's: a `claude` CLI verb
+  // for Claude Code, a `[mcp_servers.smelt]` table for Codex and Grok. The two places
+  // the site prints one are Claude-Code-specific prose, so they read Claude Code's own
+  // profile — the recipe carries only `mcp.run`, which is true of every MCP client.
+  const claudeCode = (smelt.HARNESSES ?? []).find((profile) => profile.id === 'claude-code');
   const recipeFacts = {
     installLibrary: recipe.install?.library,
     installPnpm: recipe.install?.libraryPnpm,
@@ -147,7 +152,7 @@ export async function renderFacts(root = REPO_ROOT) {
     recommendedBudgetBytes: recipe.recommendedBudgetBytes,
     storeDir: recipe.store?.defaultDir,
     mcpRun: recipe.mcp?.run,
-    mcpRegister: recipe.mcp?.register,
+    mcpRegister: claudeCode?.mcp?.manual,
     steps: (smelt.SETUP_STEPS ?? []).map((step) => ({
       id: step.id,
       title: step.title,

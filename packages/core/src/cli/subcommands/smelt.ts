@@ -1,3 +1,5 @@
+import { dirname } from 'node:path';
+
 import { reconstruct } from '../../apply.ts';
 import { SUPPORTED_LANGUAGES } from '../../detect.ts';
 import { CliUsageError, SmeltError } from '../../errors.ts';
@@ -5,10 +7,12 @@ import { budgetRequired, openStore, readBlob, resolveStrategy } from '../../ops/
 import { smeltBlob } from '../../ops/verbs.ts';
 import { isStrategy, STRATEGIES } from '../../plan/planners.ts';
 import type { Strategy } from '../../plan/planners.ts';
+import { loadRerankStage } from '../../rerank/load.ts';
 import { MemoryElisionStore } from '../../store.ts';
 import type { DetectedLanguage, ElisionStore, SmeltResult } from '../../types.ts';
-import { CONFIG_FILE_NAME, configuredStore } from '../config.ts';
-import type { ConfiguredStore, LoadedConfig } from '../config.ts';
+import { CONFIG_FILE_NAME, configuredStore } from '../../config.ts';
+import type { ConfiguredStore, LoadedConfig, SmeltConfigRerank } from '../../config.ts';
+import { PLAIN, stderrPalette } from '../lava.ts';
 import { formatReport } from '../report.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -73,6 +77,20 @@ export interface ResolvedRun {
   readonly producer?: string;
   readonly language?: DetectedLanguage;
   readonly json: boolean;
+  /**
+   * The reranker opt-in, exactly as the config wrote it, plus the directory its `path`
+   * resolves against — the config file's own directory, like `store.path`.
+   *
+   * The *decision* is merged here; the *loading* is not, and the split is deliberate.
+   * `resolveRun` is a pure merge of flags, config and built-ins — it reads no file,
+   * imports no module and touches no environment, which is what makes every precedence
+   * question answerable by reading one synchronous function. Importing a module off
+   * disk and reading an API key out of the environment is execution, so it happens in
+   * `runSmelt`, where every other side effect of a run already lives.
+   *
+   * Absent when the config named no reranker, which is every default config.
+   */
+  readonly rerank?: { readonly config: SmeltConfigRerank; readonly dir: string };
 }
 
 /**
@@ -266,6 +284,9 @@ export function resolveRun(
     strategy: strategy.strategy,
     strategySource: strategy.source,
     store: configuredStore(config),
+    ...(config?.config.rerank === undefined
+      ? {}
+      : { rerank: { config: config.config.rerank, dir: dirname(config.path) } }),
     ...(invocation.file === undefined ? {} : { file: invocation.file }),
     focus: invocation.focus,
     ...(invocation.producer === undefined ? {} : { producer: invocation.producer }),
@@ -287,6 +308,18 @@ export function resolveRun(
 async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
   const inputText = readInput(run.file, io);
 
+  // The opt-in, loaded here and only here: a config with no `rerank` block makes this
+  // an `undefined` in and an `undefined` out, and nothing is imported. See
+  // `rerank/load.ts` for why the adapter package is never in smelt's import graph.
+  const rerank =
+    run.rerank === undefined
+      ? undefined
+      : await loadRerankStage({
+          rerank: run.rerank.config,
+          configDir: run.rerank.dir,
+          env: io.env ?? {},
+        });
+
   const outcome = await smeltBlob({
     text: inputText,
     source: run.file ?? '<stdin>',
@@ -297,6 +330,7 @@ async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
     ...(run.language === undefined ? {} : { language: run.language }),
     focus: run.focus,
     ...(run.producer === undefined ? {} : { producer: run.producer }),
+    ...(rerank === undefined ? {} : { rerank }),
   });
 
   if (run.json) {
@@ -304,7 +338,10 @@ async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
   } else {
     io.stdout(outcome.result.text);
   }
-  io.stderr(formatReport(outcome));
+  // The report goes to stderr, so it is painted by the stderr switch: `smelt big.log
+  // --budget 4000 > small.log` leaves the payload in a file and this report on a
+  // terminal, and that is the half a person reads.
+  io.stderr(formatReport(outcome, run.json ? PLAIN : stderrPalette(io)));
 
   return outcome.result.outputBytes > run.budgetBytes ? EXIT.overBudget : EXIT.ok;
 }
@@ -350,9 +387,11 @@ function runReconstruct(text: string, io: CliIo): number {
   }
 
   io.stdout(original);
+  const lava = stderrPalette(io);
   io.stderr(
-    `${CLI_NAME}  reconstructed ${String(result.inputBytes)} B from ` +
-      `${String(result.elisions.length)} elisions — byte for byte\n`,
+    `${lava.paint('brand', CLI_NAME)}  reconstructed ` +
+      `${lava.paint('number', String(result.inputBytes))} B from ` +
+      `${String(result.elisions.length)} elisions — ${lava.paint('good', 'byte for byte')}\n`,
   );
   return EXIT.ok;
 }

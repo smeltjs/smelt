@@ -1,0 +1,9 @@
+smelt doctor — binary 9.9.9-test, reading <project>
+
+  ✗ smelt.config.json: schema 1, budget 4000, store directory at .smelt/store (MISSING)
+  ✗ ORPHAN: the store directory (.smelt/store) does not exist — retrieves across processes would fail
+
+  Repair:
+    smelt setup
+
+✗ Not current — see above. Doctor never writes; smelt setup is the repair.

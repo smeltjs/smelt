@@ -65,7 +65,7 @@ export type {
  * Config: the nearest `smelt.config.json` (walking up from the cwd, same discovery
  * as the CLI) may carry a `hooks` block — `thresholdBytes` and `enforcement` — plus
  * the `defaultBudgetBytes` the suggested command quotes. This file reads that config
- * with its own tolerant reader instead of importing `cli/config.ts`: the CLI's strict
+ * with its own tolerant reader instead of importing `config.ts`: the CLI's strict
  * parser sits on the planner import graph, and a *guard* must fail open where the CLI
  * correctly refuses. `test/hooks-guard-core.test.ts` pins the two readers to the same
  * key names and defaults, so they cannot drift apart silently.
@@ -289,7 +289,7 @@ function enforcementMode(
   return 'deny';
 }
 
-/** The same upward walk `cli/config.ts` does, re-implemented to keep this module tiny. */
+/** The same upward walk `config.ts` does, re-implemented to keep this module tiny. */
 export function findGuardConfigFile(cwd: string): string | undefined {
   let dir = resolve(cwd);
   for (;;) {

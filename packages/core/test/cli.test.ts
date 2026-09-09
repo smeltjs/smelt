@@ -9,12 +9,15 @@ import { STRUCTURAL_LANGUAGES } from '../src/plan/structural.ts';
 import {
   CLI_JSON_FORMAT,
   cliUsage,
+  closedSinkCode,
   EXIT,
   formatReport,
   parseSmeltArgs,
   runCli,
 } from '../src/cli/run.ts';
 import type { CliIo } from '../src/cli/run.ts';
+import { refusingSink } from '../src/cli/shell.ts';
+import { CliUsageError } from '../src/errors.ts';
 import type { SmeltResult } from '../src/types.ts';
 
 /**
@@ -462,5 +465,61 @@ describe('--help and --version', () => {
     // invalid and silently REMOVES the bin entry from the published manifest.
     expect(manifest.bin['smelt']).toBe('dist/cli/bin.js');
     expect(typeof manifest.version).toBe('string');
+  });
+});
+
+/**
+ * The output sink's half of "a closed stream is a refusal, not a crash". The other
+ * half — the asynchronous `'error'` event, which no `try`/`catch` can see — is only
+ * assertable from a real process, and lives in `test/cli-bin.test.ts`.
+ */
+/** A write failure exactly as Node raises one: an Error carrying an errno code. */
+const thrown = (code: string): Error => Object.assign(new Error('write failed'), { code });
+
+describe('a write nobody is reading is refused, and nothing else is swallowed', () => {
+  it('names the closed-sink codes and no others', () => {
+    for (const code of ['EPIPE', 'EINVAL', 'ERR_STREAM_DESTROYED']) {
+      expect(closedSinkCode(thrown(code)), code).toBe(code);
+    }
+    for (const other of ['ENOSPC', 'EACCES', '']) {
+      expect(closedSinkCode(thrown(other)), other).toBeUndefined();
+    }
+    expect(closedSinkCode(new Error('no code at all'))).toBeUndefined();
+    expect(closedSinkCode(undefined)).toBeUndefined();
+  });
+
+  it("turns a closed-sink write into the caller's own refusal", () => {
+    const sink = refusingSink(
+      () => {
+        throw thrown('EPIPE');
+      },
+      (why) => new CliUsageError(`nothing is reading (${why})`),
+    );
+    expect(() => sink('hello')).toThrow(CliUsageError);
+    expect(() => sink('hello')).toThrow(/nothing is reading \(EPIPE\)/);
+  });
+
+  it('lets every other write failure travel, unswallowed', () => {
+    // A full disk is not a closed pipe, and answering it with a usage error would
+    // tell the user to change their invocation over something they cannot fix there.
+    const sink = refusingSink(
+      () => {
+        throw thrown('ENOSPC');
+      },
+      () => new CliUsageError('never reached'),
+    );
+    expect(() => sink('hello')).toThrow(/write failed/);
+    expect(() => sink('hello')).not.toThrow(CliUsageError);
+  });
+
+  it('passes the text straight through when the stream is fine', () => {
+    const seen: string[] = [];
+    const sink = refusingSink(
+      (text) => seen.push(text),
+      () => new CliUsageError('never reached'),
+    );
+    sink('one');
+    sink('two');
+    expect(seen).toEqual(['one', 'two']);
   });
 });

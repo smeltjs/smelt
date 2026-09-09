@@ -8,11 +8,12 @@ import { describe, expect, it } from 'vitest';
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
 import { EXIT, runCli } from '@guard/cli/run';
-import { parseConfig } from '@guard/cli/config';
+import { parseConfig } from '@guard/config';
 import { runSetup } from '@guard/cli/setup';
 import type { SetupReceipt } from '@guard/cli/setup';
 import type { AnswerStream } from '@guard/cli/shell';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
+import { harnessById } from '@guard/harness/registry';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -125,9 +126,10 @@ describe('smelt setup applies the recipe in one command', () => {
       expect(readFileSync(join(cwd, 'CLAUDE.md'), 'utf8')).toContain('smelt:hooks');
 
       // The MCP step: claude-code's profile carries the registration, so it is
-      // applied to `.mcp.json` — byte-faithfully, with the recipe's own command.
+      // applied to `.mcp.json` — byte-faithfully, and the receipt names that
+      // profile's own command, not a command the recipe holds for every harness.
       expect(receipt.mcp.status).toBe('applied');
-      expect(receipt.mcp.command).toBe(SETUP_RECIPE.mcp.register);
+      expect(receipt.mcp.command).toBe(harnessById('claude-code')?.mcp?.manual);
       const mcpConfig = JSON.parse(readFileSync(join(cwd, '.mcp.json'), 'utf8')) as {
         mcpServers: { smelt: { command: string; args: readonly string[] } };
       };
@@ -144,6 +146,62 @@ describe('smelt setup applies the recipe in one command', () => {
         );
       }
       expect(receipt.format).toBe('smelt.setup.v1');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('the MCP step is the one the chosen harness actually reads', async () => {
+    const cwd = scratch('mcp-per-harness');
+    try {
+      const receipt = await runYes(cwd, ['--harness', 'codex']);
+
+      // Codex's registration is a TOML table in its own config file, and setup wrote
+      // it. The receipt used to hand back Claude Code's CLI verb for every harness —
+      // a command about a file Codex does not read, run by a binary the user may not
+      // have. What it names now is what was written, in the words Codex's own docs use.
+      expect(receipt.mcp.status).toBe('applied');
+      expect(receipt.mcp.command).toContain('[mcp_servers.smelt]');
+      expect(receipt.mcp.command).toContain('.codex/config.toml');
+      expect(
+        receipt.mcp.command,
+        'the recipe’s Claude Code command, printed at somebody wiring Codex',
+      ).not.toContain('claude mcp add');
+      expect(readFileSync(join(cwd, '.codex', 'config.toml'), 'utf8')).toContain(
+        '[mcp_servers.smelt]',
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('names every registration it wrote, not just the first', async () => {
+    const cwd = scratch('mcp-two-harnesses');
+    try {
+      // Two harnesses, two different registrations, both written by this run: codex's
+      // TOML table and opencode's JSON key. `mcp.command` can only say one of them, so
+      // an agent reading it alone was told about codex and concluded opencode had not
+      // been registered — while `opencode.json` on disk said otherwise.
+      const receipt = await runYes(cwd, ['--harness', 'codex', '--harness', 'opencode']);
+      expect(receipt.mcp.status).toBe('applied');
+
+      const commands = receipt.mcp.commands ?? [];
+      expect(commands, 'the receipt names one registration for a run that wrote two').toHaveLength(
+        2,
+      );
+      expect(commands.join('\n')).toContain('.codex/config.toml');
+      expect(commands.join('\n')).toContain('opencode.json');
+      // `command` is `smelt.setup.v1`'s own field and still means the first of them.
+      expect(receipt.mcp.command).toBe(commands[0]);
+
+      // Both really are on disk — the receipt is a claim about what happened.
+      expect(readFileSync(join(cwd, '.codex', 'config.toml'), 'utf8')).toContain(
+        '[mcp_servers.smelt]',
+      );
+      expect(JSON.parse(readFileSync(join(cwd, 'opencode.json'), 'utf8'))).toHaveProperty([
+        'mcp',
+        'smelt',
+      ]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -222,26 +280,93 @@ describe('smelt setup applies the recipe in one command', () => {
         version: '2.0.0',
         cwd,
       });
-      expect(doctorCode).toBe(EXIT.ok);
-      expect((JSON.parse(doctorOut) as { current: boolean }).current).toBe(true);
+      // Named, because this is the assertion every merge-policy break trips first and a
+      // witness reading `expected 3 to be +0` names nothing: what is asserted is that
+      // the repair a doctor report *named* actually repaired, so the next doctor is
+      // current. A setup that skips its own blocks, or writes a file it does not own,
+      // or lies about which it touched, leaves this loop open.
+      expect(
+        doctorCode,
+        'the update loop did not close: doctor still refuses after the repair it named',
+      ).toBe(EXIT.ok);
+      expect(
+        (JSON.parse(doctorOut) as { current: boolean }).current,
+        'doctor read the repaired install back as not current',
+      ).toBe(true);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  it('never overwrites an existing non-config file, even with --yes', async () => {
+  it('merges into an existing file, and refuses the one it would have to write whole', async () => {
     const cwd = scratch('protect');
     try {
-      const theirs = '# My house rules — smelt must not touch this.\n';
-      const { writeFileSync } = await import('node:fs');
+      const theirs = '# My house rules — smelt must not lose a byte of this.\n';
+      const { mkdirSync, writeFileSync } = await import('node:fs');
       writeFileSync(join(cwd, 'CLAUDE.md'), theirs);
+      // A file smelt writes *whole*, sitting there with somebody else's bytes in it.
+      mkdirSync(join(cwd, '.opencode/plugins'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugins/smelt-guard.js');
+      const notOurs = 'export const theirs = true;\n';
+      writeFileSync(plugin, notOurs);
 
-      const receipt = await runYes(cwd, ['--harness', 'claude-code']);
+      const receipt = await runYes(cwd, ['--harness', 'claude-code', '--harness', 'opencode']);
 
-      expect(readFileSync(join(cwd, 'CLAUDE.md'), 'utf8')).toBe(theirs);
-      const skipped = receipt.files.find((file) => file.name === 'CLAUDE.md');
-      expect(skipped?.action).toBe('skipped');
+      // A marker-block file is *merged*: their bytes are all still there, and so is
+      // our block. `--yes` used to skip this file and point at a wizard, which meant
+      // the one command an agent can drive could not finish the install it started.
+      const claudeMd = readFileSync(join(cwd, 'CLAUDE.md'), 'utf8');
+      expect(claudeMd).toContain(theirs.trim());
+      expect(claudeMd).toContain('smelt:hooks');
+      const merged = receipt.files.find((file) => file.name === 'CLAUDE.md');
+      expect(merged?.action).toBe('written');
+      // The receipt says only what the editor can deliver. It used to claim "every
+      // byte outside smelt's own entries is unchanged", which a JSON hooks merge does
+      // not give: it re-serialises the `hooks` value, so a foreign entry inside it
+      // keeps its content and loses its formatting. The claim is about entries.
+      expect(merged?.detail).toContain("every entry that is not smelt's is preserved");
+      expect(merged?.detail).not.toContain("every byte outside smelt's own entries");
+
+      // A whole-owned file has nothing to merge into, so it is refused — untouched,
+      // reported skipped, with a reason that names it.
+      expect(
+        readFileSync(plugin, 'utf8'),
+        "a whole-owned file that is not smelt's was written over: those bytes are gone, " +
+          'and no merge could have preserved them',
+      ).toBe(notOurs);
+      const skipped = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
+      expect(skipped?.action, 'the receipt calls a file it did not write something else').toBe(
+        'skipped',
+      );
+      expect(skipped?.detail).toContain('smelt-guard.js');
       expect(skipped?.detail).toContain('hooks install');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('repairs a whole-owned file that is already its own', async () => {
+    const cwd = scratch('repair-whole');
+    try {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(join(cwd, '.opencode/plugins'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugins/smelt-guard.js');
+      // Ours — it carries the ownership token — but stale: an older release's bytes.
+      writeFileSync(plugin, '// smelt:hooks — written by an older release\n');
+
+      const receipt = await runYes(cwd, ['--harness', 'opencode']);
+
+      expect(
+        readFileSync(plugin, 'utf8'),
+        "setup treated a whole-owned file that IS smelt's as foreign and left it stale: " +
+          'doctor names it behind for ever, and the repair it names skips it',
+      ).toContain('tool.execute.before');
+      const repaired = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
+      expect(repaired?.action, 'a repaired file must be reported as written').toBe('written');
+      // A file rewritten whole cannot claim bytes outside the edit survived — there
+      // was no edit, and there is nothing outside it. What is true is that all of
+      // those bytes were smelt's.
+      expect(repaired?.detail).toBe("repaired — only smelt's own entries in it changed");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -472,8 +597,16 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     kind: 'src',
+    id: 'setup-writes-a-whole-file-that-is-not-ours',
+    file: 'cli/merge-policy.ts',
+    find: '  return fileIsOursToRepair(file);',
+    replace: '  return true;',
+    why: "the merge policy's one refusal wired shut — a run with nobody to ask would write smelt's own bytes over a file it does not own and cannot merge into (somebody's opencode plugin, Cline's hook wrapper), which is the single act the whole policy exists to prevent",
+  },
+  {
+    kind: 'src',
     id: 'setup-stops-repairing-its-own-blocks',
-    file: 'cli/setup.ts',
+    file: 'cli/merge-policy.ts',
     find: "  return fileIsOurs(file.name, readFileSync(file.path, 'utf8'));",
     replace: '  return false;',
     why: 'setup treating its own instruction blocks as foreign — doctor would name them behind forever and the repair it names would skip them, the update loop this whole arc exists to close, quietly not closing',
@@ -481,17 +614,33 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-claims-to-skip-while-touched',
-    file: 'cli/setup.ts',
+    file: 'cli/merge-policy.ts',
     find: "        action: 'skipped',",
     replace: "        action: 'written',",
     why: 'the receipt claiming a skipped file was written — the receipt is what an agent reads to verify the run, and a receipt that lies is worse than no receipt',
   },
   {
     kind: 'src',
+    id: 'setup-names-only-the-first-registration',
+    file: 'cli/setup.ts',
+    find: '  const unique = [...new Set(commands)];',
+    replace: '  const unique = commands.slice(0, 1);',
+    why: 'the receipt naming one registration for a run that wrote two — an agent reading it concludes the harness it cannot see was never registered, and re-registers by hand what setup already wrote',
+  },
+  {
+    kind: 'src',
+    id: 'setup-prints-one-harness-command-for-all',
+    file: 'cli/setup.ts',
+    find: "  return scope === 'user' ? (manual.manualUser ?? manual.manual) : manual.manual;",
+    replace: '  return SETUP_RECIPE.mcp.run;',
+    why: 'the MCP step read off the recipe again instead of off the harness that carries it — somebody wiring Codex or Grok is told about a bare stdio command instead of the `[mcp_servers.smelt]` table setup just wrote them, which is the defect the per-harness fact exists to end',
+  },
+  {
+    kind: 'src',
     id: 'setup-claims-applied-when-manual',
     file: 'cli/setup.ts',
-    find: "? { status: 'applied', command: SETUP_RECIPE.mcp.register }",
-    replace: "? { status: 'manual', command: SETUP_RECIPE.mcp.register }",
+    find: "      mcp: mcpVerdictCommands(\n        'applied',",
+    replace: "      mcp: mcpVerdictCommands(\n        'manual',",
     why: 'the receipt calling an applied registration manual — the agent reading --json would re-register by hand what setup already wrote, and the receipt would be wrong in the direction that costs work',
   },
 ];

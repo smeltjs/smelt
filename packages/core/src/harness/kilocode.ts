@@ -9,7 +9,7 @@ import { instructionSnippet } from './snippet.ts';
  * manual enforcement legs the snippet has no room for. `remove` deletes it.
  */
 function kilocodeRulesSource(ctx: HarnessInstallContext): string {
-  return `${instructionSnippet(ctx.thresholdBytes, ctx.budgetBytes, ctx.writtenBy)}
+  return `${instructionSnippet(ctx.thresholdBytes, ctx.budgetBytes, ctx.writtenBy, ctx.scope)}
 <!-- smelt:hooks v1 advisory notes -->
 
 KiloCode has no first-class hook API (Kilo-Org/kilocode#5827), so nothing above is
@@ -28,6 +28,11 @@ export const kilocode: HarnessProfile = {
   tier: 'advisory',
   detect: ['.kilocode'],
   detectHome: ['.config/kilo'],
+  // Project-only at user scope, deliberately: the global file KiloCode documents is
+  // `~/.config/kilo/AGENTS.md` (capability matrix, kilo.ai/docs/customize/agents-md),
+  // and this profile's instruction layer is a file smelt owns *whole* — writing it
+  // there would delete somebody's global AGENTS.md. A rules file at that level is not
+  // documented, so a user-scope install says so instead of guessing.
   instructionFile: '.kilocode/rules/smelt.md',
   instructions: kilocodeRulesSource,
   caveats: [

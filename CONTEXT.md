@@ -22,12 +22,29 @@ codebase-design glossary.
   removing any bytes itself. `applyPlan` is the only byte-remover.
 - **Focus**: the caller's statement of what the task is actually about; focus-matched
   regions survive planning.
-- **Store**: content-addressed home of elided bytes (`ElisionStore`). No eviction: a
-  store that can forget turns "reversible" into "reversible, usually".
+- **Store**: content-addressed home of elided bytes (`ElisionStore`). No _automatic_
+  eviction: a store that can forget by itself turns "reversible" into "reversible,
+  usually". The one deletion is **Prune**, below, and it is a verb the user types.
 - **Expansion rate**: retrieved-back fraction of what smelt hid — the honest signal of
   over-pruning. Measured, never thresholded. The marker's `retrieve("hash")` is a real
   command — `smelt retrieve <hash>` — so the rate moves (and is measurable, via
   `smelt stats`) from pure shell, not only through the `smelt_retrieve` tool.
+- **Prune** (`smelt store prune`): the only eviction in smelt, and the reason a store
+  that deletes can still satisfy Law 3. Explicit (a user typed the verb; nothing prunes
+  on a timer, a size cap, or when a store is opened), bounded by a cut-off that user
+  named (`--older-than <n>d|h|w`, no default), journalled **before** the bytes go
+  (`evict "<hash>" "<date>"`, `fsync`ed, then the unlink), and counted: `elisionsStored`
+  keeps counting what was evicted, so pruning cannot raise the **Expansion rate** by
+  shrinking its own denominator, and the **Ledger** is untouched — the rule did make
+  that cut. Only `bytesStored` falls, because only `bytesStored` measures the disk. A
+  later `retrieve` of an evicted hash raises **`EvictedHashError`**, never
+  `UnknownHashError`: "you pruned it on <date>" and "it was never elided" are different
+  answers, and the second one would be false. That lookup **still counts as a miss** —
+  `retrieveCalls` and `misses` move exactly as they would for a hash nobody ever stored,
+  because the model asked for material back and did not get it; only the error text
+  differs, because only the error is read by a person deciding what went wrong. `has()`
+  answers `false` — a boolean has no room for a reason. _Avoid_: eviction policy, GC,
+  LRU, TTL.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by
@@ -84,8 +101,20 @@ codebase-design glossary.
   compile error. It imports nothing from `cli/` — that cycle is why the `--harness` help
   list used to be hand-typed — and every rendered list and derived set (`HARNESS_IDS`,
   `MANAGED_EVENTS`, `GUARD_EVENTS`, `JSON_HOOK_FILES`, `GUARD_ONLY_FILES`) is a view
-  over it. `planInstall`/`planRemove` fold over `profile.install`; they hold no per-harness
-  case. `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
+  over it. `planInstall`/`planRemove` (**InstallPlan**, `src/harness/plan.ts`) fold over
+  `profile.install`; they hold no per-harness case. `profile.mcp` is the same discipline
+  for the MCP server: a profile that registers smelt carries the registration _as a
+  person performs it_ (`{manual, manualUser?}`) beside the step that writes it — Claude
+  Code's CLI verb, Codex's and Grok's `[mcp_servers.smelt]` table, opencode's `mcp` key
+  — each the snippet a person pastes, composed from `MCP_RUN_ARGS` so it and the bytes
+  smelt writes cannot drift. The guard reads `packages/mcp/README.md` **one section at a
+  time**: every file a manual names and every line of its snippet must be in that
+  harness's own section, because the TOML table is identical in two of them and a
+  whole-file search stays green while a profile points at somebody else's config.
+  `smelt setup` printed the recipe's Claude Code command for _every_ harness before it,
+  which is a command about a file Codex does not read; and its receipt now carries
+  `mcp.commands`, every registration a run is about, because `mcp.command` can only name
+  one and a run wiring two harnesses had the second read as "not registered". `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
   what every shim shares — the rewrite-input splice, the deny fallback, and the one
   rewrite announcement (also spliced into the generated opencode plugin). ShimAdapter
   stays public as the escape hatch for a harness a table cannot express. The **tier
@@ -132,6 +161,91 @@ why }`, where `path` is the spelling to write. It is asked **per script actually
   the `why` says "nothing here proves an upgrade moves it — nor that it keeps it" and
   never that anything is replaced in place. `smelt hooks install` and `smelt setup`
   print the unstable ones (`smelt.setup.v1`'s optional `notes`).
+- **HookCommand**: what one entry in a harness's hook config _says_, as a value, and
+  both directions over it (`src/harness/hook-command.ts`). A guard command is
+  `{ kind: 'guard', script }`; the three lifecycle commands are
+  `{ kind: 'stats' | 'map' | 'lint', invocation: 'path' | 'node', script?, args }` —
+  the Invocation's two spellings, carried rather than re-derived. `renderHookCommand`
+  is the only writer and `parseHookCommand` the only reader, and
+  `parseHookCommand(renderHookCommand(c, cwd))` equalling `c` is a guard, because the
+  string used to have one writer and _three_ substring readers (the ownership check the
+  merge runs, the toggle reader that tells the opening map from the instruction lint,
+  and `cli/installed.ts`'s per-file "is this ours"), each carrying its own needle.
+  `undefined` is load-bearing: it means **foreign**, and a re-run may only ever replace
+  entries it can prove are its own — which is why the parser accepts three quotings and
+  the `$(readlink -f …)` workaround people have on disk today, and refuses
+  `node other.js`. **The probe** is the module's second half and the reason `smelt
+doctor` can now say _verified_: `probeHookCommand` runs the command — for a guard,
+  against a payload built from the harness's own `HarnessHookSchema` naming an
+  oversized file in a fresh temp directory, beside a `smelt.config.json` pinning the
+  threshold so the walk up to the filesystem root cannot change the premise — and
+  answers `fires` / `inert` / `missing`. `probeOwnFile` is its sibling for the three
+  harnesses whose wiring is a file smelt owns **whole** (Cline's wrapper, Hermes's YAML,
+  opencode's plugin): those carry no event-to-entry table, so what each file runs and how
+  to ask it is declared on the profile as data (`HarnessOwnFileProbe` — a command behind
+  the renderer's own prefix, or an ES module to load), and this module folds over that
+  declaration without ever asking which harness it is looking at. Every harness is
+  probed; nothing reports a bare `wired` for want of a reading.
+  `wired` used to be a text fact, and the two defects Invocation fixed (an inert shim
+  through a symlink, a keg path `brew upgrade` deleted) both leave that text exactly as
+  it was; `inert` is the dangerous verdict, because empty stdout is how every harness
+  schema spells _allow_. Probing is a read, so ADR-0003 holds — doctor still writes no
+  byte of the project, and the one thing it spawns is `process.execPath` (the narrower
+  ruling under which `node:child_process` is on the Law 1 allowlist at all).
+- **InstallScope** (`src/harness/scope.ts`): where an install goes — `'project'` or
+  `'user'`. Every artefact the installer writes used to be a bare relative path joined
+  to `cwd`, at write time and, separately, at read time. That is right for a project and
+  wrong for the only way to get one config and one store for every project on a machine,
+  which is to install from `$HOME`: config discovery walks up, so a config at `~` is the
+  one every project below it finds. Run from there, the installer wrote `~/CLAUDE.md`,
+  `~/.mcp.json`, `~/AGENTS.md`, `~/GEMINI.md` and `~/opencode.json` — files no harness
+  reads at that level (Claude Code reads `~/.claude/CLAUDE.md`, Codex
+  `~/.codex/AGENTS.md`, Gemini `~/.gemini/GEMINI.md`, opencode
+  `~/.config/opencode/opencode.json`) — and doctor read from the same wrong places, so
+  the writer and the reader agreed the install was healthy while nothing was wired. The
+  user-level location is therefore a **per-harness fact**, `HarnessUserLocation` on the
+  profile beside the project path, and the seam is one resolver:
+  `locateStep(step, scope, {cwd, home})` → `{ path?, name?, skipped?, manual? }`. Project
+  scope returns exactly `join(cwd, step.file)`, so a project install is unchanged;
+  user scope returns the location that harness's own documentation names. `path` is
+  absent **exactly when** `skipped` is set, which is what makes the old defect
+  unreachable rather than merely unwritten: there is no path to fall back to, and the
+  compiler says so. `planInstall`, `planRemove`, `readInstalledState`, `presetToggles`,
+  doctor and the snippet all go through it. `manual` is the third answer — a location
+  that exists but is not smelt's to write, because the harness owns and rewrites the
+  file: Claude Code's user-scope MCP registration lives under the top-level `mcpServers`
+  key of `~/.claude.json`, so setup prints `claude mcp add --scope user …` and doctor
+  checks the key read-only. At user scope the config is `~/smelt.config.json` (decided,
+  not discovered) with the store at `~/.smelt/store`, and the marker block says "This
+  machine uses smelt" rather than "This project". Selection is `--scope` on `setup`,
+  `hooks install/remove` and `doctor`, defaulting to `user` when `cwd` realpaths to the
+  home directory; both receipts carry it. A harness that documents no user-level home
+  for an artefact is **project-only** and reported skipped with the reason — today
+  Hermes, KiloCode and Aider entirely, plus Grok's and Cursor's instruction layers and
+  Grok's hook file. `locateFormer` is the resolver's read-only sibling: where a harness
+  has renamed the directory it loads from (opencode's `.opencode/plugin/` →
+  `.opencode/plugins/`), the step declares the old spelling and it is still _read_ and
+  still _removed_ — never written. One artefact, two names: without it every existing
+  install becomes a file nobody owns, `remove` leaves it behind and a re-run reads the
+  toggles back as though nothing were installed. With both names on disk the reading
+  carries the old one as **superseded**, and doctor reports it as an orphan with the
+  command that takes it out.
+- **InstallPlan** (`src/harness/plan.ts`): every file an install would write, and every
+  one `remove` would take back out, computed against the disk and writing nothing —
+  `planInstall(cwd, choices)` → `{files, skipped, notes, manual}` and its mirror
+  `planRemove`. Both are folds over `HarnessProfile.install` with no per-harness case:
+  what to write is the profile's, where it goes is `locateStep`'s, what a hook entry
+  says is `harness/hook-command.ts`'s, and the byte-faithful edit is `text/json-edit.ts`
+  or `text/toml-edit.ts`. It sits in `harness/` because **planning is not a verb**: both
+  install verbs plan identically and differ only in who consents to the write
+  (**MergePolicy**). While the fold sat inside the hooks wizard's module, `smelt setup`
+  imported that wizard to plan, and the file was ~1200 lines of two unrelated jobs.
+  It imports nothing from `cli/`: the config schema it goes through is `src/config.ts`
+  at the root, because `smelt.config.json` is what the install is _for_, and a key added
+  to the schema must reach the installer and `init` together or not at all.
+  `test/guards/module-seams.test.ts` pins both halves: the import edges, and the count
+  of the declarations, because an import edge that is merely absent is satisfied by a
+  copy.
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
   bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
   built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from
@@ -276,6 +390,42 @@ why }`, where `path` is the spelling to write. It is asked **per script actually
   divergences stay in the adapters — `smelt retrieve`/`stats` refuse a memory store,
   the MCP server accepts one and hints — which is why `resolveStoreRun` stays
   unexported: it is the CLI's policy, not a shared law.
+- **Rerank slot**: where a `RerankStage` actually bites — `src/rerank/protect.ts`,
+  between the planner's decision and the cut. The **candidates** are the planner's own
+  proposed elisions (the regions actually at stake), the **query** is the run's focus
+  terms joined, and **what the stage returns is what smelt spares**: those entries are
+  dropped from the plan, so they survive into the output as if a focus term had matched
+  them. The returned list is a _selection_, not a ranking of everything — a stage that
+  returns every candidate spares every candidate, and the run emits its input unchanged
+  and exits 0, which is the one implementation mistake here that fails silently. A stage
+  can only spare, never add, so a run may come back **over budget**, reported in the words
+  a too-large focus window already earns. No candidates or no query and the stage is not
+  called at all; every way a stage can fail — including throwing, which a hosted one
+  ordinarily does — comes back as a `RerankStageError`, never as an unhandled crash. What
+  it did comes back as a **RerankAttribution** (`{adapter, model?, candidates, kept,
+skipped?}`) on `SmeltResult`, which the stderr report, the `--json` envelope and
+  `smelt_file`'s report block all render from — one value, three surfaces, no front door
+  counting anything itself. `candidates` is always the measured size of the candidate set
+  and `skipped` names the missing precondition when the stage was not called, so a receipt
+  never carries a count nobody took. _Avoid_: "rerank filters", "rerank cuts" — it only
+  ever keeps.
+- **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
+  smelt setting that can send a caller's source to a third party. Two kinds: `module`
+  (an ESM file of the consumer's own, resolved against the config file, default-exporting
+  a `RerankStage`) and `voyage` (`@smeltjs/rerank-voyage`, which the consumer installs).
+  **Absent means nothing happens** — no import, no call — and that is what every default
+  config says. `loadRerankStage` (`src/rerank/load.ts`) is the one loader for both front
+  doors; every failure is a usage error naming the missing thing (the path, the `topK`
+  this kind requires, the environment **variable**, the uninstalled package) and never a
+  silent fall back to an unranked run. There is no `SMELT_RERANK_API_KEY` and no
+  environment variable smelt reads that a config did not name. _Avoid_: "the rerank flag"
+  (there is none), "enable reranking".
+- **Opt-in rerank bucket**: `OPT_IN_RERANK_PACKAGES` in `src/net/policy.ts` — adapter
+  packages a config block may **load** at runtime and no smelt module may **import**.
+  The name is data here and nowhere else in `src`; `load.ts` hands it to `import()`, so
+  the Law 1 walk finds no edge, and both packages' `classify()` rule an import of it
+  **forbidden** rather than unclassified. The rule in one line: _smelt may know this
+  package's name; smelt may not depend on it._
 - **guard-kit**: the guards' shared machine — `packages/guard-kit`, test-only,
   `private: true`, never published and never more than a devDependency. It owns the
   import-graph **walker** (`walkImportGraph`, `assertNoNetwork`) that both packages'
@@ -304,9 +454,13 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   satisfies strict-mode structured outputs. Those are properties of _published bytes_,
   which no repo-level check can see.
 - **SmeltConfig**: the parsed shape of `smelt.config.json`, and the module that owns the
-  schema (`src/cli/config.ts`) owns **both** directions — `parseConfig` reads,
-  `renderConfig` writes, one key order. What goes into a config stays each verb's
-  **policy**: the `init` wizard always writes the strategy and store it asked about,
+  schema (`src/config.ts`) owns **both** directions — `parseConfig` reads,
+  `renderConfig` writes, one key order. It sits at the package root, not under `cli/`:
+  the file is a CLI concern (the programmatic API never reads it), but the schema is
+  read by `harness/`, `ops/` and `rerank/` too, and a module three layers depend on
+  cannot live inside one of them — that is how `harness/` came to have a `cli/` import
+  at all. What goes into a config stays each verb's **policy**: the `init` wizard always
+  writes the strategy and store it asked about,
   `hooks install` injects a directory store when a config carries none (the deny reasons
   promise `smelt retrieve <hash>`, which a memory store cannot honour across processes).
   The round trip — `parseConfig(renderConfig(c))` equals `c` field for field — is the
@@ -318,7 +472,7 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   block between two marker lines. The contract is the whole interface: change what you
   were asked to and leave every other byte alone — indentation, key order, escapes,
   number spellings, unknown keys. It knows nothing about harnesses or hooks;
-  `cli/hooks.ts` decides _what_ the merged `hooks` value is and hands it over. Under
+  `harness/plan.ts` decides _what_ the merged `hooks` value is and hands it over. Under
   `src/text/`, not `cli/`, because it is strings in, strings out — no argv, no stdout,
   no CLI import. `test/guards/json-edit.test.ts` pins the round trip. Its sibling,
   `src/text/toml-edit.ts` (KOT-258), carries the same contract for TOML —
@@ -358,24 +512,98 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   model, which Law 1 forbids; so smelt does the first and prints the guide's own
   refactor prompt, filled in with the file's real headings, for the user's own agent.
   The unconfigured rerank stage, applied to prose.
+- **Palette** (`src/cli/lava.ts`): every byte of colour smelt writes, and the primitives
+  that lay text out under it, behind one interface. The seam is `palette(options)` —
+  plus `stdoutPalette(io)` and `stderrPalette(io)`, which answer the two streams
+  separately, because `smelt big.log --budget 4000 > small.log` leaves the report on a
+  terminal while stdout is a file. It owns **roles** (`heading`, `rule`,
+  `hash`, `number`, `path`, `good`, `bad`, `warn`, `dim`, `strong` — what a span _is_,
+  never what colour it should be), the **primitives** (`kv`, `table`, `bar`, `glyph`,
+  `percent`, `divider`, `logo`) and — one composition above them — the **done block**
+  every wizard ends on (`doneBlock`, with `countedFiles` for its verdict: a rule, what
+  the run did counted off what it _applied_, and the commands that follow). Nothing
+  else: no verb builds an ANSI sequence inline, so the day the brand changes it changes
+  in one file. Three rules make it safe,
+  and `test/guards/palette.test.ts` holds all three. **Off is the identity** — colour
+  off is byte-for-byte the plain rendering, which is what every `--json` envelope, every
+  `--yes` receipt, every pipe, `NO_COLOR`, `--no-color` and every guard's assertion
+  gets. **Padding is measured before painting** — an escape sequence has zero width on
+  screen and a dozen bytes in a string, so a cell padded after painting is a column that
+  does not line up. **A rendering may not round a non-zero to zero** — `percent` prints
+  `<0.1%` and `bar` keeps one filled cell for a rate that is not zero, which is Law 4 at
+  the last inch before a person reads it. The **glyph set** (`✓ ✗ ⚠ · •`), the closing
+  block's rule, the bar's block cells and the prose's **em dash** (`dash()`, the
+  primitive; `EM_DASH` is what it returns and what folds a sentence composed by a module
+  with no palette in hand) fall back to ASCII where the locale never said it could
+  render more (`supportsUnicode`) — so the four closing blocks, `smelt doctor` and
+  `smelt stats` carry nothing above ASCII there, punctuation included, while smelt's
+  voice keeps its em dash everywhere a terminal can render one. The **wordmark** is a
+  committed constant in the ANSI Shadow letterforms with a plain-ASCII twin — smelt runs
+  no figlet.
+  **How much** colour is a capability, not a preference: `colorDepth(env, isTty)` →
+  `'none' | 16 | 256 | 'truecolor'`, in one precedence — `NO_COLOR` (any non-empty
+  value) beats everything, then `FORCE_COLOR` (`0` off, `1` sixteen, `2` 256, `3`
+  truecolor, anything else sixteen), then `COLORTERM` ∈ {`truecolor`, `24bit`}, then
+  `TERM` containing `256color`, then `TERM=dumb` → none, and otherwise sixteen at a
+  terminal and none anywhere else. `colorAllowed` is that same answer as a boolean, so
+  the two can never disagree. The lava ramp resolves against the depth (`38;2`
+  truecolor, `38;5` on the 6×6×6 cube, nearest of the sixteen below that); every other
+  role was already one of the sixteen every ANSI terminal has had since 1979. `bin.ts`
+  asks once, about the terminal, while the per-stream switches stay per-stream.
+  _Avoid_: "theme",
+  "styling helper"; and never a colour name at a call site.
 
 ## Setup and distribution
 
-Decided in the Sep 2026 architecture review; ADRs 0001–0003 carry the reasoning.
+Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasoning.
 
-- **SetupRecipe**: the one true way to put smelt on a machine — install, init choices,
-  hooks, MCP registration, verification — held as data, from which every rendering
-  (README fragments, site prompts, the `setup` verb) derives, or is guard-pinned against
-  it. Prose is never the source.
+- **SetupRecipe** (`src/setup/recipe.ts`): the one true way to put smelt on a machine —
+  install, init choices, hooks, the MCP server's own command, verification — held as
+  data, from which every rendering (README fragments, site prompts, the `setup` verb)
+  derives, or is guard-pinned against it. Prose is never the source. It names **no
+  harness**: registration is a **HarnessProfile** fact (`profile.mcp`), because a
+  `claude` CLI verb is not how Codex or opencode register anything. The recipe held
+  Claude Code's spelling as though it were everyone's, and five renderings read it from
+  there; what is left is `mcp.run`, the plain stdio command true of every MCP client.
 - **Setup** (`smelt setup`): the one-command, idempotent application of the recipe for
-  chosen harnesses — interactive when a TTY is present, flag-driven when an agent runs
-  it, and the only repair path for installed state. The `init` wizard remains the
-  deliberate sibling, not the repair path. _Avoid_: installer, `smelt init` (that is the
-  careful wizard).
-- **InstalledState**: what smelt has written on this machine — hook entries (found by
-  their ownership marker), the config, the MCP registration, the binary version. `smelt
-doctor` reads it and never writes it; orphaned pieces are reported facts, never
-  silently cleaned.
+  chosen harnesses, at an **InstallScope** — interactive when a TTY is present,
+  fully scriptable when an agent runs it, and the only repair path for installed state.
+  Scriptable is load-bearing, not a convenience: the repair path an agent cannot drive
+  is a repair path that does not happen. `--yes` answers every question, and the four
+  toggles (`--guard`, `--stats`, `--map`, `--lint`, each `on|off`) answer the preset's;
+  `smelt hooks install` takes the same four and the same `--yes`. From the home
+  directory it detects a machine-wide install, says so, and lets you flip it; everywhere
+  else it is the project's. The `init` wizard remains the deliberate sibling, not the
+  repair path. _Avoid_: installer, `smelt init` (that is the careful wizard).
+- **MergePolicy** (`Consent` in `cli/merge-policy.ts`): the one answer to "may this run write
+  over a file that already exists", behind both install verbs. There are two ways to
+  consent and one apply loop, because two loops drift and the one that drifts is the
+  non-interactive path nobody watches. A **wizard** consent asks per file and takes
+  nothing but a literal `yes`. A **policy** consent — what `--yes` and `smelt setup`
+  use — reads the plan's own shape: a file whose planned bytes were computed _from_ the
+  existing bytes (a JSON hooks merge, a marker-block upsert, a registration edit) is
+  written, because **every entry that is not smelt's is already in it**; a file smelt
+  writes _whole_ is refused unless it is already smelt's, and the refusal names it. The
+  claim a merge makes is about entries, not bytes: outside the edited region — the
+  `hooks` key, our marker block, our server entry — the file is byte-identical, but the
+  edited region is re-serialised, so a foreign entry inside `hooks` keeps its content
+  and can come back formatted differently. Recorded on
+  `PlannedFile.ownership` (`'merged' | 'whole'`), so the question is answered by data
+  the planner produced rather than by a list of filenames. It is its own module because
+  it is one idea with two consenters: while it sat inside the hooks wizard, `setup`
+  imported a wizard to apply. _Avoid_: "overwrite" for the merged case — nothing of
+  anybody else's is overwritten.
+- **InstalledState**: what smelt has written for one **InstallScope** — hook entries
+  (found by their ownership marker), the config, the MCP registration, the binary
+  version. Every path it reads is resolved by `locateStep`, the same resolver the
+  installer wrote through, so a machine install is read back from `~/.claude/settings.json`
+  and a project install from `.claude/settings.json`; a reader with its own list of
+  names is how doctor came to agree with a writer that had moved. `smelt doctor` reads
+  it and never writes it — including the registrations that are the harness's own file
+  to rewrite, which it checks and names but never edits; orphaned pieces are reported
+  facts, never silently cleaned. `presetToggles` lives with it (`cli/installed.ts`), for
+  the same reason: what a re-run's four toggles start from is a reading of what is
+  installed, not a wizard's memory.
 - **SkillPack**: the opt-in, published teaching artifact an agent's owner installs by
   consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
   content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt

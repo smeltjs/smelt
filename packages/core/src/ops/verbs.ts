@@ -7,6 +7,7 @@ import type { Strategy } from '../plan/planners.ts';
 import type {
   DetectedLanguage,
   ElisionStore,
+  RerankStage,
   RetrievedBlock,
   RetrieveStats,
   RuleLedgerEntry,
@@ -66,6 +67,16 @@ export interface SmeltBlobOp {
    * a command names. A producer that states no term (`cat`, a diff) derives none.
    */
   readonly producer?: string;
+  /**
+   * A relevance reranker, when a front door's config asked for one — loaded by
+   * `loadRerankStage` in `rerank/load.ts`, never constructed here. Absent on every run
+   * that did not opt in, which is every default run: this is a config opt-in
+   * (ADR-0004), not a feature that arrives on its own.
+   *
+   * It reaches the smelter and is asked which of the planner's proposed elisions to
+   * spare; what it did comes back as `result.rerank`, which every report renders.
+   */
+  readonly rerank?: RerankStage;
 }
 
 /** Where a run's focus came from, so a report can attribute it. */
@@ -118,6 +129,7 @@ export async function smeltBlob(op: SmeltBlobOp): Promise<SmeltBlobOutcome> {
   const smelter = createSmelter({
     strategy: op.strategy,
     ...(op.store === undefined ? {} : { store: op.store }),
+    ...(op.rerank === undefined ? {} : { rerank: op.rerank }),
   });
   const focus = resolveFocus(op);
   const result = await smelter.smelt(op.text, {

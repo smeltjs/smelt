@@ -78,7 +78,46 @@ export const ALLOWED_NODE_BUILTINS: readonly string[] = [
   'node:process', // argv, stdin/stdout/stderr and the exit code, for the CLI
   'node:os', // homedir(), for `smelt hooks install` harness detection — reads a path, opens nothing
   'node:tty', // isatty(0) for the CLI's TTY check — a plain syscall, no stream, no socket
+  // `smelt doctor`'s hook probe, and nothing else: it runs THIS node
+  // (`process.execPath`) on a script an installed hook entry already names, to learn
+  // whether that entry still does anything. A spawn is not a transport, but it is the
+  // one builtin on this list that could be turned into one, so the ruling is narrower
+  // than the import: `test/guards/hook-command.test.ts` asserts that every spawn call
+  // under `src/` names `process.execPath` as its program, and goes red on any other.
+  'node:child_process',
 ];
+
+/**
+ * THE OPT-IN RERANK BUCKET — packages a `rerank` config block may load **at runtime**,
+ * and that no smelt module may **import**.
+ *
+ * ADR-0004 reopened one thing: a consumer may name a reranker in a config file they
+ * wrote. It did not reopen Law 1, and this constant is the line between the two.
+ * `@smeltjs/rerank-voyage` reaches the network — it says so at the top of its own index
+ * and in its own README — so it is not on {@link ALLOWED_PACKAGES}, is not a dependency
+ * of this package, and never will be.
+ *
+ * The name is spelled **here and nowhere else in `src`**, as data. `rerank/load.ts`
+ * imports this constant and hands it to `import()`, so the specifier the loader uses is
+ * a *value*: the zero-network walk follows literal specifiers, sees no edge, and the
+ * package is genuinely absent from the graph rather than excluded from it. The
+ * arrangement is only honest if the guard can tell the two apart, so it does — the
+ * ruling in `test/guards/no-network.test.ts` classifies any import of a name on this
+ * list as **forbidden**, and two mutations prove it goes red: a static import of the
+ * adapter anywhere in the graph, and the loader's dynamic import spelled with a string
+ * literal instead of this constant.
+ *
+ * (The guard's import scanner reads raw source, so neither of those two spellings may
+ * appear even inside a comment in this repository — which is why the paragraph above
+ * describes the mutations rather than quoting them.)
+ *
+ * Read that as the rule it is: *smelt may know this package's name; smelt may not
+ * depend on it.*
+ */
+export const RERANK_VOYAGE_PACKAGE = '@smeltjs/rerank-voyage';
+
+/** Every opt-in adapter package, by name. One today. See {@link RERANK_VOYAGE_PACKAGE}. */
+export const OPT_IN_RERANK_PACKAGES: readonly string[] = [RERANK_VOYAGE_PACKAGE];
 
 /** Third-party packages any smelt module may import. Keep this list boring and short. */
 export const ALLOWED_PACKAGES: readonly string[] = [

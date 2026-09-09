@@ -1,10 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { budgetMalformed, budgetRequired, CliUsageError, readTree } from '@smeltjs/core';
+import {
+  budgetMalformed,
+  budgetRequired,
+  CliUsageError,
+  DirectoryElisionStore,
+  readTree,
+} from '@smeltjs/core';
 import { strictModeViolations, type ToolSchema } from '@smelt/guard-kit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -335,6 +341,101 @@ describe('smelt_file — the producer hint', () => {
   });
 });
 
+describe('smelt_file — the rerank opt-in', () => {
+  /**
+   * The server offers reranking without importing an adapter: it hands the config
+   * block to `@smeltjs/core`'s loader, exactly as the CLI does. So what is pinned here
+   * is that the config decides (not this surface), that the attribution reaches the
+   * report block a model reads, and that a refusal arrives as a tool error the model
+   * can act on rather than a dead server.
+   */
+
+  function withRerank(rerank: unknown): string {
+    const dir = tempDir();
+    writeFileSync(
+      join(dir, 'smelt.config.json'),
+      `${JSON.stringify({ smeltConfig: 1, rerank }, null, 2)}\n`,
+    );
+    return dir;
+  }
+
+  it('does nothing at all when the config names no reranker', async () => {
+    const client = await connect(tempDir());
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[1]).not.toContain('rerank');
+  });
+
+  it('loads a configured module stage and attributes it in the report block', async () => {
+    const dir = withRerank({ kind: 'module', path: './stage.mjs' });
+    writeFileSync(
+      join(dir, 'stage.mjs'),
+      `export default {
+         id: 'test',
+         async rerank(candidates) {
+           return candidates.slice(0, 1).map((c) => ({ ...c, score: 1 }));
+         },
+       };\n`,
+    );
+    const client = await connect(dir);
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(false);
+    expect(result.texts[1]).toMatch(
+      /rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept\)/,
+    );
+  });
+
+  it('answers a misconfigured opt-in with a tool error naming what is missing', async () => {
+    // A refusal the model can read and repeat to its user. A resident server that
+    // exited at startup instead would say the same thing to nobody.
+    const client = await connect(withRerank({ kind: 'module', path: './gone.mjs' }));
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('./gone.mjs');
+  });
+
+  it('answers a stage that throws with a tool error, not by crashing the handler', async () => {
+    // A reranker's ordinary failures — a timeout, a 401 — throw plain Errors from the
+    // consumer's own adapter. Unwrapped they would rethrow past this handler's catch,
+    // which only knows ToolArgumentError and SmeltError, and take the tool call out as a
+    // protocol-level failure the model cannot read or act on.
+    const dir = withRerank({ kind: 'module', path: './boom.mjs' });
+    writeFileSync(
+      join(dir, 'boom.mjs'),
+      `export default {
+         id: 'voyage',
+         async rerank() { throw new Error('api.voyageai.com did not answer within 30000ms'); },
+       };\n`,
+    );
+    const client = await connect(dir);
+    const result = await call(client, SMELT_FILE_TOOL_NAME, {
+      text: fixtureText(),
+      budgetBytes: 1500,
+      focus: ['handleRequest'],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.texts[0]).toContain('RerankStageError');
+    expect(result.texts[0]).toContain('did not answer within 30000ms');
+  });
+
+  it('refuses to start on a rerank block it cannot parse, like every other key', async () => {
+    expect(() => createSmeltMcpServer({ cwd: withRerank({ kind: 'psychic' }) })).toThrow(
+      CliUsageError,
+    );
+  });
+});
+
 describe('smelt_retrieve_batch', () => {
   async function smeltedHashes(client: Client): Promise<{ input: string; hashes: string[] }> {
     const input = fixtureText(900);
@@ -457,6 +558,40 @@ describe('smelt_retrieve', () => {
     expect(result.texts[0]).toContain('no stored content for hash "deadbeefdeadbeef"');
     // On a directory store the memory-store hint would be a non-sequitur.
     expect(result.texts[0]).not.toContain('memory store dies');
+  });
+
+  it('renders an evicted hash as the same shape as an unknown one, with its own text', async () => {
+    // The `smelt_retrieve` contract must not move: a refusal is a tool-level error
+    // with a text block, whichever refusal it is. What changes is the sentence — an
+    // evicted hash is one a user pruned, and telling the model it was "never elided"
+    // would be a false statement it cannot check.
+    const cwd = tempDir();
+    writeFileSync(
+      join(cwd, 'smelt.config.json'),
+      `${JSON.stringify({
+        smeltConfig: 1,
+        store: { kind: 'directory', path: '.smelt-store' },
+      })}\n`,
+    );
+    const storePath = join(cwd, '.smelt-store');
+    const store = new DirectoryElisionStore(storePath);
+    const hash = store.put('bytes an operator pruned between sessions');
+    const ancient = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(join(storePath, 'blobs', hash), ancient, ancient);
+    store.prune({ olderThan: new Date(), keepRetrieved: false, dryRun: false });
+
+    const client = await connect(cwd);
+    const result = await call(client, RETRIEVE_TOOL_NAME, { hash });
+    expect(result.isError).toBe(true);
+    expect(result.texts).toHaveLength(1);
+    expect(result.texts[0]).toContain('EvictedHashError');
+    expect(result.texts[0]).toContain('smelt store prune');
+    expect(result.texts[0]).not.toContain('UnknownHashError');
+
+    // And the batch tool renders it in the same slot, for the same reason.
+    const batch = await call(client, RETRIEVE_BATCH_TOOL_NAME, { hashes: [hash] });
+    expect(batch.isError).toBe(true);
+    expect(batch.texts[0]).toContain('EvictedHashError');
   });
 
   it('says how to get persistence when a memory store cannot hold earlier sessions', async () => {

@@ -147,3 +147,39 @@ async function request({ apiKey, model, tools, messages }) {
     body: { model, max_tokens: 4096, tools, messages },
   });
 }
+
+/**
+ * TIER 3, RERANK ARM — the opt-in reranker's case, and the reason it is skipped.
+ *
+ * It lives in this module rather than in `run.mjs` because this is a *network* path:
+ * `@smeltjs/rerank-voyage` reaches api.voyageai.com, and the harness's rule is that
+ * only the tier modules can. A dynamic import of a network-reaching package from the
+ * runner would be offline-by-construction becoming offline-by-luck.
+ *
+ * Two gates, and both are the caller's, never the harness's: `VOYAGE_API_KEY` in the
+ * environment, and the adapter package actually installed. Missing either one returns a
+ * printable **reason** rather than throwing or silently degrading — a skipped case that
+ * says why is a measurement nobody has made; a skipped case that says nothing is a
+ * measurement somebody will later assume.
+ *
+ * `topK` is the caller's number for the same reason `--budget` is: it decides how many
+ * of the planner's proposed cuts survive, and a value invented here would be the
+ * harness choosing what the arm measures.
+ */
+export async function voyageStageOrReason({ env, model, topK }) {
+  const apiKey = env['VOYAGE_API_KEY'];
+  if (apiKey === undefined || apiKey === '') {
+    return { reason: 'VOYAGE_API_KEY not set — tier 3 rerank arm skipped (unmeasured).' };
+  }
+  let adapter;
+  try {
+    adapter = await import('@smeltjs/rerank-voyage');
+  } catch {
+    return {
+      reason:
+        '@smeltjs/rerank-voyage is not installed — tier 3 rerank arm skipped (unmeasured). ' +
+        'It is not a dependency of @smeltjs/core; install it to run this arm.',
+    };
+  }
+  return { stage: adapter.createVoyageRerankStage({ apiKey, model, topK }) };
+}

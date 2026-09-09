@@ -1,6 +1,7 @@
 /**
- * The lava renderer — the wizards' presentation, as one adapter behind the output
- * seam (ADR-0001: Node-native; the charm.land palette, not its Go).
+ * The lava palette — every byte of colour smelt writes, and the primitives that lay
+ * text out under it. One adapter behind the output seam (ADR-0001: Node-native; the
+ * charm.land palette, not its Go).
  *
  * The spike verdict this module embodies: clack and ink could not sit *inside* the
  * wizard loop. Their prompts own the terminal — raw mode, cursor surgery, direct
@@ -10,13 +11,29 @@
  * out: it decorates the bytes the wizards already emit, line-semantically, and
  * switches itself off unless a real, interactive, colour-honouring terminal is on
  * the other side. No dependency, no layout engine — and every wizard guard passes
- * byte-identical, because `colorize(_, false)` is the identity.
+ * byte-identical, because a palette that is off is the identity.
  *
- * The rules are line-shaped, never word-shaped: ANSI codes wrap whole lines, so the
- * text a guard asserts (`wrote CLAUDE.md`, `Nothing was written.`) stays contiguous
- * inside the styled line. `--yes`, `--json`, piped stdin and `NO_COLOR` all mean
- * plain bytes — a machine parsing wizard output must never parse around escape
- * sequences.
+ * **Why no `picocolors`.** It is the right package for the job it does, and it would
+ * have to be added to `ALLOWED_PACKAGES`, to `THIRD-PARTY.md` and to the install of
+ * every consumer — to spell eight SGR codes this file already spelled, and *not* to
+ * spell the one thing the brand is actually made of: a truecolor gradient. A
+ * dependency that carries none of the load is a dependency to refuse (Law 1's
+ * neighbourhood: the smaller the tree, the less there is to audit).
+ *
+ * Three rules hold everything here together, and `test/guards/palette.test.ts` holds
+ * this module to all three:
+ *
+ *   1. **Off is the identity.** Every role, every primitive and every glyph renders
+ *      the same bytes with colour off that it rendered before this module existed.
+ *      Every `--json` envelope, every `--yes` receipt and every pipe reads plain text.
+ *   2. **ANSI wraps whole spans, never splits a word.** The substrings other guards
+ *      assert (`wrote CLAUDE.md`, `wired (verified)`, `Nothing was written.`) stay
+ *      contiguous inside the styled line, and padding is computed on the *unpainted*
+ *      text — an escape sequence has zero width, so a column padded after painting is
+ *      a column that does not line up.
+ *   3. **A rendering may not round a non-zero to zero.** Law 4 reaches the formatter:
+ *      {@link percent} prints `<0.1%` rather than `0.0%`, and {@link Palette.bar}
+ *      never draws an empty bar for a rate that is not zero.
  */
 
 /** Where the lava gradient starts and ends, in truecolor. */
@@ -30,35 +47,741 @@ const CODE = {
   green: '\x1b[32m',
   red: '\x1b[31m',
   amber: '\x1b[33m',
+  cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
 } as const;
 
-function truecolor([r, g, b]: readonly number[]): string {
-  return `\x1b[38;2;${String(r)};${String(g)};${String(b)}m`;
+/**
+ * How much colour a terminal actually has. Not a preference — a capability, and the
+ * one thing this module used to assume.
+ *
+ * A `38;2;…` truecolor sequence on a terminal that does not speak it is not ignored:
+ * it is *mangled*, and the first thing smelt shows a person is the front door's
+ * gradient. Terminal.app, tmux without `-2`, and every 16-colour emulator are the
+ * ordinary case, not the exotic one.
+ */
+export type ColorDepth = 'none' | 16 | 256 | 'truecolor';
+
+/**
+ * The sixteen ANSI colours with the RGB xterm gives them, so a lava stop can be
+ * resolved to the nearest one a 16-colour terminal actually has. Both halves, because
+ * "nearest" is only an honest word over the whole palette — and the answer it gives
+ * for this ramp is yellow, the closest thing 1979 had to amber. The gradient goes
+ * flat there, which is the trade: flat and legible beats a mangled `38;2`.
+ */
+const BASIC_16: readonly {
+  readonly sgr: string;
+  readonly rgb: readonly [number, number, number];
+}[] = [
+  { sgr: '30', rgb: [0, 0, 0] },
+  { sgr: '31', rgb: [205, 0, 0] },
+  { sgr: '32', rgb: [0, 205, 0] },
+  { sgr: '33', rgb: [205, 205, 0] },
+  { sgr: '34', rgb: [0, 0, 238] },
+  { sgr: '35', rgb: [205, 0, 205] },
+  { sgr: '36', rgb: [0, 205, 205] },
+  { sgr: '37', rgb: [229, 229, 229] },
+  { sgr: '90', rgb: [127, 127, 127] },
+  { sgr: '91', rgb: [255, 0, 0] },
+  { sgr: '92', rgb: [0, 255, 0] },
+  { sgr: '93', rgb: [255, 255, 0] },
+  { sgr: '94', rgb: [92, 92, 255] },
+  { sgr: '95', rgb: [255, 0, 255] },
+  { sgr: '96', rgb: [0, 255, 255] },
+  { sgr: '97', rgb: [255, 255, 255] },
+];
+
+/** One channel's rung on the 256-colour cube's six-step ramp. */
+function cubeRung(value: number): number {
+  return Math.round((value / 255) * 5);
+}
+
+/** One colour, at the richest depth the terminal has for it. `'none'` paints nothing. */
+function colorCode([r, g, b]: readonly [number, number, number], depth: ColorDepth): string {
+  if (depth === 'none') return '';
+  if (depth === 'truecolor') return `\x1b[38;2;${String(r)};${String(g)};${String(b)}m`;
+  // The 6×6×6 cube, which every 256-colour terminal has at the same indices.
+  if (depth === 256)
+    return `\x1b[38;5;${String(16 + 36 * cubeRung(r) + 6 * cubeRung(g) + cubeRung(b))}m`;
+  const nearest = BASIC_16.reduce((best, candidate) => {
+    const distance = ([cr, cg, cb]: readonly [number, number, number]): number =>
+      (cr - r) ** 2 + (cg - g) ** 2 + (cb - b) ** 2;
+    return distance(candidate.rgb) < distance(best.rgb) ? candidate : best;
+  }, BASIC_16[0]!);
+  return `\x1b[${nearest.sgr}m`;
+}
+
+/** The gradient stop at `t ∈ [0, 1]`, as an SGR sequence at this terminal's depth. */
+function lavaStop(t: number, depth: ColorDepth): string {
+  const at = (i: number): number => Math.round(LAVA_FROM[i]! + (LAVA_TO[i]! - LAVA_FROM[i]!) * t);
+  return colorCode([at(0), at(1), at(2)], depth);
+}
+
+/**
+ * The wordmark, in the **ANSI Shadow** figlet letterforms — drawn once, by hand, in
+ * that font's shapes, and committed as this constant.
+ *
+ * Pinned as data on purpose: `figlet` at runtime would be a dependency, a font file to
+ * resolve and a code path that reads something off disk in order to print a logo. The
+ * logo does not change. A constant is the honest shape of a thing that does not change.
+ */
+const LOGO_UNICODE = [
+  '███████╗███╗   ███╗███████╗██╗     ████████╗',
+  '██╔════╝████╗ ████║██╔════╝██║     ╚══██╔══╝',
+  '███████╗██╔████╔██║█████╗  ██║        ██║',
+  '╚════██║██║╚██╔╝██║██╔══╝  ██║        ██║',
+  '███████║██║ ╚═╝ ██║███████╗███████╗   ██║',
+  '╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝',
+] as const;
+
+/**
+ * The same wordmark in plain ASCII, for a terminal whose locale never promised it
+ * could render the block-drawing set. Hand-drawn in the `small` figlet shapes.
+ *
+ * Not a nicety: a box-drawing character on a latin-1 terminal is mojibake in the very
+ * first thing smelt ever shows a person.
+ */
+const LOGO_ASCII = [
+  ' ___ __  __ ___ _  _____',
+  '/ __|  \\/  | __| ||_   _|',
+  '\\__ \\ |\\/| | _|| |__| |',
+  '|___/_|  |_|___|____|_|',
+] as const;
+
+/** The widest line of a block, in characters. */
+function widest(lines: readonly string[]): number {
+  return lines.reduce((wide, line) => Math.max(wide, [...line].length), 0);
+}
+
+/**
+ * Whether this environment's locale says it can render more than ASCII.
+ *
+ * Read from the three variables every POSIX locale uses, in the precedence the C
+ * library itself uses (`LC_ALL` over `LC_CTYPE` over `LANG`). A terminal that has not
+ * said it can is treated as one that cannot: the fallbacks are always readable, and
+ * mojibake is not.
+ *
+ * It is read once, in `bin.ts`, and handed to the CLI as a boolean — never read inside
+ * a verb. A verb reads its environment by name only, and only for a name a config file
+ * supplied (see `CliIo.env`).
+ */
+export function supportsUnicode(env: Readonly<Record<string, string | undefined>>): boolean {
+  const locale = env['LC_ALL'] ?? env['LC_CTYPE'] ?? env['LANG'] ?? '';
+  return /utf-?8/iu.test(locale);
+}
+
+/**
+ * How much colour this environment says it has — the whole precedence, in one place.
+ *
+ * In order, and each rung answers on its own:
+ *
+ *  1. **`NO_COLOR`**, any non-empty value (no-color.org): `'none'`. It beats every
+ *     other signal, including a person's own `FORCE_COLOR`, because it is the one
+ *     variable whose entire meaning is "this stream must not receive escapes".
+ *  2. **`FORCE_COLOR`** — how a person asks for colour *through a pipe*, into `less -R`
+ *     or a CI log that renders it. The conventional levels: `0` off, `1` sixteen
+ *     colours, `2` two hundred and fifty-six, `3` truecolor; any other non-empty value
+ *     means "colour, and do not guess high" — sixteen.
+ *  3. **`COLORTERM`** `truecolor` or `24bit`: the only positive statement a terminal
+ *     makes about 24-bit support, and the one every truecolor emulator sets. It is
+ *     asked **before** `TERM`, and that ordering is deliberate: `COLORTERM=truecolor`
+ *     beside `TERM=dumb` resolves to truecolor, because `TERM=dumb` is what a wrapper
+ *     leaves behind in an environment it inherited and did not clear, while `COLORTERM`
+ *     is only ever set by something that means it.
+ *  4. **`TERM` containing `256color`**: the same statement, one rung down.
+ *  5. **`TERM=dumb`**: `'none'`, even at a terminal. It is a terminal that has said it
+ *     cannot — unless it has also said, in the newer variable, that it can (rung 3).
+ *  6. Otherwise: sixteen colours at a terminal, nothing anywhere else. Sixteen is the
+ *     floor every ANSI terminal has had since 1979 — the safe assumption, and the one
+ *     this module used to skip straight past on its way to `38;2`.
+ */
+export function colorDepth(
+  env: Readonly<Record<string, string | undefined>>,
+  isTty: boolean,
+): ColorDepth {
+  const no = env['NO_COLOR'];
+  if (no !== undefined && no !== '') return 'none';
+
+  const force = env['FORCE_COLOR'];
+  if (force !== undefined && force !== '') {
+    if (force === '0') return 'none';
+    if (force === '3') return 'truecolor';
+    if (force === '2') return 256;
+    return 16;
+  }
+
+  const colorterm = (env['COLORTERM'] ?? '').toLowerCase();
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 'truecolor';
+
+  const term = (env['TERM'] ?? '').toLowerCase();
+  if (term.includes('256color')) return 256;
+  if (term === 'dumb') return 'none';
+
+  return isTty ? 16 : 'none';
+}
+
+/**
+ * Whether ANSI may be written to a stream at all — {@link colorDepth} as a boolean, so
+ * the precedence is written down once and the two answers cannot disagree.
+ */
+export function colorAllowed(
+  env: Readonly<Record<string, string | undefined>>,
+  isTty: boolean,
+): boolean {
+  return colorDepth(env, isTty) !== 'none';
+}
+
+/**
+ * What a span of text *is*, rather than what colour it should be.
+ *
+ * Roles, not colours, because the caller that knows a token is a hash does not know —
+ * and must not decide — that hashes are dim. That is the whole reason no verb builds
+ * an escape sequence inline: the day the brand changes, it changes here.
+ */
+export type Role =
+  | 'plain'
+  | 'brand'
+  | 'heading'
+  | 'rule'
+  | 'hash'
+  | 'number'
+  | 'path'
+  | 'good'
+  | 'bad'
+  | 'warn'
+  | 'dim'
+  | 'strong';
+
+/** The status marks every verb shares. The ASCII fallbacks are not second-class. */
+export type Glyph = 'ok' | 'bad' | 'warn' | 'info' | 'bullet';
+
+/** One `name  value` row. The `role` paints the value; the name is always plain. */
+export interface KvRow {
+  readonly name: string;
+  readonly value: string;
+  readonly role?: Role;
+}
+
+/** One column of a rendered table: its header, its side, and what its cells are. */
+export interface Column {
+  readonly header: string;
+  readonly align?: 'left' | 'right';
+  readonly role?: Role;
+}
+
+/** A table, as data: the palette pads it (unpainted) and then paints it. */
+export interface TableSpec {
+  readonly columns: readonly Column[];
+  readonly rows: readonly (readonly string[])[];
+  /** Spaces before every line. Defaults to two — the report's own indent. */
+  readonly indent?: number;
+}
+
+/**
+ * The palette: every colour decision and every layout primitive smelt has, behind one
+ * interface that is the identity when colour is off.
+ */
+export interface Palette {
+  /** Whether ANSI is being written at all. */
+  readonly on: boolean;
+  /** How much colour this palette will ask the terminal for. `'none'` when off. */
+  readonly depth: ColorDepth;
+  /** Whether the glyph set may use anything above ASCII. */
+  readonly unicode: boolean;
+  /** Paint one span. The text is never split or re-cased — only wrapped in codes. */
+  paint(role: Role, text: string): string;
+  /** A section heading. */
+  heading(text: string): string;
+  /** The status mark for a line, already painted: `✓`, `✗`, `⚠` — or `+`, `x`, `!`. */
+  glyph(glyph: Glyph): string;
+  /** A proportional bar, `width` cells wide. Never empty for a non-zero fraction. */
+  bar(fraction: number, width: number): string;
+  /** A fraction as a percentage, never rounding a non-zero to zero. */
+  percent(fraction: number): string;
+  /**
+   * The em dash smelt's prose is written with, or `-` where the terminal's locale never
+   * promised more than ASCII.
+   *
+   * A glyph, like the marks {@link glyph} answers for, and here for the same reason:
+   * `—` is 3 bytes of UTF-8 and a terminal that has not said it can render them shows
+   * mojibake. It is a *primitive*, not a policy — smelt's voice keeps its em dash, and
+   * a page composed through this one renders in whichever character set the reader's
+   * terminal actually has. {@link EM_DASH} is what it returns when unicode is on, which
+   * is also what folds a sentence composed somewhere else (a probe's detail, an
+   * orphan's) down to the same set.
+   */
+  dash(): string;
+  /** An aligned `name   value` block. */
+  kv(rows: readonly KvRow[], indent?: number): string;
+  /** An aligned table with a header row. */
+  table(spec: TableSpec): string;
+  /** The wordmark, over the lava gradient when colour is on. */
+  logo(): string;
+  /** A horizontal lava rule, `width` cells wide. */
+  divider(width: number): string;
+}
+
+/**
+ * How each role is painted when colour is on — an SGR code, or a **stop on the lava
+ * ramp** as a number, resolved against the terminal's depth at paint time. Off, every
+ * one of them is the identity.
+ *
+ * The two ramp roles are the only ones that need a depth: everything else is one of
+ * the sixteen colours every ANSI terminal has had since 1979.
+ */
+const ROLE_CODES: Readonly<Record<Role, string | number>> = {
+  plain: '',
+  brand: 0.75,
+  heading: CODE.bold,
+  rule: CODE.cyan,
+  hash: CODE.dim,
+  number: 1,
+  path: CODE.magenta,
+  good: CODE.green,
+  bad: CODE.red,
+  warn: CODE.amber,
+  dim: CODE.dim,
+  strong: CODE.bold,
+};
+
+/**
+ * The em dash, and its ASCII stand-in. Exported because it is also what a *fold* looks
+ * for: a sentence composed by a module with no palette in hand (a hook probe's detail,
+ * a doctor orphan) is folded to the terminal's character set by replacing this.
+ */
+export const EM_DASH = '\u2014';
+
+/** What an ASCII terminal gets in its place. Not `--`: one dash, one column. */
+const DASH_ASCII = '-';
+
+/** The two glyph sets, as one table so a third mark cannot be added to only one. */
+const GLYPHS: Readonly<Record<Glyph, { readonly unicode: string; readonly ascii: string }>> = {
+  ok: { unicode: '✓', ascii: '+' },
+  bad: { unicode: '✗', ascii: 'x' },
+  warn: { unicode: '⚠', ascii: '!' },
+  info: { unicode: '·', ascii: '-' },
+  bullet: { unicode: '•', ascii: '*' },
+};
+
+/** Which role paints which glyph. */
+const GLYPH_ROLE: Readonly<Record<Glyph, Role>> = {
+  ok: 'good',
+  bad: 'bad',
+  warn: 'warn',
+  info: 'dim',
+  bullet: 'dim',
+};
+
+/**
+ * The rule a divider and a closing block are drawn with, and its ASCII twin. Named
+ * because two places have to agree on them: the renderer that draws the rule, and
+ * {@link colorize}'s detector, which paints a rule the wizards emitted plain.
+ */
+const RULE_CELL = '━';
+const RULE_CELL_ASCII = '-';
+
+/** The bar's two cells, and their ASCII fallbacks. */
+const BAR = {
+  filled: { unicode: '█', ascii: '#' },
+  empty: { unicode: '░', ascii: '.' },
+} as const;
+
+/**
+ * The widest bar smelt draws. Beyond this a bar stops being a comparison and becomes
+ * wallpaper — and it has to fit an 80-column terminal beside its own number.
+ */
+export const BAR_WIDTH = 40;
+
+/** How the palette is built. */
+export interface PaletteOptions {
+  /** ANSI may be written. Defaults to false — the plain rendering. */
+  readonly color?: boolean;
+  /**
+   * How much colour the terminal has. Defaults to `'truecolor'` when {@link color} is
+   * on and nothing else was said — the richest, for a caller that has already decided
+   * (a test, a fixture). `bin.ts` never leaves it out: it asks {@link colorDepth}.
+   * `color: false` forces `'none'`, whatever this says.
+   */
+  readonly depth?: ColorDepth;
+  /** The glyph set may go above ASCII. Defaults to true — what smelt has always printed. */
+  readonly unicode?: boolean;
+}
+
+/**
+ * Build a palette. `color: false` (the default) returns one whose every method is the
+ * plain rendering — the property every other guard in this repository leans on.
+ */
+export function palette(options: PaletteOptions = {}): Palette {
+  const depth: ColorDepth =
+    options.color === false
+      ? 'none'
+      : (options.depth ?? (options.color === true ? 'truecolor' : 'none'));
+  const on = depth !== 'none';
+  const unicode = options.unicode !== false;
+  const glyphOf = (glyph: Glyph): string => GLYPHS[glyph][unicode ? 'unicode' : 'ascii'];
+
+  const dash = (): string => (unicode ? EM_DASH : DASH_ASCII);
+
+  const paint = (role: Role, text: string): string => {
+    if (!on || text === '') return text;
+    const code = ROLE_CODES[role];
+    const sgr = typeof code === 'number' ? lavaStop(code, depth) : code;
+    return sgr === '' ? text : `${sgr}${text}${CODE.reset}`;
+  };
+
+  return {
+    on,
+    depth,
+    unicode,
+    paint,
+    heading: (text) => paint('heading', text),
+    glyph: (glyph) => paint(GLYPH_ROLE[glyph], glyphOf(glyph)),
+    dash,
+    bar: (fraction, width) => renderBar(fraction, width, unicode, paint),
+    // The one place a percentage is not a number is the placeholder for a fraction that
+    // is not one, and that placeholder is a dash — so it is this palette's dash.
+    percent: (fraction) => (Number.isFinite(fraction) ? percent(fraction) : dash()),
+    kv: (rows, indent = 2) => renderKv(rows, indent, paint),
+    table: (spec) => renderTable(spec, paint),
+    logo: () => renderLogo(depth, unicode),
+    divider: (width) => renderDivider(width, depth, unicode),
+  };
+}
+
+/** The plain palette, for every caller that has no colour decision to make. */
+export const PLAIN: Palette = palette();
+
+/**
+ * The palette a verb writes to **stdout** with, and the one it writes to **stderr**
+ * with — two functions rather than one, because the two streams are answered
+ * separately (see `CliIo.colorErr`).
+ *
+ * Both take the whole io rather than a boolean so that a verb never has to remember
+ * which of the two switches applies to the stream it is writing to: `stdoutPalette(io)`
+ * is the right answer for the smelted text's report block, `stderrPalette(io)` for the
+ * report beside it. A verb printing a `--json` envelope uses neither — it uses
+ * {@link PLAIN}, because an envelope is bytes for a machine.
+ */
+export function stdoutPalette(io: PaletteSource): Palette {
+  return palette({
+    color: io.color === true,
+    unicode: io.unicode !== false,
+    ...(io.depth === undefined ? {} : { depth: io.depth }),
+  });
+}
+
+/** See {@link stdoutPalette}. Falls back to the stdout switch when stderr has none. */
+export function stderrPalette(io: PaletteSource): Palette {
+  return palette({
+    color: io.colorErr ?? io.color === true,
+    unicode: io.unicode !== false,
+    ...(io.depth === undefined ? {} : { depth: io.depth }),
+  });
+}
+
+/**
+ * The three fields the two palette builders read off `CliIo`. Stated structurally so
+ * this module keeps importing nothing at all — `shell.ts` is the CLI's edge and
+ * everything under `cli/` may read it, but a palette that imported it would make the
+ * brand depend on the plumbing rather than the other way round.
+ */
+export interface PaletteSource {
+  readonly color?: boolean;
+  readonly colorErr?: boolean;
+  /**
+   * The terminal's capability, not a per-stream switch: the two streams may differ
+   * about whether they are painted at all, never about how much colour the terminal
+   * on the other side has.
+   */
+  readonly depth?: ColorDepth;
+  readonly unicode?: boolean;
+}
+
+/**
+ * A fraction as a percentage — and Law 4 at the last inch before a person reads it.
+ *
+ * A rate of 0.0004 is not zero. Printed as `0.0%` it becomes a claim smelt did not
+ * measure, in the one direction that matters: "nothing was asked for back" is exactly
+ * the comfortable answer. So a non-zero below the last printed digit prints `<0.1%`,
+ * and the same in the other direction for a negative delta.
+ */
+export function percent(fraction: number): string {
+  if (!Number.isFinite(fraction)) return EM_DASH;
+  const value = fraction * 100;
+  if (value === 0) return '0.0%';
+  if (value > 0 && value < 0.05) return '<0.1%';
+  if (value < 0 && value > -0.05) return '>-0.1%';
+  return `${value.toFixed(1)}%`;
+}
+
+/**
+ * The bar, with the same law applied to a picture: a non-zero fraction always gets at
+ * least one filled cell, and a fraction below 1 never fills the bar. A bar that reads
+ * "none" for a rate that is not none, or "all" for a rate that is not all, is a
+ * rounding that hides the number the bar exists to show.
+ */
+function renderBar(
+  fraction: number,
+  width: number,
+  unicode: boolean,
+  paint: (role: Role, text: string) => string,
+): string {
+  const cells = Math.max(0, Math.min(BAR_WIDTH, Math.trunc(width)));
+  const clamped = Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
+  let filled = Math.round(clamped * cells);
+  // A rate that is not zero always gets a cell — but only where there is a bar to
+  // give one: a zero-cell bar draws nothing rather than one cell out of none.
+  if (cells > 0 && clamped > 0 && filled === 0) filled = 1;
+  if (clamped < 1 && cells > 0 && filled === cells) filled = cells - 1;
+  const cell = unicode
+    ? { filled: BAR.filled.unicode, empty: BAR.empty.unicode }
+    : { filled: BAR.filled.ascii, empty: BAR.empty.ascii };
+  // Both counts are clamped at zero: a caller may ask for a zero-cell bar (a narrow
+  // terminal, a width computed from a subtraction), and `String.repeat(-1)` throws.
+  return (
+    paint('number', cell.filled.repeat(Math.max(0, filled))) +
+    paint('dim', cell.empty.repeat(Math.max(0, cells - filled)))
+  );
+}
+
+/** `name   value`, aligned on the value. Padding is measured before anything is painted. */
+function renderKv(
+  rows: readonly KvRow[],
+  indent: number,
+  paint: (role: Role, text: string) => string,
+): string {
+  if (rows.length === 0) return '';
+  const nameWidth = rows.reduce((wide, row) => Math.max(wide, row.name.length), 0);
+  const valueWidth = rows.reduce((wide, row) => Math.max(wide, row.value.length), 0);
+  const pad = ' '.repeat(Math.max(0, indent));
+  return rows
+    .map(
+      (row) =>
+        `${pad}${row.name.padEnd(nameWidth)}  ` +
+        `${paint(row.role ?? 'plain', row.value.padStart(valueWidth))}`,
+    )
+    .join('\n');
+}
+
+/** An aligned table. Same rule: pad the plain text, then paint the padded cell. */
+function renderTable(spec: TableSpec, paint: (role: Role, text: string) => string): string {
+  const { columns, rows } = spec;
+  const pad = ' '.repeat(Math.max(0, spec.indent ?? 2));
+  const widths = columns.map((column, index) =>
+    rows.reduce((wide, row) => Math.max(wide, (row[index] ?? '').length), column.header.length),
+  );
+  const lay = (text: string, index: number): string =>
+    columns[index]?.align === 'right'
+      ? text.padStart(widths[index] ?? 0)
+      : text.padEnd(widths[index] ?? 0);
+
+  const header = `${pad}${columns.map((column, index) => lay(column.header, index)).join('  ')}`;
+  const body = rows.map((row) =>
+    `${pad}${columns
+      .map((column, index) => paint(column.role ?? 'plain', lay(row[index] ?? '', index)))
+      .join('  ')}`.trimEnd(),
+  );
+  return [paint('dim', header.trimEnd()), ...body].join('\n');
+}
+
+/**
+ * The wordmark. Painted column by column, so the gradient runs across the letters the
+ * way lava runs downhill — and left exactly as drawn when colour is off, which is what
+ * the help snapshot pins.
+ */
+function renderLogo(depth: ColorDepth, unicode: boolean): string {
+  const lines = unicode ? LOGO_UNICODE : LOGO_ASCII;
+  if (depth === 'none') return lines.join('\n');
+  const span = Math.max(1, widest(lines) - 1);
+  return lines
+    .map(
+      (line) =>
+        `${[...line]
+          .map((glyph, column) =>
+            glyph === ' ' ? glyph : `${lavaStop(column / span, depth)}${glyph}`,
+          )
+          .join('')}${CODE.reset}`,
+    )
+    .join('\n');
+}
+
+/** A horizontal rule under the gradient — the banner's bar, on its own. */
+function renderDivider(width: number, depth: ColorDepth, unicode: boolean): string {
+  const cell = unicode ? RULE_CELL : RULE_CELL_ASCII;
+  const cells = Math.max(0, Math.trunc(width));
+  if (depth === 'none') return cell.repeat(cells);
+  const span = Math.max(1, cells - 1);
+  const painted = Array.from(
+    { length: cells },
+    (_, i) => `${lavaStop(i / span, depth)}${cell}`,
+  ).join('');
+  return `${painted}${CODE.reset}`;
+}
+
+/**
+ * How wide a wizard's closing rule is drawn. Wide enough to be a line rather than a
+ * dash, narrow enough for an 80-column terminal with room to spare.
+ */
+const DONE_WIDTH = 60;
+
+/** The closing block a wizard ends on: what happened, and what to run next. */
+export interface DoneBlock {
+  /** Whether what just ran succeeded — the mark the block opens with. */
+  readonly ok: boolean;
+  /** What finished, in the words a person typed: `smelt setup`. */
+  readonly what: string;
+  /**
+   * What it did, **counted** — `wrote 3, skipped 1 — 4 files in all`, unterminated
+   * (the block ends the sentence). The caller counts it off what it actually applied,
+   * never off what it planned: a closing block that says "wrote 4 files" for a run
+   * that skipped one is the most quietly wrong line a wizard can print, because it is
+   * the line people believe and stop reading at.
+   */
+  readonly summary: string;
+  /** The sentence this verb owes the reader about what it just wrote. Optional. */
+  readonly note?: string;
+  /** What to run next: the command, and the one line that says why. */
+  readonly next: readonly (readonly [command: string, why: string])[];
+}
+
+/**
+ * The block every wizard ends on — `init`, `hooks install`, `hooks remove`, `setup`.
+ *
+ * Three wizards used to stop at `Done.` and a sentence, each phrased its own way, and
+ * a person who had just installed smelt was left with no answer to the only question
+ * they had: *what do I type now?* This is that answer, in the shape every one of them
+ * shares — a rule, a verdict, what was measured, and the two or three commands that
+ * follow from it.
+ *
+ * Rendered through the palette like everything else, and `PLAIN` (the default) is the
+ * plain text a pipe, a `--yes` receipt and every guard reads. The wizards pass no
+ * palette: their bytes go through the {@link colorize} sink at the verb boundary,
+ * which paints the rule's gradient there — one switch, one place, as ADR-0001 has it.
+ */
+export function doneBlock(block: DoneBlock, lava: Palette = PLAIN): string {
+  const width = block.next.reduce((wide, [command]) => Math.max(wide, command.length), 0);
+  return [
+    '',
+    lava.divider(DONE_WIDTH),
+    `  ${lava.glyph(block.ok ? 'ok' : 'bad')} Done. ${block.what} ${block.summary}.`,
+    ...(block.note === undefined ? [] : [`    ${lava.paint('dim', block.note)}`]),
+    ...(block.next.length === 0
+      ? []
+      : [
+          '',
+          `  ${lava.heading('Next')}`,
+          ...block.next.map(
+            ([command, why]) =>
+              `    ${lava.paint('brand', command.padEnd(width))}  ${lava.paint('dim', why)}`,
+          ),
+        ]),
+    '',
+  ].join('\n');
+}
+
+/**
+ * What one action did to one file — the four outcomes every apply loop in this CLI
+ * has, stated once so three wizards cannot spell the same tally three ways.
+ */
+export type FileAction = 'written' | 'updated' | 'unchanged' | 'skipped';
+
+/**
+ * How each outcome reads on its own, and beside the others. Two phrasings because
+ * English needs them: `left 2 files unchanged` alone, `left 2 unchanged` in a list
+ * whose total is stated at the end.
+ */
+const TALLY: Readonly<
+  Record<FileAction, { alone: (n: string, files: string) => string; beside: (n: string) => string }>
+> = {
+  written: { alone: (n, files) => `wrote ${n} ${files}`, beside: (n) => `wrote ${n}` },
+  updated: { alone: (n, files) => `updated ${n} ${files}`, beside: (n) => `updated ${n}` },
+  unchanged: {
+    alone: (n, files) => `left ${n} ${files} unchanged`,
+    beside: (n) => `left ${n} unchanged`,
+  },
+  skipped: { alone: (n, files) => `skipped ${n} ${files}`, beside: (n) => `skipped ${n}` },
+};
+
+/**
+ * `wrote 3, skipped 1 — 4 files in all` — what a run did, counted off what it did.
+ *
+ * Takes the applied outcomes rather than the plan, and names only the buckets that are
+ * not empty, so the sentence is short when the run was simple and complete when it was
+ * not. The three wizards share it for the same reason they share the block: three
+ * hand-counted summaries are three chances to say "wrote 4 files" about three.
+ */
+export function countedFiles(actions: readonly FileAction[], lava: Palette = PLAIN): string {
+  const files = actions.length === 1 ? 'file' : 'files';
+  const buckets = (Object.keys(TALLY) as FileAction[])
+    .map((action) => ({ action, n: actions.filter((one) => one === action).length }))
+    .filter((bucket) => bucket.n > 0);
+  if (buckets.length === 0) return 'wrote nothing';
+  const only = buckets[0];
+  if (buckets.length === 1 && only !== undefined) {
+    return TALLY[only.action].alone(String(only.n), only.n === 1 ? 'file' : 'files');
+  }
+  return (
+    `${buckets.map((bucket) => TALLY[bucket.action].beside(String(bucket.n))).join(', ')}` +
+    ` ${lava.dash()} ${String(actions.length)} ${files} in all`
+  );
+}
+
+/**
+ * Whether a line is a rule a wizard drew — all `━`, or all `-` where the terminal's
+ * locale never promised more. Both, because the ASCII fallback has to reach the sink
+ * too: a wizard that fell back to `-` still gets its gradient.
+ *
+ * Four cells at least, so a line of prose that happens to be `---` is not a rule.
+ */
+function isRule(line: string): boolean {
+  return new RegExp(`^(?:${RULE_CELL}{4,}|${RULE_CELL_ASCII}{4,})$`, 'u').test(line);
 }
 
 /**
  * Style one block of wizard output. `on === false` returns the text untouched —
  * the property every guard's byte-identity leans on.
+ *
+ * The rules are line-shaped, never word-shaped: ANSI codes wrap whole lines, so the
+ * text a guard asserts (`wrote CLAUDE.md`, `Nothing was written.`) stays contiguous
+ * inside the styled line. `--yes`, `--json`, piped stdin and `NO_COLOR` all mean
+ * plain bytes — a machine parsing wizard output must never parse around escape
+ * sequences.
+ *
+ * This is the **sink** the wizards' prose passes through, not something a wizard calls
+ * per line: `init`, `hooks`, `agents split` and `setup` write the words, and the verb
+ * that owns each of them wraps its output stream in this. That is why no wizard file
+ * holds a colour decision, and why the palette is one import away from all of them.
  */
-export function colorize(text: string, on: boolean): string {
+export function colorize(
+  text: string,
+  on: boolean,
+  lava: Palette = palette({ color: true }),
+): string {
   if (!on) return text;
   return text
     .split('\n')
     .map((line) => {
       if (line === '') return line;
-      if (line.includes('✓') || line.trim().startsWith('Done.')) {
-        return `${CODE.green}${line}${CODE.reset}`;
-      }
+      if (line.includes('✓') || line.trim().startsWith('Done.')) return lava.paint('good', line);
       if (
         line.includes('✗') ||
         line.includes('ORPHAN') ||
         line.includes('MALFORMED') ||
         line.includes('MISSING')
       ) {
-        return `${CODE.red}${line}${CODE.reset}`;
+        return lava.paint('bad', line);
       }
-      if (line.trim().startsWith('note:')) return `${CODE.amber}${line}${CODE.reset}`;
-      if (line.endsWith('> ') || /»/u.test(line)) return `${CODE.bold}${line}${CODE.reset}`;
+      // The closing block's rule, drawn plain by `doneBlock` and painted here: the
+      // wizards write words and the sink paints them, so this is where the gradient
+      // belongs. `lavaBanner` already paints its own, and a painted line is no longer
+      // all-`━`, so neither one can be painted twice.
+      if (isRule(line)) return lava.divider(line.length);
+      if (line.trim().startsWith('note:')) return lava.paint('warn', line);
+      if (line.endsWith('> ') || /»/u.test(line)) return lava.paint('strong', line);
+      // The file listing every wizard prints: what happened to a file is the fact a
+      // reader scans for, so it is the fact that carries the colour.
+      if (/^\s{2,}(wrote|merged|updated) /u.test(line)) return lava.paint('good', line);
+      if (/^\s{2,}(skipped|unchanged) /u.test(line)) return lava.paint('dim', line);
       return line;
     })
     .join('\n');
@@ -68,16 +791,8 @@ export function colorize(text: string, on: boolean): string {
  * The banner an interactive wizard opens with: the title over a lava gradient bar.
  * Returns plain text when `on` is false.
  */
-export function lavaBanner(title: string, on: boolean): string {
-  const bar = '━'.repeat(24);
-  if (!on) return `${bar}\n  ${title}\n${bar}`;
-  const steps = bar.length;
-  const painted = Array.from({ length: steps }, (_, i) => {
-    const t = i / (steps - 1);
-    const r = Math.round(LAVA_FROM[0] + (LAVA_TO[0] - LAVA_FROM[0]) * t);
-    const g = Math.round(LAVA_FROM[1] + (LAVA_TO[1] - LAVA_FROM[1]) * t);
-    const b = Math.round(LAVA_FROM[2] + (LAVA_TO[2] - LAVA_FROM[2]) * t);
-    return `${truecolor([r, g, b])}━`;
-  }).join('');
-  return `${painted}${CODE.reset}\n  ${CODE.bold}${title}${CODE.reset}\n${painted}${CODE.reset}`;
+export function lavaBanner(title: string, on: boolean, unicode = true): string {
+  const lava = palette({ color: on, unicode });
+  const bar = lava.divider(24);
+  return `${bar}\n  ${lava.paint('strong', title)}\n${bar}`;
 }

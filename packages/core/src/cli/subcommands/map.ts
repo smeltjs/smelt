@@ -2,8 +2,9 @@ import { CliUsageError } from '../../errors.ts';
 import { budgetRequired, readTree } from '../../ops/inputs.ts';
 import { mapTree } from '../../ops/verbs.ts';
 import type { RepoMap } from '../../repomap/map.ts';
-import { CONFIG_FILE_NAME } from '../config.ts';
-import type { LoadedConfig } from '../config.ts';
+import { CONFIG_FILE_NAME } from '../../config.ts';
+import type { LoadedConfig } from '../../config.ts';
+import { PLAIN, stderrPalette } from '../lava.ts';
 import { formatMapReport } from '../report.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -211,7 +212,12 @@ async function runMap(run: ResolvedMapRun, io: CliIo): Promise<number> {
   } else {
     io.stdout(map.text);
   }
-  io.stderr(formatMapReport({ map, source: run.dir, budgetSource: run.budgetSource }));
+  io.stderr(
+    formatMapReport(
+      { map, source: run.dir, budgetSource: run.budgetSource },
+      run.json ? PLAIN : stderrPalette(io),
+    ),
+  );
 
   return EXIT.ok;
 }

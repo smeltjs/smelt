@@ -1,11 +1,15 @@
 import { SUPPORTED_LANGUAGES } from '../../detect.ts';
 import { CliUsageError } from '../../errors.ts';
 import { HARNESS_IDS } from '../../harness/registry.ts';
+import { INSTALL_SCOPES } from '../../harness/scope.ts';
+import type { InstallScope } from '../../harness/scope.ts';
 import { budgetFault, budgetMalformed } from '../../ops/inputs.ts';
 import type { BudgetFault } from '../../ops/inputs.ts';
 import { STRATEGIES, DEFAULT_STRATEGY } from '../../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../../plan/structural.ts';
 import { DEFAULT_REPO_IGNORE } from '../../repomap/map.ts';
+import { SETUP_RECIPE } from '../../setup/recipe.ts';
+import { CONFIG_FILE_NAME } from '../../config.ts';
 import { CLI_NAME } from '../shell.ts';
 
 /**
@@ -44,11 +48,39 @@ export const CLI_FLAGS = {
    * records how argv is read, not how many a verb accepts.
    */
   harness: { type: 'string', multiple: true },
+  /**
+   * `project` or `user` — which install the three install-seam verbs act on. One flag,
+   * three verbs, because a setup at one scope and a doctor at the other would agree an
+   * install is healthy while nothing is wired.
+   */
+  scope: { type: 'string' },
+  'older-than': { type: 'string' },
+  'keep-retrieved': { type: 'boolean' },
+  'dry-run': { type: 'boolean' },
   yes: { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
+  /**
+   * The four preset toggles, as `on|off` strings rather than as `--guard` /
+   * `--no-guard` boolean pairs: the wizard asks each of them `(on/off)`, and a flag
+   * that spells the same question differently is a second vocabulary for one setting.
+   * A string also lets *absent* mean "leave it as the install found it", which a
+   * boolean flag cannot say.
+   */
+  guard: { type: 'string' },
+  stats: { type: 'string' },
+  map: { type: 'string' },
+  lint: { type: 'string' },
   strict: { type: 'boolean' },
   json: { type: 'boolean' },
   reconstruct: { type: 'boolean' },
+  /**
+   * Plain bytes, however pretty the terminal — the flag form of `NO_COLOR`, for the
+   * one case an environment variable cannot answer: a person who wants this *one*
+   * invocation unpainted. Global, because it is answered before any verb: it decides
+   * how the refusal for a mistyped command line is printed, and a flag a verb could
+   * refuse could not do that.
+   */
+  'no-color': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
 } as const;
@@ -61,7 +93,7 @@ export type FlagName = keyof typeof CLI_FLAGS;
  * them: `smelt map --help` prints the help, exactly as it always has. Every other flag
  * belongs to at least one verb — `test/guards/subcommand-registry.test.ts` pins that.
  */
-export const GLOBAL_FLAGS = ['help', 'version'] as const satisfies readonly FlagName[];
+export const GLOBAL_FLAGS = ['no-color', 'help', 'version'] as const satisfies readonly FlagName[];
 
 /** A flag a verb can own — everything but the two global ones. */
 export type VerbFlag = Exclude<FlagName, (typeof GLOBAL_FLAGS)[number]>;
@@ -216,13 +248,53 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'Repeatable for setup; hooks takes one per run.',
     ],
   },
+  scope: {
+    label: '--scope <where>',
+    body: () => [
+      `${INSTALL_SCOPES.join(' | ')}. Where the install lives: this project, or this`,
+      'machine. Defaults to user when the working directory is your home',
+      'directory, project everywhere else. At user scope the config is',
+      `~/${CONFIG_FILE_NAME} — which every project below finds, since`,
+      `discovery walks up — the store is ~/${SETUP_RECIPE.store.defaultDir},`,
+      "and each harness file goes to that harness's own documented",
+      'user-level location; one that documents none is reported skipped,',
+      'never guessed.',
+    ],
+  },
+  'older-than': {
+    label: '--older-than <age>',
+    body: () => [
+      'Required by prune: the age cut, as <n>d, <n>h or <n>w',
+      '(whole numbers, at least 1). Blobs last written before it',
+      'are evicted. There is no default — a cut-off',
+      `${CLI_NAME} invented would decide which of your elisions stop`,
+      'being reversible.',
+    ],
+  },
+  'keep-retrieved': {
+    label: '--keep-retrieved',
+    body: () => [
+      'Spare any hash the journal shows was retrieved at',
+      'least once, however old it is: material the model has',
+      'asked for once it may ask for again.',
+    ],
+  },
+  'dry-run': {
+    label: '--dry-run',
+    body: () => [
+      'List what would be evicted and free nothing. The',
+      'report is otherwise identical, so the two runs compare',
+      'field for field.',
+    ],
+  },
   yes: {
     label: '--yes',
     body: () => [
-      "Non-interactive setup: the recipe's defaults, printed",
-      'loudly as they are applied. Existing files are never',
-      'overwritten — skipped with a note; hooks install edits',
-      'them, and it asks per file.',
+      "Answer everything up front: the recipe's defaults for setup,",
+      "the install's current toggles for hooks, printed loudly as",
+      'they are applied. An existing file is merged, never',
+      'overwritten; one smelt would write whole is skipped unless it',
+      "is already smelt's.",
     ],
   },
   'no-mcp': {
@@ -231,6 +303,25 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'Setup only: skip the MCP registration step — the',
       'printed command and its note — for a hooks-only',
       'setup.',
+    ],
+  },
+  guard: {
+    label: '--guard on|off',
+    body: () => ['The PreToolUse size-guard. Answers the wizard question of', 'the same name.'],
+  },
+  stats: {
+    label: '--stats on|off',
+    body: () => ['`smelt stats` when a session ends — observation only,', 'never blocking.'],
+  },
+  map: {
+    label: '--map on|off',
+    body: () => ['An opening `smelt map` at session start, so the agent', 'starts oriented.'],
+  },
+  lint: {
+    label: '--lint on|off',
+    body: () => [
+      '`smelt agents lint .` at session start, reporting on the',
+      'instruction files this session loads.',
     ],
   },
   strict: {
@@ -260,6 +351,13 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
     body: () => [
       'Read a --json envelope and print the original text, byte for',
       'byte. This is Law 3 you can run from a shell.',
+    ],
+  },
+  'no-color': {
+    label: '--no-color',
+    body: () => [
+      'Plain bytes, however pretty the terminal. Same effect as',
+      'setting NO_COLOR; --json output is never coloured either way.',
     ],
   },
   help: { label: '-h, --help', body: () => ['This text.'] },
@@ -295,4 +393,37 @@ export function parseBudget(raw: string | undefined): number | undefined {
 /** The malformed-budget refusal, in the CLI's currency: prefixed, and exit 2. */
 function refuseBudget(fault: BudgetFault, raw: string): CliUsageError {
   return new CliUsageError(`${CLI_NAME}: ${budgetMalformed(fault, '--budget', raw)}`);
+}
+
+/**
+ * `--guard on|off` and its three siblings, or `undefined` when nobody typed one —
+ * which is not the same as `off`: absent means *leave it as the install found it*,
+ * and both verbs read the installed state for that answer (`presetToggles`).
+ *
+ * It lives with the flags rather than with a verb because two verbs own these four,
+ * and both of them meaning the same thing by `on` is the whole point: `smelt setup
+ * --yes --map on` and `smelt hooks install --yes --map on` must wire the same hook.
+ */
+export function parseToggle(flag: string, raw: string | undefined): boolean | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === 'on') return true;
+  if (raw === 'off') return false;
+  throw new CliUsageError(`${CLI_NAME}: --${flag} takes on or off, got "${raw}".`);
+}
+
+/**
+ * `--scope project|user`, or `undefined` when nobody typed it — which is not the same
+ * as `project`: absent means *detect*, and the three verbs that own this flag detect
+ * the same way (`resolveScope` in `harness/scope.ts`).
+ *
+ * It lives with the flag rather than with a verb because three verbs own it, and the
+ * three of them agreeing on what `user` means is the whole point: a setup at one scope
+ * and a doctor at the other would report a healthy install with nothing wired.
+ */
+export function parseScope(raw: string | undefined): InstallScope | undefined {
+  if (raw === undefined) return undefined;
+  if ((INSTALL_SCOPES as readonly string[]).includes(raw)) return raw as InstallScope;
+  throw new CliUsageError(
+    `${CLI_NAME}: --scope takes ${INSTALL_SCOPES.join(' or ')}, got "${raw}".`,
+  );
 }

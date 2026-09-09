@@ -1,0 +1,5 @@
+smelt stats  <project>/.smelt/store
+0 blobs, 0 B on disk
+
+  nothing stored yet — no run has elided anything into this store.
+  smelt <file> --budget 4000 fills it, and this page reports on it.

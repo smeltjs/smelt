@@ -29,6 +29,8 @@ export {
   FORBIDDEN_GLOBALS,
   FORBIDDEN_NODE_MODULES,
   FORBIDDEN_PACKAGES,
+  OPT_IN_RERANK_PACKAGES,
+  RERANK_VOYAGE_PACKAGE,
 } from './net/policy.ts';
 export type { LocalResource } from './net/policy.ts';
 export { clearGrammarCache, grammarPath, loadGrammar, WASM_BY_LANGUAGE } from './plan/grammar.ts';
@@ -52,14 +54,24 @@ export {
   RETRIEVE_BATCH_TOOL_NAME,
   RETRIEVE_TOOL_NAME,
 } from './retrieve.ts';
+export { loadRerankStage } from './rerank/load.ts';
+export type { RerankLoad } from './rerank/load.ts';
+export { applyRerank } from './rerank/protect.ts';
+export type { RerankOutcome, RerankRequest } from './rerank/protect.ts';
 export { unconfiguredDistillStage, unconfiguredRerankStage } from './stages.ts';
 export { MemoryElisionStore } from './store.ts';
 export {
   DIRECTORY_STORE_FORMAT,
   DIRECTORY_STORE_VERSION,
   DirectoryElisionStore,
+  readStoreSize,
 } from './store-dir.ts';
-export type { DirectoryElisionStoreOptions } from './store-dir.ts';
+export type {
+  DirectoryElisionStoreOptions,
+  PrunedBlob,
+  PruneOptions,
+  PruneReport,
+} from './store-dir.ts';
 export * from './types.ts';
 export {
   CLI_JSON_FORMAT,
@@ -118,8 +130,16 @@ export {
   parseConfig,
   renderConfig,
   resolveStorePath,
-} from './cli/config.ts';
-export type { ConfiguredStore, LoadedConfig, SmeltConfig, SmeltConfigStore } from './cli/config.ts';
+  VOYAGE_DEFAULT_KEY_ENV,
+  VOYAGE_DEFAULT_MODEL,
+} from './config.ts';
+export type {
+  ConfiguredStore,
+  LoadedConfig,
+  SmeltConfig,
+  SmeltConfigRerank,
+  SmeltConfigStore,
+} from './config.ts';
 export {
   MEASURE_STUB_FILE,
   measureStubSource,
@@ -140,10 +160,13 @@ export { runDoctor } from './cli/doctor.ts';
 export type {
   DoctorBlock,
   DoctorConfig,
+  DoctorHookEntry,
+  DoctorHookFile,
   DoctorIo,
   DoctorMcp,
   DoctorOptions,
   DoctorReceipt,
+  DoctorRerank,
 } from './cli/doctor.ts';
 export { retrieveStats, ruleLedger } from './stats.ts';
 export type { RawRetrieveCounters } from './stats.ts';

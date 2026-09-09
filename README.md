@@ -94,25 +94,39 @@ focus  planLexical
   focus-window    141  4,715  9d211d0922e7bb2f  collapsed 141 lines with no match for the foc…
 ```
 
-At the end of a session the store reports on itself — the counters, then the ledger, one
-rule at a time. Real output of `smelt stats` (0.6.0) after smelting this repo's
-`lexical.ts` under `--strategy auto` and retrieving one of the two markers:
+At the end of a session the store reports on itself — what it holds, the expansion rate,
+the counters, then the ledger, one rule at a time. Real output of `smelt stats` after
+`smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical --strategy
+auto` and retrieving one of the two markers — the block below is regenerated from the
+binary by `test/guards/readme-numbers.test.ts` on every `pnpm verify`, so it is this
+build's output rather than a past release's:
 
 ```
-elisionsStored 2
-bytesStored 4865
-retrieveCalls 1
-uniqueRetrieved 1
-expansionRate 0.5
-allElisionsRetrieved false
-rule.sibling-collapse.stored 2
-rule.sibling-collapse.retrieved 1
+smelt stats  /your/project/.smelt/store
+2 blobs, 4.8 KB on disk
+
+  expansion  ████████████░░░░░░░░░░░░  50.0%   1 of 2 elisions asked for back
+
+  elisionsStored            2
+  bytesStored           4,865
+  retrieveCalls             1
+  uniqueRetrieved           1
+  misses                    0
+  expansionRate           0.5
+  allElisionsRetrieved  false
+
+  rule              stored  retrieved   rate
+  sibling-collapse       2          1  50.0%
 ```
+
+In a terminal that is lava-coloured; in a pipe, in CI, under `NO_COLOR` or with
+`--no-color`, it is exactly these bytes. `--json` is the surface to parse, and it never
+carries a colour byte.
 
 `expansionRate` is the fraction of what smelt hid that the model asked for back — the
-honest signal of over-pruning, measured and never thresholded. The `rule.*` lines are the
-same signal per elision rule, so a rule whose every cut keeps getting asked back shows up
-as a fact you can act on. Reading stats never moves them.
+honest signal of over-pruning, measured and never thresholded. The ledger is the same
+signal per elision rule, so a rule whose every cut keeps getting asked back shows up as a
+fact you can act on. Reading stats never moves them.
 
 - `--strategy structural` parses the file and collapses whole sibling declarations,
   keeping every signature and doc comment. `--strategy lexical` (the default) uses focus
@@ -149,9 +163,13 @@ the CLI reads for defaults from then on. Every step accepts `back`; re-running i
 your current answers and edits one choice at a time; **nothing is written until a final
 confirm, and no existing file is ever overwritten without an explicit per-file yes.**
 
-If you opt into a reranker, the wizard generates the adapter **into your project** — your
-file, your env var, your review — because a bundled reranker would ship your source to a
-third party. See [Reranking](#reranking-a-seam-not-a-feature).
+The reranker question has three answers: `none` (the default — nothing is loaded and
+nothing is called), a `module` of your own (the wizard writes a typed stub **into your
+project** and points the config at it), or `voyage` (the separately-installed
+`@smeltjs/rerank-voyage` adapter, keyed from an environment variable the wizard names and
+never reads). Either non-default answer is written down as a `rerank` block in your own
+config, because a reranker nobody opted into would ship your source to a third party. See
+[Reranking](#reranking-a-seam-not-a-feature).
 
 ## The library
 
@@ -187,7 +205,7 @@ import { DirectoryElisionStore } from '@smeltjs/core';
 
 const smelter = createSmelter({
   defaultBudgetBytes: 8_000,
-  store: new DirectoryElisionStore('.smelt/store'), // content-addressed, crash-safe, no eviction
+  store: new DirectoryElisionStore('.smelt/store'), // content-addressed, crash-safe, prune-only
 });
 // A smelt_retrieve in a later turn — or a later process — still gets its bytes back.
 // Retrieval counters survive restarts, so expansionRate stays meaningful across a session.
@@ -251,13 +269,29 @@ smelt setup
 harnesses it detects, the MCP registration for Claude Code, opencode, Codex and Grok
 (JSON or TOML, whichever the harness reads), and a real
 smelt → retrieve round trip to prove the loop. Interactive from a terminal — Enter
-accepts every default. Existing files are never overwritten: they are skipped with a
-note, and `smelt hooks install` (below) edits them, asking per file.
+accepts every default. An existing file is **merged**, never overwritten: every entry
+that is not smelt's is preserved, and every byte outside the region smelt edits is
+unchanged. The
+one file it will not write is one it would have to write whole (the opencode plugin,
+Cline's hook wrapper) when the file there is somebody else's — that is reported
+skipped, with the reason.
+
+Every wizard — `setup`, `hooks install`, `hooks remove`, `init` — ends the same way: a
+rule, a verdict counted off what was actually applied (`wrote 2, left 1 unchanged,
+skipped 1 — 4 files in all`), and the two or three commands that follow from it. Under
+`--json` the receipt is the whole output, as it always was.
 
 For an agent, the whole interface is flags, and the receipt is the output:
 
 ```sh
 npx @smeltjs/core setup --yes --harness claude-code --json
+```
+
+The four preset toggles are flags too, each `on|off`, on `setup` and on
+`hooks install` alike. A toggle you do not name keeps whatever is already installed:
+
+```sh
+smelt setup --yes --harness claude-code --map on --lint on --json
 ```
 
 Or hand the agent the skill, which teaches all of it in the agent's own vocabulary:
@@ -271,6 +305,13 @@ Homebrew, from smelt's own tap:
 ```sh
 brew install smeltjs/tap/smelt
 ```
+
+The formula pulls Homebrew's own `node` by default. To use the Node already on your
+PATH instead, `brew install --without-node smeltjs/tap/smelt` — that Node must clear
+smelt's engines floor, `^20.19.0 || >=22.12.0`, and must live where Homebrew's build
+environment can see it (e.g. `/usr/local/bin` or the Homebrew prefix), since a
+version-manager shim (nvm, volta, fnm) that only your shell's `PATH` knows about is
+invisible to the build.
 
 Upgrading from 0.6.0 or earlier on Homebrew: **re-run `smelt setup`**. Hooks written by
 those releases point at the versioned Cellar path `brew upgrade` deletes, and the guard
@@ -290,7 +331,34 @@ printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"f
 A `"permissionDecision":"deny"` document on stdout means the guard is live. **Empty
 stdout means it is inert** — that is the 0.6.0 bug, and `smelt setup` is the fix.
 (`realpath` ships with macOS 13+ and every Linux; on Linux `readlink -f` does the same,
-and on older macOS drop the substitution — the `opt` path works directly from 0.7.0 on.)
+and on older macOS drop the substitution — on any release carrying the fix above, the
+`opt` path works directly.)
+
+### One project, or the whole machine
+
+Setup, `hooks install`/`remove` and `doctor` all take `--scope project|user`, and it
+defaults to `user` when you run them from your home directory and `project` everywhere
+else. The interactive wizards state what was detected and let you flip it.
+
+A **machine** install is the one to reach for when you want one `smelt.config.json` and
+one store behind every project: the config goes to `~/smelt.config.json`, which every
+project below it finds because discovery walks up, and the store to `~/.smelt/store`.
+Each harness file goes to that harness's **own documented user-level location** —
+`~/.claude/settings.json` and `~/.claude/CLAUDE.md`, `~/.codex/hooks.json` and
+`~/.codex/AGENTS.md`, `~/.gemini/settings.json` and `~/.gemini/GEMINI.md`,
+`~/.cursor/hooks.json`, `~/.config/opencode/`, `~/.cline/` — not the project spelling
+one directory up, which is a file nothing reads. A harness that documents no
+user-level home for a file is listed as skipped, with the reason; it is never guessed.
+
+```sh
+cd ~ && smelt setup --yes --scope user --harness claude-code
+smelt doctor --scope user
+```
+
+One step stays yours at machine scope: Claude Code's user-scope MCP registration lives
+in `~/.claude.json`, a file Claude Code owns and rewrites, so setup prints the command
+instead of editing it — `claude mcp add --scope user smelt -- npx @smeltjs/mcp` — and
+doctor checks the key read-only and names the command when it is missing.
 
 ### Updating — and the other machine
 
@@ -302,8 +370,16 @@ smelt doctor
 
 Doctor reads installed state and **never writes**: which release wrote the instruction
 blocks, whether the config parses and its store directory exists, whether the MCP
-registration is intact, and which pieces are orphans. Exit 0 means current. When
-anything is behind, the report ends with the exact repair command, which is always:
+registration is intact, and which pieces are orphans. It also **runs** every hook it
+finds, for every harness, against an oversized file in a temporary directory, and says
+what happened: `wired (verified)`, `wired but inert` (the command ran and allowed the
+read, which is exactly what a shim reached through a symlink does) or `wired but
+missing` (the script is gone, which is what `brew upgrade` leaves behind). That includes
+the three harnesses whose hook is a file smelt owns whole rather than an entry in
+somebody's JSON: Cline's wrapper and Hermes's YAML are run like any other shim, and
+opencode's plugin is loaded — import graph and all — to prove it still exports its hook.
+Exit 0 means current. When anything is behind or not firing, the report ends with the
+exact repair command, which is always:
 
 ```sh
 smelt setup
@@ -314,7 +390,8 @@ _upgrade, doctor, setup_ is the whole recovery story, whether "the other machine
 laptop or a teammate's.
 
 Then tell your agent about it, in whatever standing-instructions file it reads
-(`CLAUDE.md`, `AGENTS.md`, a system prompt):
+(`CLAUDE.md`, `AGENTS.md`, a system prompt — or their user-level siblings,
+`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, if you want it everywhere):
 
 ```md
 Reading a big file or a long tool output? Pipe it through
@@ -324,11 +401,15 @@ elided region leaves a marker ending in `retrieve("hash")` — when you need tho
 bytes back, run `smelt retrieve <hash>`.
 ```
 
+(The block `smelt setup` writes opens with "This project uses smelt" — or "This machine
+uses smelt" at `--scope user`, since a block in `~/.claude/CLAUDE.md` is loaded in every
+project on the machine.)
+
 The marker's `retrieve("hash")` **is** that command, and it is counted like any other
 retrieval — so at the end of a session, `smelt stats` prints the same honest numbers
-(`expansionRate`, `allElisionsRetrieved`, one `name value` per line, then the ledger:
-`rule.<id>.stored` and `rule.<id>.retrieved` per elision rule, so you can see which
-rule's cuts keep getting asked for back; `--json` for the envelope) that
+(`expansionRate` with a bar, `allElisionsRetrieved`, the counters, then the ledger as a
+table — stored, retrieved and rate per elision rule, so you can see which rule's cuts
+keep getting asked for back; `--json` for the envelope) that
 `smelter.stats()` and `smelter.store.ledger()` give a harness. The instruction pattern above works
 with any agent that can run a command; the hooks preset below wires it in with real
 enforcement.
@@ -341,11 +422,24 @@ smelt hooks install --harness claude-code
 smelt hooks remove             # takes it all back out
 ```
 
+Or without a terminal at all — the same install, answered up front:
+
+```sh
+smelt hooks install --yes --harness claude-code --map on --lint off
+smelt hooks remove  --yes --harness claude-code
+```
+
 Three hooks, individually toggleable, written into the harness's own config with the
-same discipline as `smelt init` — every file listed before a final confirm, no
-existing file ever overwritten without a per-file yes, re-runs edit toggles, and a
-merge into an existing settings file leaves every byte outside smelt's own entries
-untouched. The install also points `smelt.config.json` at a directory store (unless
+same discipline as `smelt init` — every file listed before a final confirm, nothing
+overwritten without a per-file yes in the wizard, re-runs edit toggles. A merge into an
+existing settings file preserves **every entry that is not smelt's**, and leaves every
+byte outside the `hooks` key unchanged — your other top-level keys, their indentation,
+their escapes and their number spellings ride through verbatim. (Inside `hooks`, the
+value is re-serialised: a foreign entry keeps its content and may come back formatted
+differently.) Under `--yes` there is nobody to ask, so the plan's own shape answers
+instead: a file with a merge behind it is written, because no entry of yours can be
+lost, and a file smelt would write whole is left alone unless it is already smelt's —
+reported skipped, with the reason, and the run still exits 0. The install also points `smelt.config.json` at a directory store (unless
 the config already chose one), so the `smelt retrieve` the guard teaches actually
 works across processes:
 
@@ -510,8 +604,13 @@ Three things that look like bugs and are not:
   For logs, traces, diffs, and every other blob that is not code.
 - **Persistent store** — `DirectoryElisionStore`: one file per content hash, atomic
   no-clobber writes, bytes re-verified against their hash on every read, counters in an
-  append-only journal. No eviction, ever — a store that can forget turns "reversible"
-  into "reversible, usually".
+  append-only journal. No _automatic_ eviction, ever — no cap, no LRU, no TTL, nothing
+  that deletes because a store was opened: a store that can forget by itself turns
+  "reversible" into "reversible, usually". The one deletion is `smelt store prune
+--older-than 30d`, which you type: it journals every eviction before it unlinks, so a
+  later `smelt retrieve` of a pruned hash says `EvictedHashError` with the date rather
+  than "it was never elided", and the counters do not move — `elisionsStored` keeps
+  counting what went, so a prune cannot flatter the expansion rate. `--dry-run` first.
 - **Cache-prefix hygiene** — `findPrefixDivergence` and `detectCacheBreakers` report the
   byte offset where two prompt prefixes diverge and the silent cache-breakers worth
   fixing (timestamps/UUIDs in system prompts, unsorted JSON keys, varying tool sets).
@@ -522,7 +621,9 @@ Three things that look like bugs and are not:
   as such. Every included symbol can say why it ranked.
 - **The setup surface** — `smelt setup` applies the whole recipe in one command (config,
   hooks preset, MCP registration, a proven round trip), `smelt doctor` reads installed
-  state back and names exactly what is behind, and the version-stamped instruction
+  state back — running every hook it can read as an entry, so `wired` is a fact about
+  behaviour and not about text — and names exactly what is behind, and the
+  version-stamped instruction
   blocks make "is this machine current?" answerable from pure shell. The recipe's facts
   live as data; the skill pack (`npx skills add smeltjs/smelt`) and this README render
   from it or are guard-pinned to it.
@@ -653,13 +754,56 @@ const smelter = createSmelter({
 // without its tokenizer named is not a measurement.
 ```
 
-## Reranking: a seam, not a feature
+## Reranking: a seam, and an opt-in you write down
 
-There is no bundled reranker — a default reranker would ship every consumer's source to a
-third party, including the consumers who never read the changelog. The `RerankStage`
-interface is the whole offering: implement it in your code, with your key, so the
-outbound call is visible in your own diff. `smelt init` will generate the skeleton into
-your project if you want a head start.
+There is **no default reranker and never will be** — a default would ship every
+consumer's source to a third party, including the consumers who never read the changelog.
+With no `rerank` key in your `smelt.config.json`, nothing is loaded, nothing is imported
+and nothing is called. That is what a default install does, and the zero-network guard
+still walks the real import graph to prove it.
+
+What you can do is opt in, in a file you own ([ADR-0004](docs/adr/0004-rerank-config-seam.md)):
+
+```json
+{ "rerank": { "kind": "module", "path": "./smelt.rerank.ts" } }
+```
+
+```json
+{ "rerank": { "kind": "voyage", "model": "rerank-2.5", "apiKeyEnv": "VOYAGE_API_KEY", "topK": 8 } }
+```
+
+`module` loads a `RerankStage` of your own; `voyage` loads
+[`@smeltjs/rerank-voyage`](packages/rerank-voyage/), a **separate package you install
+yourself** and the only one in this repository that reaches the network. There is no
+`SMELT_RERANK_API_KEY` and no environment variable smelt reads that your config did not
+name. Every failure is a refusal that names what is missing — the path, the `topK` this
+kind needs, the environment variable, the uninstalled package — never a quiet fall back
+to an unranked run.
+
+**What a stage is asked, and what it may do.** When the planner has decided which regions
+to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
+returns is spared** from the cut — a selection, not a ranking of everything, so apply your
+own cut-off (`topK`, a `.slice`). Returning all of them keeps all of them, and the run
+emits its input unchanged. It can only spare, never cut, so the worst a bad answer can do
+is cost you bytes — and bytes are already reported, including when a reranker turns an
+in-budget run into an over-budget one.
+
+A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
+refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
+`smelt_file`), never as a crash in smelt.
+
+Every run that reranks says so, on a line of its own beneath the focus line — this is its
+shape, not a measurement; the two counts are tallied per run and never estimated:
+
+```
+rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept)
+```
+
+The same three facts ride in the `--json` envelope (`result.rerank`) and in
+`smelt_file`'s report block, and `smelt doctor` says whether your key variable is set —
+presence only, never the value.
+
+Writing your own stage is unchanged:
 
 ```ts
 import type { RerankStage } from '@smeltjs/core';
@@ -691,7 +835,9 @@ The reasoning — _why_ breaking each produces a library that still looks like i
 is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#the-four-laws-and-why-each-one-is-load-bearing):
 
 1. **Zero network.** No external calls, in any code path, enforced by a guard that walks
-   the real import graph from every entrypoint the manifest advertises.
+   the real import graph from every entrypoint the manifest advertises — and that names
+   the one opt-in adapter package **forbidden** as an import, so it can only ever arrive
+   the way you chose it.
 2. **Every elision is explainable.** A named rule and a sentence a human can read in a
    diff. Never a model's opinion.
 3. **Every elision is reversible, and expansions are counted.** Reversibility without

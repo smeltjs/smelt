@@ -1,0 +1,32 @@
+{
+  "format": "smelt-cli/v1",
+  "result": {
+    "text": "line 0 padding padding\nline 1 padding padding\nline 2 padding padding\nline 3 padding padding\nline 4 padding padding\nline 5 padding padding\nline 6 padding padding\nline 7 padding padding\nline 8 padding padding\nline 9 padding padding\n<<smelt/v1: collapsed 186 lines from the middle (4559B) — retrieve(\"25bed5bc50bb424c\")>>\nline 196 padding padding\nline 197 padding padding\nline 198 padding padding\nline 199 padding padding\n",
+    "inputBytes": 4890,
+    "outputBytes": 421,
+    "planner": "lexical/v1",
+    "language": "unknown",
+    "elisions": [
+      {
+        "hash": "25bed5bc50bb424c",
+        "range": {
+          "start": 230,
+          "end": 4789
+        },
+        "outputRange": {
+          "start": 230,
+          "end": 320
+        },
+        "bytes": 4559,
+        "reason": {
+          "rule": "head-tail",
+          "explanation": "collapsed 186 lines from the middle"
+        },
+        "marker": "<<smelt/v1: collapsed 186 lines from the middle (4559B) — retrieve(\"25bed5bc50bb424c\")>>"
+      }
+    ]
+  },
+  "elided": {
+    "25bed5bc50bb424c": "line 10 padding padding\nline 11 padding padding\nline 12 padding padding\nline 13 padding padding\nline 14 padding padding\nline 15 padding padding\nline 16 padding padding\nline 17 padding padding\nline 18 padding padding\nline 19 padding padding\nline 20 padding padding\nline 21 padding padding\nline 22 padding padding\nline 23 padding padding\nline 24 padding padding\nline 25 padding padding\nline 26 padding padding\nline 27 padding padding\nline 28 padding padding\nline 29 padding padding\nline 30 padding padding\nline 31 padding padding\nline 32 padding padding\nline 33 padding padding\nline 34 padding padding\nline 35 padding padding\nline 36 padding padding\nline 37 padding padding\nline 38 padding padding\nline 39 padding padding\nline 40 padding padding\nline 41 padding padding\nline 42 padding padding\nline 43 padding padding\nline 44 padding padding\nline 45 padding padding\nline 46 padding padding\nline 47 padding padding\nline 48 padding padding\nline 49 padding padding\nline 50 padding padding\nline 51 padding padding\nline 52 padding padding\nline 53 padding padding\nline 54 padding padding\nline 55 padding padding\nline 56 padding padding\nline 57 padding padding\nline 58 padding padding\nline 59 padding padding\nline 60 padding padding\nline 61 padding padding\nline 62 padding padding\nline 63 padding padding\nline 64 padding padding\nline 65 padding padding\nline 66 padding padding\nline 67 padding padding\nline 68 padding padding\nline 69 padding padding\nline 70 padding padding\nline 71 padding padding\nline 72 padding padding\nline 73 padding padding\nline 74 padding padding\nline 75 padding padding\nline 76 padding padding\nline 77 padding padding\nline 78 padding padding\nline 79 padding padding\nline 80 padding padding\nline 81 padding padding\nline 82 padding padding\nline 83 padding padding\nline 84 padding padding\nline 85 padding padding\nline 86 padding padding\nline 87 padding padding\nline 88 padding padding\nline 89 padding padding\nline 90 padding padding\nline 91 padding padding\nline 92 padding padding\nline 93 padding padding\nline 94 padding padding\nline 95 padding padding\nline 96 padding padding\nline 97 padding padding\nline 98 padding padding\nline 99 padding padding\nline 100 padding padding\nline 101 padding padding\nline 102 padding padding\nline 103 padding padding\nline 104 padding padding\nline 105 padding padding\nline 106 padding padding\nline 107 padding padding\nline 108 padding padding\nline 109 padding padding\nline 110 padding padding\nline 111 padding padding\nline 112 padding padding\nline 113 padding padding\nline 114 padding padding\nline 115 padding padding\nline 116 padding padding\nline 117 padding padding\nline 118 padding padding\nline 119 padding padding\nline 120 padding padding\nline 121 padding padding\nline 122 padding padding\nline 123 padding padding\nline 124 padding padding\nline 125 padding padding\nline 126 padding padding\nline 127 padding padding\nline 128 padding padding\nline 129 padding padding\nline 130 padding padding\nline 131 padding padding\nline 132 padding padding\nline 133 padding padding\nline 134 padding padding\nline 135 padding padding\nline 136 padding padding\nline 137 padding padding\nline 138 padding padding\nline 139 padding padding\nline 140 padding padding\nline 141 padding padding\nline 142 padding padding\nline 143 padding padding\nline 144 padding padding\nline 145 padding padding\nline 146 padding padding\nline 147 padding padding\nline 148 padding padding\nline 149 padding padding\nline 150 padding padding\nline 151 padding padding\nline 152 padding padding\nline 153 padding padding\nline 154 padding padding\nline 155 padding padding\nline 156 padding padding\nline 157 padding padding\nline 158 padding padding\nline 159 padding padding\nline 160 padding padding\nline 161 padding padding\nline 162 padding padding\nline 163 padding padding\nline 164 padding padding\nline 165 padding padding\nline 166 padding padding\nline 167 padding padding\nline 168 padding padding\nline 169 padding padding\nline 170 padding padding\nline 171 padding padding\nline 172 padding padding\nline 173 padding padding\nline 174 padding padding\nline 175 padding padding\nline 176 padding padding\nline 177 padding padding\nline 178 padding padding\nline 179 padding padding\nline 180 padding padding\nline 181 padding padding\nline 182 padding padding\nline 183 padding padding\nline 184 padding padding\nline 185 padding padding\nline 186 padding padding\nline 187 padding padding\nline 188 padding padding\nline 189 padding padding\nline 190 padding padding\nline 191 padding padding\nline 192 padding padding\nline 193 padding padding\nline 194 padding padding\nline 195 padding padding"
+  }
+}

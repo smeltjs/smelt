@@ -1,5 +1,7 @@
+import { dirname } from 'node:path';
+
 import { CONFIG_FILE_NAME, configuredStore, loadNearestConfig, openStore } from '@smeltjs/core';
-import type { ElisionStore, Strategy } from '@smeltjs/core';
+import type { ElisionStore, SmeltConfigRerank, Strategy } from '@smeltjs/core';
 
 /**
  * The store this server serves its five tools from, decided once at startup.
@@ -23,6 +25,18 @@ export interface ResolvedMcpStore {
   readonly description: string;
   /** The config's default planner strategy, when it names one. */
   readonly defaultStrategy?: Strategy;
+  /**
+   * The config's `rerank` opt-in and the directory its paths resolve against, carried
+   * as the *decision* rather than as a live stage.
+   *
+   * Absent when the config named no reranker, which is every default config — and then
+   * `smelt_file` never loads anything and never calls anything. When it is present the
+   * stage is loaded inside the tool call rather than at startup, so a refusal (an unset
+   * key variable, an uninstalled adapter package) reaches the model as a tool error it
+   * can read and repeat to its user. A resident server that exited during startup would
+   * say the same thing to nobody.
+   */
+  readonly rerank?: { readonly config: SmeltConfigRerank; readonly dir: string };
   /**
    * Present only on a memory store: how to get persistence, phrased the way the CLI's
    * `smelt retrieve` refusal phrases it. Appended to an unknown-hash tool error,
@@ -48,7 +62,13 @@ export function resolveMcpStore(cwd: string): ResolvedMcpStore {
   const loaded = loadNearestConfig(cwd);
   const decision = configuredStore(loaded);
   const strategy = loaded?.config.strategy;
-  const withStrategy = strategy === undefined ? {} : { defaultStrategy: strategy };
+  const rerank = loaded?.config.rerank;
+  const fromConfig = {
+    ...(strategy === undefined ? {} : { defaultStrategy: strategy }),
+    ...(rerank === undefined || loaded === undefined
+      ? {}
+      : { rerank: { config: rerank, dir: dirname(loaded.path) } }),
+  };
 
   if (loaded !== undefined && decision.kind === 'directory') {
     return {
@@ -57,7 +77,7 @@ export function resolveMcpStore(cwd: string): ResolvedMcpStore {
       description:
         `directory store at ${decision.path} (from ${loaded.path}) — ` +
         `shared with the smelt CLI`,
-      ...withStrategy,
+      ...fromConfig,
     };
   }
 
@@ -76,6 +96,6 @@ export function resolveMcpStore(cwd: string): ResolvedMcpStore {
       `never held. Configure {"store": {"kind": "directory", "path": …}} in ` +
       `${CONFIG_FILE_NAME} — \`smelt init\` writes one — and the smelt CLI and this ` +
       `server will share one store.`,
-    ...withStrategy,
+    ...fromConfig,
   };
 }

@@ -6,7 +6,18 @@ import {
 
 import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import { guardCoreScriptPath, portablePath } from './paths.ts';
+import { renderRoot } from './scope.ts';
 import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
+
+/**
+ * The hook opencode calls, spelled once: the key of the table the plugin returns, and
+ * the event `smelt doctor` reports this file's probe under.
+ */
+const HOOK_KEY = 'tool.execute.before';
+
+/** The export opencode calls to get that table, and the binding the core's path is in. */
+const PLUGIN_FACTORY = 'SmeltGuard';
+const GUARD_CORE_BINDING = 'GUARD_CORE';
 
 /**
  * opencode — EXPERIMENTAL tier. Install and removal, end to end.
@@ -21,7 +32,7 @@ import type { HarnessInstallContext, HarnessProfile } from './profile.ts';
  * nothing could see them drift from what the shims print.
  */
 function opencodePluginSource(ctx: HarnessInstallContext): string {
-  const guardCore = portablePath(ctx.cwd, guardCoreScriptPath(ctx.distDir));
+  const guardCore = portablePath(renderRoot(ctx.scope, ctx), guardCoreScriptPath(ctx.distDir));
   return `// smelt:hooks v1 — opencode plugin shim. EXPERIMENTAL tier: mapped from the
 // capability matrix (docs/research/2026-09-02-harness-capability-matrix.md, opencode
 // row; https://opencode.ai/docs/plugins/). This template's deny/pass/window paths
@@ -30,7 +41,7 @@ function opencodePluginSource(ctx: HarnessInstallContext): string {
 // provider credentials. Caveat carried from the matrix: MCP tools can bypass plugin
 // hooks (sst/opencode#2319) — this guard sees built-in tools only.
 //
-// Thin adapter: maps tool.execute.before onto the smelt guard core (zero
+// Thin adapter: maps ${HOOK_KEY} onto the smelt guard core (zero
 // dependencies), which owns every decision. Deny mode throws (opencode surfaces the
 // reason to the model); rewrite mode substitutes the faithful replacement command —
 // announced on stderr, because the plugin API has no reason channel on a rewrite
@@ -38,11 +49,11 @@ function opencodePluginSource(ctx: HarnessInstallContext): string {
 // from the shims' own constants, so this copy cannot drift from theirs.
 import { pathToFileURL } from 'node:url';
 
-const GUARD_CORE = ${JSON.stringify(guardCore)};
-const core = await import(pathToFileURL(GUARD_CORE).href);
+const ${GUARD_CORE_BINDING} = ${JSON.stringify(guardCore)};
+const core = await import(pathToFileURL(${GUARD_CORE_BINDING}).href);
 
-export const SmeltGuard = async () => ({
-  'tool.execute.before': async (input, output) => {
+export const ${PLUGIN_FACTORY} = async () => ({
+  '${HOOK_KEY}': async (input, output) => {
     const tool = input?.tool;
     const args = output?.args ?? {};
     let request;
@@ -86,6 +97,19 @@ export const SmeltGuard = async () => ({
 // Same derivation as claude-code's, from the one place it lives (MCP_RUN_ARGS):
 // the recipe's run command in opencode's spawn shape (a single `command` array,
 // `type: "local"`).
+const MCP_ENTRY = { type: 'local', command: [...MCP_RUN_ARGS] } as const;
+
+/** Where the registration goes, at each scope — one owner for both spellings. */
+const CONFIG_JSON = 'opencode.json';
+const USER_CONFIG_JSON = '.config/opencode/opencode.json';
+
+/**
+ * The entry as a person pastes it, exactly as `packages/mcp/README.md` prints it —
+ * the same value the `mcp-registration` step merges in, under the same key.
+ */
+const MCP_JSON =
+  `"mcp": { "smelt": { "type": "${MCP_ENTRY.type}", ` +
+  `"command": ["${MCP_ENTRY.command.join('", "')}"] } }`;
 
 export const opencode: HarnessProfile = {
   id: 'opencode',
@@ -94,22 +118,51 @@ export const opencode: HarnessProfile = {
   detect: ['.opencode', 'opencode.json'],
   detectHome: ['.config/opencode'],
   instructionFile: 'AGENTS.md',
+  // Verified 2026-09-09: global config is `~/.config/opencode/opencode.json`
+  // (opencode.ai/docs/config § Locations), global rules `~/.config/opencode/AGENTS.md`
+  // (.../docs/rules), and the plugin directories are **plural at both scopes** —
+  // opencode.ai/docs/plugins § "From local files": "Place JavaScript or TypeScript
+  // files in the plugin directory. `.opencode/plugins/` — Project-level plugins;
+  // `~/.config/opencode/plugins/` — Global plugins. Files in these directories are
+  // automatically loaded at startup." The same two names appear in the load order and
+  // in the v2 config spec (github.com/anomalyco/opencode, packages/web/.../plugins.mdx
+  // and specs/v2/config.md). smelt wrote the singular `.opencode/plugin/` until 0.6.0,
+  // which is the `formerly` below: read, and removed, but never written again.
+  userInstructionFile: '.config/opencode/AGENTS.md',
   instructions: 'snippet',
+  // The registration, as a person would add it — the same JSON value the step below
+  // merges in, under the same key, in the file that scope reads.
+  mcp: {
+    manual: `add this to ${CONFIG_JSON}:\n${MCP_JSON}`,
+    manualUser: `add this to ~/${USER_CONFIG_JSON}:\n${MCP_JSON}`,
+  },
   caveats: [
     'MCP tools can bypass opencode plugin hooks (sst/opencode#2319) — the guard sees built-in tools only',
   ],
   install: [
     {
       kind: 'own-file',
-      file: '.opencode/plugin/smelt-guard.js',
+      file: '.opencode/plugins/smelt-guard.js',
+      user: { file: '.config/opencode/plugins/smelt-guard.js' },
+      formerly: '.opencode/plugin/smelt-guard.js',
       content: opencodePluginSource,
       guardOnly: true,
+      // The one harness with no shim: what is verified is that the module still loads
+      // — its top-level import of the built guard core included — and still exports the
+      // hook opencode calls. Every name here is the renderer's own, above.
+      probe: {
+        kind: 'esm-plugin',
+        event: HOOK_KEY,
+        core: GUARD_CORE_BINDING,
+        factory: PLUGIN_FACTORY,
+      },
     },
     {
       kind: 'mcp-registration',
-      file: 'opencode.json',
+      file: CONFIG_JSON,
+      user: { file: USER_CONFIG_JSON },
       path: ['mcp', 'smelt'],
-      entry: () => ({ type: 'local', command: [...MCP_RUN_ARGS] }),
+      entry: () => ({ ...MCP_ENTRY, command: [...MCP_ENTRY.command] }),
     },
   ],
 };

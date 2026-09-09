@@ -37,7 +37,7 @@ const LAWS: readonly { index: string; title: string; body: ReactNode }[] = [
   {
     index: 'law/3',
     title: 'Every elision is reversible, and counted',
-    body: 'Elided bytes are stored locally, keyed by content hash, no eviction. Expansions are counted: reversibility without counting is how "90% reduction" gets claimed while the model quietly asks for all of it back.',
+    body: 'Elided bytes are stored locally, keyed by content hash, with no automatic eviction — the only deletion is smelt store prune, which you type and which journals what it removed. Expansions are counted: reversibility without counting is how "90% reduction" gets claimed while the model quietly asks for all of it back.',
   },
   {
     index: 'law/4',
@@ -81,7 +81,7 @@ export function HowItWorks() {
             <Arrow />
             <Stage name="apply" note="the only byte-remover; every cut leaves a one-line marker" />
             <Arrow />
-            <Stage name="store" note="elided bytes kept locally, content-addressed, no eviction" />
+            <Stage name="store" note="elided bytes kept locally, content-addressed, no automatic eviction" />
             <Arrow />
             <Stage
               name="retrieve"

@@ -61,6 +61,31 @@ export class UnknownHashError extends SmeltError {
 }
 
 /**
+ * `retrieve(hash)` was called for bytes an explicit `smelt store prune` deleted.
+ *
+ * Deliberately distinct from {@link UnknownHashError}, and the reason the prune verb
+ * could be written at all. Law 3 says every elision is reversible; a store that could
+ * forget silently would turn that into "reversible, usually", and a `retrieve()` that
+ * failed after an eviction would be indistinguishable to the model from a hallucinated
+ * hash. It is distinguishable now because the eviction left a receipt: the store
+ * journals `evict "<hash>" "<date>"` before it unlinks the blob, so a later lookup says
+ * *when* the bytes went and *what took them* rather than claiming they never existed.
+ * The three answers a lookup can give stay three: never elided
+ * ({@link UnknownHashError}), damaged ({@link StoreCorruptionError}), deliberately
+ * evicted (this).
+ */
+export class EvictedHashError extends SmeltError {
+  override readonly name = 'EvictedHashError';
+
+  constructor(hash: string, date: string) {
+    super(
+      `smelt: hash "${hash}" was evicted on ${date} by \`smelt store prune\` — the bytes ` +
+        `are gone; the elision was reversible until then`,
+    );
+  }
+}
+
+/**
  * A planner was handed a `PlanInput` without `pricing`. The type makes `pricing`
  * required, so TypeScript callers cannot get here; a JS caller can, and the honest
  * answer is this error rather than a guessed marker cost — a planner pricing markers
@@ -177,4 +202,34 @@ function describeIoCause(cause: unknown): string {
  */
 export class ContentKindError extends SmeltError {
   override readonly name = 'ContentKindError';
+}
+
+/**
+ * A configured {@link RerankStage} did not produce an answer smelt can act on — it
+ * threw, or it returned a candidate id it was never sent, or the same id twice.
+ *
+ * **Every way a stage can fail arrives as this error**, and that is the point. A stage
+ * is the one part of a smelt run that talks to another machine, so its ordinary failures
+ * are *expected*: a timeout, a 401, an unreachable host, a generated stub nobody has
+ * filled in yet. Those throw plain `Error`s from the consumer's own adapter — and a
+ * plain `Error` escaping the library reaches a CLI that prints "unexpected internal
+ * error \u2014 this is a bug, please report it" with a stack trace and exits 4, and an MCP
+ * handler that rethrows past its own envelope. Neither is true: the reranker was
+ * unreachable, which is an answer, and a refusal is an answer both front doors already
+ * know how to render. So `applyRerank` catches whatever the stage throws and rethrows it
+ * as this, carrying the original as `cause`.
+ *
+ * The garbage-answer cases refuse rather than filtering the answer down to the parts
+ * smelt recognises, for the reason a store refuses a hash whose bytes no longer match: a
+ * reranker whose answer is quietly repaired is a reranker nobody can tell has broken.
+ */
+export class RerankStageError extends SmeltError {
+  override readonly name = 'RerankStageError';
+
+  constructor(stageId: string, why: string, options?: { readonly cause?: unknown }) {
+    super(
+      `smelt: the rerank stage "${stageId}" ${why}`,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+  }
 }

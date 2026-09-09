@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -524,6 +525,80 @@ describe('the "Sixty seconds" first example is regenerated from the real binary,
         'pinned transcript — regenerate the block with the command printed above it ' +
         'and pin the new output',
     ).toBe(pinnedBody.trimEnd());
+  });
+});
+
+/**
+ * The `smelt stats` capture below the transcript, regenerated the same way.
+ *
+ * It was the one hand-pinned block left on the page: a rendering of real counters,
+ * typed in once, with nothing to stop it drifting from what the command prints. It is
+ * the same class of claim as the transcript above it — and the same fix. The run is
+ * the one the README names (`--budget 4000 --focus planLexical --strategy auto` over
+ * this repo's `plan/lexical.ts`, then one retrieve), in a scratch project whose store
+ * is thrown away, so the developer's own counters are never touched.
+ */
+describe('the `smelt stats` capture is regenerated from the real binary too', () => {
+  it('matches what the command prints, path and counters alike', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-readme-stats-'));
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({ smeltConfig: 1, store: { kind: 'directory', path: '.smelt/store' } })}\n`,
+      );
+      const run = async (argv: readonly string[]): Promise<string> => {
+        let stdout = '';
+        const code = await runCli(argv, {
+          stdout: (text: string) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          stdin: () => '',
+          version: '0.0.0-guard',
+          cwd,
+        });
+        expect(code, `${argv.join(' ')} exited ${String(code)}`).toBe(EXIT.ok);
+        return stdout;
+      };
+
+      const envelope = JSON.parse(
+        await run([
+          join(guardSrcRoot(), 'plan/lexical.ts'),
+          '--budget',
+          '4000',
+          '--focus',
+          'planLexical',
+          '--strategy',
+          'auto',
+          '--json',
+        ]),
+      ) as { result: { elisions: readonly { hash: string }[] } };
+      expect(
+        envelope.result.elisions.length,
+        'the README describes retrieving one of two markers',
+      ).toBe(2);
+      await run(['retrieve', envelope.result.elisions[0]!.hash]);
+
+      // The header names the store it read, which is a temp directory here and the
+      // reader's own project there — normalized to the README's own spelling.
+      const printed = (await run(['stats'])).replace(
+        join(cwd, '.smelt/store'),
+        '/your/project/.smelt/store',
+      );
+
+      const block = section(readme(), 'Sixty seconds');
+      const pinned = /```\nsmelt stats {2}\/your\/project[\s\S]*?\n```/.exec(block);
+      expect(pinned, 'README no longer carries the pinned `smelt stats` capture').not.toBeNull();
+      const pinnedBody = pinned![0].replace(/^```\n/, '').replace(/\n```$/, '');
+
+      expect(
+        printed.trimEnd(),
+        "the real binary's `smelt stats` no longer matches the README's pinned capture " +
+          '— re-run the command the paragraph above it names and pin the new output',
+      ).toBe(pinnedBody.trimEnd());
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

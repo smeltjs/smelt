@@ -1,4 +1,4 @@
-import type { LoadedConfig } from '../config.ts';
+import type { LoadedConfig } from '../../config.ts';
 import type { CliIo } from '../shell.ts';
 
 import type { FlagValues, VerbFlag } from './flags.ts';
@@ -12,7 +12,16 @@ import type { FlagValues, VerbFlag } from './flags.ts';
  * order a refusal names owners in. Keep it stable and append new verbs at the end.
  */
 export type Verb =
-  'smelt' | 'init' | 'map' | 'retrieve' | 'stats' | 'hooks' | 'agents' | 'setup' | 'doctor';
+  | 'smelt'
+  | 'init'
+  | 'map'
+  | 'retrieve'
+  | 'stats'
+  | 'hooks'
+  | 'agents'
+  | 'setup'
+  | 'doctor'
+  | 'store';
 
 /** The verb a bare invocation selects — a file or stdin, with no subcommand word. */
 export const DEFAULT_VERB = 'smelt' satisfies Verb;

@@ -70,6 +70,10 @@ async function install(answers: readonly string[]): Promise<string> {
     },
     cwd: dir,
     home: dir,
+    // `home` is `dir` so harness detection finds nothing real; that also makes the
+    // detected scope `user` (cwd *is* home), which would add the scope question and
+    // eat the first scripted answer. This guard is about consent, not scope: name it.
+    scope: 'project',
   });
   return output;
 }
@@ -158,9 +162,9 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     id: 'hooks-install-overwrite-without-consent',
-    file: 'cli/hooks.ts',
-    find: "      if (answer !== 'yes') {",
-    replace: '      if (false) {',
+    file: 'cli/merge-policy.ts',
+    find: "  return answer === 'yes';",
+    replace: '  return true;',
     why: 'the per-file overwrite consent wired shut — `smelt hooks install` would clobber a hand-written CLAUDE.md or .claude/settings.json after any answer, the helpful-looking break the never-overwrite rule exists to refuse',
   },
 ];

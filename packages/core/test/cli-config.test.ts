@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from '../src/cli/config.ts';
+import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from '../src/config.ts';
 import { EXIT, runCli } from '../src/cli/run.ts';
 import type { CliIo } from '../src/cli/run.ts';
 
@@ -31,7 +31,12 @@ interface Captured {
   readonly stderr: string;
 }
 
-async function run(argv: readonly string[], cwd: string, stdin = ''): Promise<Captured> {
+async function run(
+  argv: readonly string[],
+  cwd: string,
+  stdin = '',
+  env: Readonly<Record<string, string | undefined>> = {},
+): Promise<Captured> {
   let stdout = '';
   let stderr = '';
   const io: CliIo = {
@@ -44,6 +49,7 @@ async function run(argv: readonly string[], cwd: string, stdin = ''): Promise<Ca
     stdin: () => stdin,
     version: '9.9.9-test',
     cwd,
+    env,
   };
   const code = await runCli(argv, io);
   return { code, stdout, stderr };
@@ -150,6 +156,18 @@ describe('a malformed config is a usage error, never silently ignored', () => {
       { smeltConfig: 1, store: { kind: 'cloud' } },
       { smeltConfig: 1, store: { kind: 'directory' } },
       { smeltConfig: 1, store: { kind: 'memory', path: 'x' } },
+      { smeltConfig: 1, rerank: { kind: 'psychic' } },
+      { smeltConfig: 1, rerank: { kind: 'module' } },
+      { smeltConfig: 1, rerank: { kind: 'module', path: '' } },
+      { smeltConfig: 1, rerank: { kind: 'module', path: './x.ts', topK: 4 } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', topK: 0 } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', topK: 2.5 } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', topK: '4' } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', model: '' } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', apiKeyEnv: 3 } },
+      { smeltConfig: 1, rerank: { kind: 'voyage', nope: 1 } },
+      { smeltConfig: 1, rerank: 'voyage' },
+      { smeltConfig: 1, rerank: [] },
     ]) {
       expect(() => parseConfig(JSON.stringify(bad), 'x.json'), JSON.stringify(bad)).toThrow();
     }
@@ -166,5 +184,126 @@ describe('a malformed config is a usage error, never silently ignored', () => {
     expect(stderr).toMatch(/--budget is required/);
     expect(stderr).toContain('defaultBudgetBytes');
     expect(stderr).toContain('smelt init');
+  });
+});
+
+describe('the rerank opt-in', () => {
+  /**
+   * The one config key that can send a caller's source to a third party. What is
+   * pinned here is the shape of the opt-in itself: an absent key does nothing at all,
+   * a present one is loaded before the cut, and every way of naming something that is
+   * not there is a refusal that names it — never a quiet fallback to an unranked run.
+   */
+
+  it('parses both kinds, and defaults nothing it was not given', () => {
+    expect(
+      parseConfig(
+        JSON.stringify({ smeltConfig: 1, rerank: { kind: 'module', path: './r.ts' } }),
+        'x.json',
+      ).rerank,
+    ).toEqual({ kind: 'module', path: './r.ts' });
+    // `model` and `apiKeyEnv` have documented defaults, and they are applied at *load*
+    // time, not baked into the parsed config: a parse that invented them would make
+    // `renderConfig(parseConfig(x))` write keys the user never set.
+    expect(
+      parseConfig(JSON.stringify({ smeltConfig: 1, rerank: { kind: 'voyage' } }), 'x.json').rerank,
+    ).toEqual({ kind: 'voyage' });
+  });
+
+  it('does nothing whatsoever when the key is absent', async () => {
+    writeConfig(dir, { smeltConfig: 1, defaultBudgetBytes: 4000 });
+    const { code, stderr } = await run([], dir, corpus());
+    expect(code).toBe(EXIT.ok);
+    expect(stderr).not.toContain('rerank');
+  });
+
+  it('loads a configured module stage, applies it, and attributes it in the report', async () => {
+    // The whole path, through the real CLI: config → loader → ops → smelter → report.
+    writeFileSync(
+      join(dir, 'stage.mjs'),
+      `export default {
+         id: 'ignored-in-favour-of-the-path',
+         async rerank(candidates) {
+           return candidates.slice(0, 1).map((c) => ({ ...c, score: 1 }));
+         },
+       };\n`,
+    );
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 800,
+      rerank: { kind: 'module', path: './stage.mjs' },
+    });
+    const { code, stderr } = await run(['--focus', 'handleRequest'], dir, corpus());
+    expect([EXIT.ok, EXIT.overBudget]).toContain(code);
+    expect(stderr).toMatch(/rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept\)/);
+  });
+
+  it('puts the same attribution inside the --json envelope, additively', async () => {
+    writeFileSync(
+      join(dir, 'stage.mjs'),
+      `export default { id: 's', async rerank(c) { return c.slice(0, 1).map((x) => ({ ...x, score: 1 })); } };\n`,
+    );
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 800,
+      rerank: { kind: 'module', path: './stage.mjs' },
+    });
+    const { stdout } = await run(['--focus', 'handleRequest', '--json'], dir, corpus());
+    const envelope = JSON.parse(stdout) as { result: { rerank?: { adapter: string } } };
+    expect(envelope.result.rerank).toEqual({
+      adapter: 'module/./stage.mjs',
+      candidates: expect.any(Number) as number,
+      kept: 1,
+    });
+  });
+
+  it('refuses, exit 2, when the configured module is not there', async () => {
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 4000,
+      rerank: { kind: 'module', path: './gone.mjs' },
+    });
+    const { code, stderr } = await run([], dir, corpus());
+    expect(code).toBe(EXIT.usage);
+    expect(stderr).toContain('./gone.mjs');
+  });
+
+  it('a stage that throws exits like a refusal, not like a smelt bug', async () => {
+    // The failure mode this pins: a reranker's ordinary failures (a timeout, a 401, an
+    // unimplemented stub) throw plain Errors from the consumer's own adapter. Unwrapped,
+    // they reach `bin.ts`'s last-resort handler — "unexpected internal error — this is a
+    // bug, please report it", a stack trace, exit 4 — which blames smelt for somebody
+    // else's API being down and sends the user to the wrong issue tracker.
+    writeFileSync(
+      join(dir, 'boom.mjs'),
+      `export default {
+         id: 'voyage',
+         async rerank() { throw new Error('api.voyageai.com answered 401: invalid key'); },
+       };\n`,
+    );
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 800,
+      rerank: { kind: 'module', path: './boom.mjs' },
+    });
+    const { code, stderr } = await run(['--focus', 'handleRequest'], dir, corpus());
+    expect(code).toBe(EXIT.refused);
+    expect(stderr).toContain('RerankStageError');
+    expect(stderr).toContain('module/./boom.mjs');
+    expect(stderr).toContain('answered 401');
+    expect(stderr).not.toContain('please report it');
+    expect(stderr).not.toContain('unexpected internal error');
+  });
+
+  it('refuses, naming the variable, when the voyage key is unset', async () => {
+    writeConfig(dir, {
+      smeltConfig: 1,
+      defaultBudgetBytes: 4000,
+      rerank: { kind: 'voyage', topK: 4, apiKeyEnv: 'SOME_KEY' },
+    });
+    const { code, stderr } = await run([], dir, corpus(), {});
+    expect(code).toBe(EXIT.usage);
+    expect(stderr).toContain('SOME_KEY is not set');
+    expect(stderr).not.toContain('unranked output.');
   });
 });

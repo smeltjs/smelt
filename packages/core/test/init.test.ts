@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliUsageError } from '../src/errors.ts';
 import { STRATEGIES } from '../src/plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../src/plan/structural.ts';
-import { CONFIG_FILE_NAME, findConfigFile } from '../src/cli/config.ts';
-import type { SmeltConfig } from '../src/cli/config.ts';
+import { CONFIG_FILE_NAME, findConfigFile } from '../src/config.ts';
+import type { SmeltConfig } from '../src/config.ts';
 import {
   findWorkspaceRoot,
   MEASURE_STUB_FILE,
@@ -99,14 +99,17 @@ describe('a fresh run', () => {
     expect(readConfig().strategy).toBe('auto');
   });
 
-  it('generates both stubs when asked, next to the config', async () => {
+  it('generates both stubs when asked, and points the config at the reranker', async () => {
     const { code } = await wizard(['8000', '2', '', '2', '2', '2', 'yes']);
     expect(code).toBe(EXIT.ok);
+    // The `module` answer writes the stub AND the block that loads it. A stub nothing
+    // points at is a file the user watched themselves ask for and never got used.
     expect(readConfig()).toEqual({
       smeltConfig: 1,
       defaultBudgetBytes: 8000,
       strategy: 'structural',
       store: { kind: 'directory', path: '.smelt/store' },
+      rerank: { kind: 'module', path: `./${RERANK_STUB_FILE}` },
     });
     const measure = readFileSync(join(dir, MEASURE_STUB_FILE), 'utf8');
     const rerank = readFileSync(join(dir, RERANK_STUB_FILE), 'utf8');
@@ -117,6 +120,35 @@ describe('a fresh run', () => {
     expect(rerank).toContain('TODO');
     expect(rerank).toContain('RERANKER_API_KEY');
     expect(rerank).toContain('fetch(');
+    // What {"kind":"module"} loads.
+    expect(rerank).toContain('export default rerank;');
+  });
+
+  it('writes the voyage block, and no key, for the third answer', async () => {
+    const { code, output } = await wizard(['4000', '1', '1', '1', '3', 'yes']);
+    expect(code).toBe(EXIT.ok);
+    expect(readConfig().rerank).toEqual({
+      kind: 'voyage',
+      model: 'rerank-2.5',
+      apiKeyEnv: 'VOYAGE_API_KEY',
+      topK: 8,
+    });
+    // No stub is written for this answer — the adapter is a package, not a file.
+    expect(existsSync(join(dir, RERANK_STUB_FILE))).toBe(false);
+    // The two things the wizard deliberately does not do, printed where they matter.
+    expect(output).toContain('npm install @smeltjs/rerank-voyage');
+    expect(output).toContain('export VOYAGE_API_KEY=');
+    // And never a key: the wizard names the variable and reads nothing.
+    expect(readFileSync(join(dir, CONFIG_FILE_NAME), 'utf8')).not.toContain('apiKey"');
+  });
+
+  it('writes no rerank key at all for the `none` answer', async () => {
+    // The opt-out is an *absent* key, never {"kind":"none"} — a written-out "off" is a
+    // switch somebody can flip by editing one word in a file smelt wrote unasked.
+    const { code } = await wizard(MINIMAL_ANSWERS);
+    expect(code).toBe(EXIT.ok);
+    expect(readConfig().rerank).toBeUndefined();
+    expect(readFileSync(join(dir, CONFIG_FILE_NAME), 'utf8')).not.toContain('rerank');
   });
 
   it('accepts back at every step, including the confirm, and lands on the final answers', async () => {
@@ -136,7 +168,7 @@ describe('a fresh run', () => {
       '2', // measure: generate
       '1', // rerank: none
       'back', // confirm → back to rerank
-      '2', // rerank: generate after all
+      '2', // rerank: module (generate the stub and point the config at it)
       'yes', // confirm
       // no overwrite questions: nothing existed
     ];
@@ -147,6 +179,7 @@ describe('a fresh run', () => {
       defaultBudgetBytes: 2000,
       strategy: 'lexical',
       store: { kind: 'directory', path: '.smelt/store' },
+      rerank: { kind: 'module', path: `./${RERANK_STUB_FILE}` },
     });
     expect(existsSync(join(dir, MEASURE_STUB_FILE))).toBe(true);
     expect(existsSync(join(dir, RERANK_STUB_FILE))).toBe(true);
@@ -361,9 +394,10 @@ describe('a re-run over an existing config', () => {
     writeFileSync(join(dir, RERANK_STUB_FILE), sentinel);
     const { code, output } = await wizard([
       'rerank',
-      '2', // generate the stub
+      '2', // module: generate the stub, and point the config at it
       'done',
-      'yes', // confirm (the config itself is unchanged, so no question for it)
+      'yes', // confirm
+      'yes', // overwrite the config — it gained the rerank block
       'no', // decline overwriting smelt.rerank.ts
     ]);
     expect(code).toBe(EXIT.ok);

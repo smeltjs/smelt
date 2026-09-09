@@ -1,3 +1,5 @@
+import type { InstallScope } from './scope.ts';
+
 /**
  * The text every harness shares: the marker lines that bracket a block this installer
  * owns inside somebody else's file, the token that identifies a hook entry as ours,
@@ -37,18 +39,23 @@ export function snippetStampVersion(text: string): string | undefined {
  * after a guard deny: run the named replacement, then `smelt retrieve` per marker.
  * `writtenBy` stamps the block for `smelt doctor`; omitted (legacy callers) the block
  * simply carries no version line.
+ *
+ * `scope` decides one word, and it is the honest one: a block in `~/.claude/CLAUDE.md`
+ * is loaded in every project on the machine, so "This project uses smelt" would be a
+ * claim about a project the reader is not necessarily in.
  */
 export function instructionSnippet(
   thresholdBytes: number,
   budgetBytes: number,
   writtenBy?: string,
+  scope: InstallScope = 'project',
 ): string {
   const stamp = writtenBy === undefined ? '' : `${SNIPPET_STAMP_LINE(writtenBy)}\n`;
   return `${SNIPPET_START_MD}
 ${stamp}
 ## smelt — context discipline
 
-This project uses [smelt](https://github.com/smeltjs/smelt) to keep large tool output
+This ${scope === 'user' ? 'machine' : 'project'} uses [smelt](https://github.com/smeltjs/smelt) to keep large tool output
 out of the context window, reversibly.
 
 - Do not read files over ${String(thresholdBytes)} bytes raw. Run

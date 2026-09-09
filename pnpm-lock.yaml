@@ -71,6 +71,24 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0))
 
+  packages/rerank-voyage:
+    devDependencies:
+      '@smelt/guard-kit':
+        specifier: workspace:*
+        version: link:../guard-kit
+      '@smeltjs/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^26.4.0
+        version: 26.4.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0))
+
   site:
     dependencies:
       '@fontsource-variable/geist':
