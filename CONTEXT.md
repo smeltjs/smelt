@@ -452,15 +452,39 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   config says. `loadRerankStage` (`src/rerank/load.ts`) is the one loader for both front
   doors; every failure is a usage error naming the missing thing (the path, the `topK`
   this kind requires, the environment **variable**, the uninstalled package) and never a
-  silent fall back to an unranked run. There is no `SMELT_RERANK_API_KEY` and no
-  environment variable smelt reads that a config did not name. _Avoid_: "the rerank flag"
-  (there is none), "enable reranking".
+  silent fall back to an unranked run. Where an adapter package is looked for belongs to
+  the **AdapterResolver** below, not to the loader. There is no `SMELT_RERANK_API_KEY`
+  and no environment variable smelt reads that a config did not name. _Avoid_: "the
+  rerank flag" (there is none), "enable reranking".
 - **Opt-in rerank bucket**: `OPT_IN_RERANK_PACKAGES` in `src/net/policy.ts` — adapter
   packages a config block may **load** at runtime and no smelt module may **import**.
-  The name is data here and nowhere else in `src`; `load.ts` hands it to `import()`, so
-  the Law 1 walk finds no edge, and both packages' `classify()` rule an import of it
-  **forbidden** rather than unclassified. The rule in one line: _smelt may know this
-  package's name; smelt may not depend on it._
+  The name is data here and nowhere else in `src`; `resolve.ts` turns it into a `file:`
+  URL and `load.ts` hands _that_ to `import()`, so the Law 1 walk finds no edge, and
+  both packages' `classify()` rule an import of it **forbidden** rather than
+  unclassified. The rule in one line: _smelt may know this package's name; smelt may not
+  depend on it._
+- **AdapterResolver**: `resolveAdapter` in `src/rerank/resolve.ts` — the one module that
+  decides **where** an opt-in adapter package is looked for. The seam is
+  `resolveAdapter(name, configPath, {ownRequire?})`, and it answers with a value rather
+  than an exception: a found adapter carries its `url` and the `from` that says which of
+  the two places answered; an unfound one carries the `configDir`, the `ownDir`, the
+  `install` command and the `why` that names all three. It owns three things. **The
+  order**: the directory holding `smelt.config.json` first (`createRequire(configPath)`,
+  so `~/node_modules` beside a user-scope config and a project's own `node_modules` are
+  one rule), smelt's own install second. **The refusal**: one message naming both places
+  tried and `npm install --prefix <configDir> <name>`, the command that puts the package
+  in the directory asked first. **The shape of the answer**: a `file:` URL, so the
+  specifier at every `import()` stays a value and the Law 1 walk still finds no edge to
+  an adapter — this is the seam that could have quietly undone the arrangement
+  `net/policy.ts` writes down, so it is guarded beside it. Why it exists: smelt resolved
+  the adapter from its own location, which for a Homebrew keg or an `npm -g` prefix is a
+  directory nobody installs into, and then named `npm install <pkg>`, which installs
+  into neither place it had searched. Both kinds use it — `voyage` with the package name
+  from `net/policy.ts`, `module` for a **bare** specifier that names no file beside the
+  config (a relative or absolute path keeps the path rule the schema promises). It is
+  asked by `smelt doctor` too, which is why it refuses without throwing: a report line,
+  not an exception. _Avoid_: "where smelt is installed" as a synonym for where an adapter
+  is — the whole point is that they are two directories.
 - **guard-kit**: the guards' shared machine — `packages/guard-kit`, test-only,
   `private: true`, never published and never more than a devDependency. It owns the
   import-graph **walker** (`walkImportGraph`, `assertNoNetwork`) that both packages'

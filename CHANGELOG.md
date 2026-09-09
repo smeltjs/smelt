@@ -13,6 +13,40 @@ the runner rather than by hand.
 
 ## Unreleased
 
+### Added
+
+- **An opt-in rerank adapter is looked for beside the config that asks for it.**
+  `rerank.kind: "voyage"` resolved `@smeltjs/rerank-voyage` from `@smeltjs/core`'s own
+  location and, when it was not there, said `npm install @smeltjs/rerank-voyage`. With a
+  `~/smelt.config.json` (`--scope user`) and a `smelt` from Homebrew or `npm -g`, that
+  searched a keg nobody installs into and then named a command that installs into the
+  shell's cwd — a third directory, which smelt never looks in. `src/rerank/resolve.ts` is
+  the new **AdapterResolver**: the directory holding `smelt.config.json` first (so
+  `~/node_modules` beside a user-scope config and a project's own `node_modules` are one
+  rule), smelt's own install second, and otherwise **one** refusal naming both places and
+  `npm install --prefix <configDir> <name>` — the command that puts the package in the
+  directory searched first. Both kinds go through it: `voyage`, and `module` for a bare
+  specifier that names no file beside the config (a relative or absolute path keeps the
+  path rule the schema promises). It resolves and never imports — what comes back is a
+  `file:` URL, so the specifier at every `import()` is still a value and Law 1's walk still
+  finds no edge to an adapter; the zero-network guard's literal-specifier mutation is
+  re-anchored to the new call shape and still goes red.
+  `test/guards/adapter-resolver.test.ts` holds the order, the fallback, the one-message
+  refusal and the `file:` URL, with four mutations.
+- **`smelt doctor` says where the adapter is.** The rerank line now carries
+  `adapter from config dir`, `adapter from smelt's own install`, or
+  `adapter not installed:` with the install command for your config's directory — asked
+  through the same resolver a run uses, and resolving only: nothing is imported to answer
+  it. `smelt.doctor.v1` gains `rerank.adapterFrom` and `rerank.install`, exactly one of the
+  two and both optional; no existing field changed spelling or meaning, and the key's
+  _value_ still never appears. A configured `voyage` opt-in whose adapter is in neither
+  place is an orphan with that command as its repair — the same treatment an unset key
+  already had, for the same reason: every run that would rerank refuses instead.
+- **`smelt init`'s voyage answer prints a command that can work**:
+  `npm install --prefix <dir> @smeltjs/rerank-voyage` for the directory it is writing the
+  config into, rather than a bare `npm install` that lands wherever the reader's shell
+  happens to be.
+
 ### Changed
 
 - **The rerank slot now spares only as far as the budget reaches, and `topK` is a cap

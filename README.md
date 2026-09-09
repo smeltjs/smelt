@@ -815,6 +815,19 @@ name. Every failure is a refusal that names what is missing — the path, the `t
 kind needs, the environment variable, the uninstalled package — never a quiet fall back
 to an unranked run.
 
+**Install the adapter beside the config that asks for it.** smelt looks in the directory
+holding your `smelt.config.json` first and in its own install second, so a `~/smelt.config.json`
+works with a `smelt` from Homebrew or `npm -g` — install into the directory that owns the
+config:
+
+```sh
+npm install --prefix ~ @smeltjs/rerank-voyage    # for ~/smelt.config.json
+npm install @smeltjs/rerank-voyage               # for a config at your project root
+```
+
+If it is in neither place, the refusal names both of them and the exact command for
+yours.
+
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
 returns is spared** from the cut — a selection, not a ranking of everything, so apply your
@@ -854,7 +867,9 @@ the budget could afford, and the clause says so rather than leaving a number sma
 the one you configured with no explanation beside it. The same facts ride in the `--json`
 envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
 and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
-set — presence only, never the value.
+set and where the adapter resolved from (`adapter from config dir`, `adapter from smelt's
+own install`, or `adapter not installed:` with the command) — presence only, never the
+value.
 
 Writing your own stage is unchanged:
 
