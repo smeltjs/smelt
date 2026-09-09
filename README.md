@@ -95,9 +95,11 @@ focus  planLexical
 ```
 
 At the end of a session the store reports on itself — what it holds, the expansion rate,
-the counters, then the ledger, one rule at a time. Real output of `smelt stats` (0.6.0)
-after `smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical
---strategy auto` and retrieving one of the two markers:
+the counters, then the ledger, one rule at a time. Real output of `smelt stats` after
+`smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical --strategy
+auto` and retrieving one of the two markers — the block below is regenerated from the
+binary by `test/guards/readme-numbers.test.ts` on every `pnpm verify`, so it is this
+build's output rather than a past release's:
 
 ```
 smelt stats  /your/project/.smelt/store
@@ -329,7 +331,8 @@ printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"f
 A `"permissionDecision":"deny"` document on stdout means the guard is live. **Empty
 stdout means it is inert** — that is the 0.6.0 bug, and `smelt setup` is the fix.
 (`realpath` ships with macOS 13+ and every Linux; on Linux `readlink -f` does the same,
-and on older macOS drop the substitution — the `opt` path works directly from 0.7.0 on.)
+and on older macOS drop the substitution — on any release carrying the fix above, the
+`opt` path works directly.)
 
 ### One project, or the whole machine
 

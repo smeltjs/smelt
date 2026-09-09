@@ -457,7 +457,7 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   block between two marker lines. The contract is the whole interface: change what you
   were asked to and leave every other byte alone — indentation, key order, escapes,
   number spellings, unknown keys. It knows nothing about harnesses or hooks;
-  `cli/hooks.ts` decides _what_ the merged `hooks` value is and hands it over. Under
+  `harness/plan.ts` decides _what_ the merged `hooks` value is and hands it over. Under
   `src/text/`, not `cli/`, because it is strings in, strings out — no argv, no stdout,
   no CLI import. `test/guards/json-edit.test.ts` pins the round trip. Its sibling,
   `src/text/toml-edit.ts` (KOT-258), carries the same contract for TOML —
@@ -537,10 +537,10 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
 
 Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasoning.
 
-- **SetupRecipe**: the one true way to put smelt on a machine — install, init choices,
-  hooks, MCP registration, verification — held as data, from which every rendering
-  (README fragments, site prompts, the `setup` verb) derives, or is guard-pinned against
-  it. Prose is never the source.
+- **SetupRecipe** (`src/setup/recipe.ts`): the one true way to put smelt on a machine —
+  install, init choices, hooks, MCP registration, verification — held as data, from
+  which every rendering (README fragments, site prompts, the `setup` verb) derives, or
+  is guard-pinned against it. Prose is never the source.
 - **Setup** (`smelt setup`): the one-command, idempotent application of the recipe for
   chosen harnesses, at an **InstallScope** — interactive when a TTY is present,
   fully scriptable when an agent runs it, and the only repair path for installed state.
