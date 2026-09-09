@@ -124,9 +124,9 @@ import type { SmeltConfig, SmeltConfigHooks } from './config.ts';
 export interface HooksIo {
   /**
    * Scripted answers in, one line at a time. Structural on purpose; see
-   * {@link AnswerStream}.
+   * {@link AnswerStream}. Required only for the interactive path — `--yes` never asks.
    */
-  readonly input: AnswerStream;
+  readonly input?: AnswerStream;
   readonly output: (text: string) => void;
   /** Project directory: detection, config discovery, and every write are relative to it. */
   readonly cwd: string;
@@ -147,6 +147,47 @@ export interface HooksIo {
    * `smelt doctor` can tell what wrote it. Absent (legacy callers) writes no stamp.
    */
   readonly version?: string;
+  /**
+   * Answer every question from the flags and the installed state, and apply without
+   * a confirm — the non-interactive interface `--yes` is. The apply loop is the same
+   * one the wizard drives; only who consents differs (see {@link Consent}).
+   */
+  readonly yes?: boolean;
+  /**
+   * The four toggles as flags answered them. An absent one is *not* `off`: it means
+   * leave it as the install found it, which is what {@link presetToggles} reads.
+   */
+  readonly toggles?: ToggleFlags;
+}
+
+/** The four toggles this preset installs, as a value. */
+export interface PresetToggles {
+  readonly guard: boolean;
+  readonly statsOnStop: boolean;
+  readonly mapOnStart: boolean;
+  readonly lintOnStart: boolean;
+}
+
+/**
+ * The same four, as *flags* answered them: absent means "not named", which is a third
+ * answer beside on and off — the install's own current state, read off disk.
+ */
+export type ToggleFlags = { readonly [K in keyof PresetToggles]?: boolean };
+
+/**
+ * The toggles a run installs: the wizard's defaults, overridden by whatever is
+ * already installed for these harnesses, overridden by the flags. One derivation,
+ * because `smelt setup --yes --map on` and `smelt hooks install --yes --map on` must
+ * wire the same hook — and because a re-run that reset a toggle the user had set is
+ * the toggle reader's standing failure mode, one layer up.
+ */
+export function withToggleFlags(base: PresetToggles, flags: ToggleFlags): PresetToggles {
+  return {
+    guard: flags.guard ?? base.guard,
+    statsOnStop: flags.statsOnStop ?? base.statsOnStop,
+    mapOnStart: flags.mapOnStart ?? base.mapOnStart,
+    lintOnStart: flags.lintOnStart ?? base.lintOnStart,
+  };
 }
 
 export { instructionSnippet, SNIPPET_END_MD, SNIPPET_START_MD };
@@ -1029,18 +1070,31 @@ export async function runHooks(
   harnessFlag: string | undefined,
   io: HooksIo,
 ): Promise<number> {
-  const wizard = wizardAsk(
-    io.input,
-    io.output,
-    `${CLI_NAME} hooks: input ended before the wizard finished. ` +
-      `Files already confirmed and written stay; nothing further was written.`,
-  );
+  const wizard =
+    io.yes === true
+      ? undefined
+      : wizardAsk(
+          io.input!,
+          io.output,
+          `${CLI_NAME} hooks: input ended before the wizard finished. ` +
+            `Files already confirmed and written stay; nothing further was written.`,
+        );
+  const ask: Ask =
+    wizard?.ask ??
+    (async () => {
+      // --yes never asks; a question reached with no stream is a bug in the flow,
+      // not an answer the user owes.
+      throw new CliUsageError(
+        `${CLI_NAME} hooks: a question was reached with no interactive input — ` +
+          `this is a bug in the flow, not an answer you owe.`,
+      );
+    });
   try {
     return action === 'install'
-      ? await installFlow(io, wizard.ask, harnessFlag)
-      : await removeFlow(io, wizard.ask, harnessFlag);
+      ? await installFlow(io, ask, harnessFlag)
+      : await removeFlow(io, ask, harnessFlag);
   } finally {
-    await wizard.release();
+    await wizard?.release();
   }
 }
 
@@ -1068,21 +1122,28 @@ async function installFlow(
   const detected = detectedHarnesses(io.cwd, home);
   const detectedScope = resolveScope(io.scope, { cwd: io.cwd, home });
 
-  io.output(
-    `${CLI_NAME} hooks install — wires the smelt guard into agent-harness hooks.\n` +
-      `Answer \`back\` at any step to return to the previous one. Nothing is written ` +
-      `until you confirm at the end.\n\n`,
-  );
-
+  // The toggles a run starts from, whichever path it takes: the wizard's defaults,
+  // overridden by what is installed for these harnesses, overridden by the flags.
+  // Under --yes that is the whole answer; in the wizard it is what Enter accepts.
   const choices: HooksChoices = {
     harnesses: harnessFlag !== undefined ? [resolveHarnessFlag(harnessFlag)] : [...detected],
     ...(io.version === undefined ? {} : { writtenBy: io.version }),
-    ...presetToggles(io.cwd, { scope: detectedScope, home }),
+    ...withToggleFlags(presetToggles(io.cwd, { scope: detectedScope, home }), io.toggles ?? {}),
     enforcement: 'deny',
     thresholdBytes: DEFAULT_THRESHOLD_BYTES,
     scope: detectedScope,
     home,
   };
+
+  // Everything above is what both paths decide from; --yes needs nothing more, and
+  // the banner below is the wizard's, not its.
+  if (io.yes === true) return applyWithoutAsking(io, choices, home);
+
+  io.output(
+    `${CLI_NAME} hooks install — wires the smelt guard into agent-harness hooks.\n` +
+      `Answer \`back\` at any step to return to the previous one. Nothing is written ` +
+      `until you confirm at the end.\n\n`,
+  );
 
   /**
    * Take a scope, and re-read the toggles **that scope's** files carry.
@@ -1094,11 +1155,18 @@ async function installFlow(
    * settings are replaced by the machine's. Unchanged when the answer is the scope
    * already settled on, so going `back` past this question does not discard toggles
    * the user typed after it.
+   *
+   * The flags are re-applied on top, for the same reason they were applied above: a
+   * `--map on` the user typed is an answer, and a scope flip is not a reason to
+   * forget it. Absent flags leave the new scope's own reading standing.
    */
   const useScope = (next: InstallScope): void => {
     if (choices.scope === next) return;
     choices.scope = next;
-    Object.assign(choices, presetToggles(io.cwd, { scope: next, home }));
+    Object.assign(
+      choices,
+      withToggleFlags(presetToggles(io.cwd, { scope: next, home }), io.toggles ?? {}),
+    );
   };
 
   // With --harness the selection step is skipped, so the tier label — and its one
@@ -1179,6 +1247,66 @@ async function installFlow(
     if (verdict !== 'back') return 0;
     await walkSteps(machine, ask, io.output, machine.length - 1);
   }
+}
+
+/**
+ * `--yes`: no questions, and every answer said out loud before it is applied. The
+ * plan and the apply loop are the wizard's own — what differs is only who consents
+ * (`{kind:'policy'}`, the merge policy above), because a second apply loop for the
+ * path nobody watches is how the two would drift.
+ *
+ * @throws {CliUsageError} when nothing was detected and nothing was named — the one
+ *   question `--yes` cannot answer from the machine, so it names the flag that does.
+ */
+async function applyWithoutAsking(
+  io: HooksIo,
+  choices: HooksChoices,
+  home: string,
+): Promise<number> {
+  if (choices.harnesses.length === 0) {
+    throw new CliUsageError(
+      `${CLI_NAME} hooks install --yes: no harness config directory found in ${io.cwd} ` +
+        `or ${home}, and none named. Name one with --harness <id>. ` +
+        `Known: ${HARNESSES.map((profile) => profile.id).join(', ')}.`,
+    );
+  }
+  const scope = choices.scope ?? 'project';
+  const root = scopeRoot(scope, { cwd: io.cwd, home });
+  io.output(
+    `${CLI_NAME} hooks install --yes — applying, into ${root}:\n` +
+      choices.harnesses.map((profile) => `  ${tierLabel(profile)}\n`).join('') +
+      `  toggles: ${toggleLine(choices)}\n` +
+      `  an existing file is merged, never overwritten; a file smelt writes whole is ` +
+      `left alone unless it is already smelt's\n`,
+  );
+
+  const plan = planInstall(io.cwd, choices);
+  for (const applied of await applyPlanFiles(plan.files, { kind: 'policy' })) {
+    io.output(sayApplied(applied));
+  }
+  for (const skip of plan.skipped) io.output(`  skipped ${skip.name} — ${skip.why}\n`);
+  for (const step of plan.manual) {
+    io.output(
+      `  ${step.name} is ${step.harness}'s own file — run this yourself:\n    ${step.command}\n`,
+    );
+  }
+  for (const note of plan.notes) io.output(`note: ${note}\n`);
+  io.output(
+    `Done. Re-run with different toggles to edit them; ` +
+      `\`${CLI_NAME} hooks remove --yes\` takes it all back out.\n`,
+  );
+  return 0;
+}
+
+/** One toggle, as both the wizard prompt and the --yes summary spell it. */
+const onOff = (on: boolean): string => (on ? 'on' : 'off');
+
+/** `guard on, stats on, map off, lint off` — what a --yes run is about to wire. */
+function toggleLine(toggles: PresetToggles): string {
+  return (
+    `guard ${onOff(toggles.guard)}, stats ${onOff(toggles.statsOnStop)}, ` +
+    `map ${onOff(toggles.mapOnStart)}, lint ${onOff(toggles.lintOnStart)}`
+  );
 }
 
 function guardCopy(): string {
@@ -1354,7 +1482,7 @@ async function stepThreshold(
 export function presetToggles(
   cwd: string,
   where: { readonly scope?: InstallScope; readonly home?: string } = {},
-): Pick<HooksChoices, 'guard' | 'statsOnStop' | 'mapOnStart' | 'lintOnStart'> {
+): PresetToggles {
   const defaults = { guard: true, statsOnStop: true, mapOnStart: false, lintOnStart: false };
   let anyOurs = false;
   let guard = false;
@@ -1524,15 +1652,20 @@ async function removeFlow(
       `edit or remove it there.\nNothing has been changed yet.\n`,
   );
 
-  if ((await confirmYesNo(ask, 'yes to proceed, no to leave everything untouched.')) === 'no') {
+  // --yes is the consent: the plan above was printed, and taking smelt's own wiring
+  // back out loses nothing that was not smelt's — every removal is a strip of our own
+  // entries or a file that is entirely ours.
+  if (
+    io.yes !== true &&
+    (await confirmYesNo(ask, 'yes to proceed, no to leave everything untouched.')) === 'no'
+  ) {
     io.output(`Nothing was changed.\n`);
     return 0;
   }
 
   for (const removal of removals) {
     const verb = removal.action === 'delete' ? 'delete' : 'modify';
-    const answer = await ask(`  ${removal.name} — ${verb} it? (yes/no)> `);
-    if (answer !== 'yes') {
+    if (io.yes !== true && (await ask(`  ${removal.name} — ${verb} it? (yes/no)> `)) !== 'yes') {
       io.output(`  skipped ${removal.name} — not touched\n`);
       continue;
     }

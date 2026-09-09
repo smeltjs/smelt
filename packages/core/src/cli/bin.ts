@@ -3,7 +3,7 @@ import { readFileSync, readSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import process from 'node:process';
 
-import { EXIT, runCli } from './run.ts';
+import { closedSinkCode, EXIT, runCli } from './run.ts';
 
 /**
  * The `smelt` binary: the thinnest possible shell around {@link runCli}.
@@ -26,6 +26,13 @@ import { EXIT, runCli } from './run.ts';
  *    stream initialization), `process.stdin` is only handed over lazily to the one
  *    mode that needs a stream (`init`), and the read itself retries `EAGAIN` with a
  *    synchronous back-off until EOF.
+ *  - **A closed output stream is a refusal, not a crash.** Writing to a pipe nobody
+ *    reads raises asynchronously, on the stream's own `'error'` event, which no
+ *    `try`/`catch` around the write can see — so an unheard one is an unhandled
+ *    `'error'`: a stack trace and an exit code nobody chose, for `smelt hooks install
+ *    | head` or for answering a wizard with `yes`. The listener below turns it into
+ *    one line and the usage exit. It is here rather than in `run.ts` because the
+ *    streams are this file's: `runCli` only ever sees the two functions it is handed.
  *  - **Bytes that are not UTF-8 are refused, never mangled.** Decoding invalid bytes
  *    would silently replace them with U+FFFD, and the result would still smelt,
  *    round-trip, and verify — of the wrong bytes. That violates the reversibility
@@ -135,6 +142,32 @@ function packageVersion(): string {
   const manifest = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
   const parsed = JSON.parse(manifest) as { version?: string };
   return parsed.version ?? '0.0.0';
+}
+
+/** Said once, however many streams break, and never from inside its own handler. */
+let sinkRefused = false;
+
+function refuseClosedSink(code: string): void {
+  if (sinkRefused) return;
+  sinkRefused = true;
+  try {
+    process.stderr.write(
+      `smelt: nothing is reading smelt's output (${code}) — refusing rather than ` +
+        `writing into a closed stream. If you meant to script this, answer the verb ` +
+        `up front (\`--yes\`) and pipe its output.\n`,
+    );
+  } catch {
+    // stderr is gone too; the exit code is the whole message.
+  }
+  process.exit(EXIT.usage);
+}
+
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error: unknown) => {
+    const code = closedSinkCode(error);
+    if (code === undefined) throw error;
+    refuseClosedSink(code);
+  });
 }
 
 try {

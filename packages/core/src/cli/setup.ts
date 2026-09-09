@@ -10,10 +10,11 @@ import {
   planInstall,
   presetToggles,
   renderConfigWithHooks,
+  withToggleFlags,
 } from './hooks.ts';
 import { confirmLoop, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
 import type { Ask, Step } from './wizard.ts';
-import type { HooksChoices, ManualStep } from './hooks.ts';
+import type { HooksChoices, ManualStep, ToggleFlags } from './hooks.ts';
 import {
   CONFIG_FILE_NAME,
   CONFIG_VERSION,
@@ -51,11 +52,12 @@ import { lavaBanner } from './lava.ts';
  *     defaults, read the same way `smelt hooks install` reads them.
  *   - interactive asks four questions, each with an Enter default, then confirms.
  *
- * The one hard rule is inherited unchanged from `init` and `hooks`: an existing file
- * that is not smelt's own config is never written — not by `--yes`, not by a wizard
- * answer. It is skipped with a note pointing at `smelt hooks install`, which asks per
- * file. `smelt.config.json` is smelt's own file; `setup` updates it and says exactly
- * what it added.
+ * The one hard rule is the merge policy `cli/hooks.ts` owns and both verbs apply
+ * (`Consent`): an existing file is **merged**, never overwritten — every byte that is
+ * not smelt's own rides through — and a file smelt would write *whole* is left alone
+ * unless it is already smelt's, reported skipped with a reason naming it.
+ * `smelt.config.json` is smelt's own file, written exactly once per run, and `setup`
+ * says exactly what it added.
  *
  * Idempotent by construction: a re-run on a current machine plans `unchanged` for
  * every file, writes nothing, and exits 0.
@@ -93,6 +95,12 @@ export interface SetupOptions {
    * wizard states what detection found and lets you flip it.
    */
   readonly scope?: InstallScope;
+  /**
+   * The four hooks toggles as flags answered them. An absent one is not `off`: it
+   * means leave it as the install found it, which is what `presetToggles` reads.
+   * Both install verbs own these four and mean the same thing by them.
+   */
+  readonly toggles?: ToggleFlags;
 }
 
 /** One file's fate, as the receipt and the confirm listing both spell it. */
@@ -140,6 +148,8 @@ interface SetupChoices {
   store: SmeltConfigStore | undefined;
   registerMcp: boolean;
   scope: InstallScope;
+  /** What `--guard`/`--stats`/`--map`/`--lint` said, if anything. */
+  toggles: ToggleFlags;
 }
 
 /**
@@ -219,6 +229,7 @@ async function yesPath(options: SetupOptions, io: SetupIo, say: Say): Promise<Se
     store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
     registerMcp: !options.noMcp,
     scope,
+    toggles: options.toggles ?? {},
   };
   say(
     `${CLI_NAME} setup — applying the recipe with --yes:\n` +
@@ -227,12 +238,13 @@ async function yesPath(options: SetupOptions, io: SetupIo, say: Say): Promise<Se
       `the config carries none)\n` +
       `  store: directory at ${SETUP_RECIPE.store.defaultDir} (only if the config ` +
       `carries none; an explicit store is respected)\n` +
-      `  hooks preset: current defaults for ${
+      `  hooks preset: ${
         choices.harnesses.length === 0
           ? 'no harness (none named — config only)'
           : choices.harnesses.map((profile) => profile.id).join(', ')
-      }\n` +
-      `  existing files are never overwritten — skipped with a note\n`,
+      }, toggles as installed then as --guard/--stats/--map/--lint named\n` +
+      `  an existing file is merged, never overwritten; one smelt writes whole is ` +
+      `left alone unless it is already smelt's\n`,
   );
   return choices;
 }
@@ -256,6 +268,7 @@ async function wizardPath(
     store: undefined,
     registerMcp: true,
     scope: scopeOf(options, io),
+    toggles: options.toggles ?? {},
   };
   const detected = choices.scope;
 
@@ -776,8 +789,9 @@ function hooksChoices(
     ...(version === undefined ? {} : { writtenBy: version }),
     // Read off what is actually installed, falling back to the installer's defaults
     // when nothing of smelt's is on disk — the same "edit, never reset" reading the
-    // hooks installer itself uses. No second copy of the defaults lives here.
-    ...presetToggles(cwd, { scope: choices.scope, home }),
+    // hooks installer itself uses — then whatever the four toggle flags named. No
+    // second copy of the defaults, and no second reading of the flags, lives here.
+    ...withToggleFlags(presetToggles(cwd, { scope: choices.scope, home }), choices.toggles),
     enforcement: 'deny',
     thresholdBytes: DEFAULT_THRESHOLD_BYTES,
     scope: choices.scope,

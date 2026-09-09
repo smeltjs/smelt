@@ -62,6 +62,10 @@ const FLAG_ARGV: Record<VerbFlag, readonly string[]> = {
   scope: ['--scope', 'project'],
   yes: ['--yes'],
   'no-mcp': ['--no-mcp'],
+  guard: ['--guard', 'on'],
+  stats: ['--stats', 'off'],
+  map: ['--map', 'on'],
+  lint: ['--lint', 'off'],
   strict: ['--strict'],
   json: ['--json'],
   reconstruct: ['--reconstruct'],
@@ -74,9 +78,9 @@ const OWNED: Record<Verb, readonly VerbFlag[]> = {
   map: ['budget', 'focus', 'ignore', 'cache', 'json'],
   retrieve: [],
   stats: ['json'],
-  hooks: ['harness', 'scope'],
+  hooks: ['harness', 'scope', 'yes', 'guard', 'stats', 'map', 'lint'],
   agents: ['strict', 'json'],
-  setup: ['harness', 'scope', 'yes', 'no-mcp', 'json'],
+  setup: ['harness', 'scope', 'yes', 'no-mcp', 'json', 'guard', 'stats', 'map', 'lint'],
   doctor: ['scope', 'json'],
 };
 

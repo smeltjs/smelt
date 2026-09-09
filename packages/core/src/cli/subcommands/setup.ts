@@ -5,13 +5,14 @@ import { HARNESSES, harnessById } from '../../harness/registry.ts';
 import { SETUP_RECIPE } from '../../setup/recipe.ts';
 import { runSetup } from '../setup.ts';
 import { colorize } from '../lava.ts';
-import { CLI_NAME } from '../shell.ts';
+import { CLI_NAME, refusingSink } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
-import { parseScope } from './flags.ts';
+import { parseScope, parseToggle } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
 import type { InstallScope } from '../../harness/scope.ts';
+import type { ToggleFlags } from '../hooks.ts';
 
 /**
  * `smelt setup` — the one-command front door for the whole recipe. The flow itself is
@@ -35,11 +36,13 @@ export interface SetupInvocation {
   readonly json: boolean;
   /** Absent means detect — see `harness/scope.ts`. */
   readonly scope?: InstallScope;
+  /** The four hooks toggles as flags answered them; absent means "as installed". */
+  readonly toggles: ToggleFlags;
 }
 
 export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
   name: 'setup',
-  flags: ['harness', 'scope', 'yes', 'no-mcp', 'json'],
+  flags: ['harness', 'scope', 'yes', 'no-mcp', 'json', 'guard', 'stats', 'map', 'lint'],
   refusal: `setup applies the recipe; answer it with --yes (and --harness, --no-mcp, --json) or let it ask.`,
   usage: {
     synopsis: [],
@@ -51,12 +54,14 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
         `  hooks preset for the harnesses you name, the MCP registration step, and a real\n` +
         `  smelt → retrieve round trip to prove the loop. Interactive from a terminal; for\n` +
         `  an agent, answer everything up front:\n\n` +
-        `    ${CLI_NAME} setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]\n\n` +
+        `    ${CLI_NAME} setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]\n` +
+        `      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]\n\n` +
         `  The defaults are the recipe's: budget ${SETUP_RECIPE.recommendedBudgetBytes} bytes\n` +
         `  (written only when the config carries none), a directory store at\n` +
         `  ${SETUP_RECIPE.store.defaultDir} (only when the config carries none). Existing\n` +
-        `  files are never overwritten — they are skipped with a note; hooks install edits\n` +
-        `  them, and it asks per file. Re-running on a current machine writes nothing and\n` +
+        `  files are merged byte-faithfully, never overwritten; one smelt would write whole\n` +
+        `  is left alone unless it is already smelt's. A toggle you do not name keeps\n` +
+        `  whatever is installed. Re-running on a current machine writes nothing and\n` +
         `  exits 0. --json prints a receipt: every file, every check, the exit's meaning.`,
     },
   },
@@ -86,12 +91,23 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
       );
     }
     const scope = parseScope(values.scope);
+    const guard = parseToggle('guard', values.guard);
+    const stats = parseToggle('stats', values.stats);
+    const map = parseToggle('map', values.map);
+    const lint = parseToggle('lint', values.lint);
     return {
       mode: 'setup',
       harnessIds,
       yes,
       noMcp: values['no-mcp'] === true,
       json,
+      // Absent is a third answer — "as installed" — so only what was typed is carried.
+      toggles: {
+        ...(guard === undefined ? {} : { guard }),
+        ...(stats === undefined ? {} : { statsOnStop: stats }),
+        ...(map === undefined ? {} : { mapOnStart: map }),
+        ...(lint === undefined ? {} : { lintOnStart: lint }),
+      },
       ...(scope === undefined ? {} : { scope }),
     };
   },
@@ -114,15 +130,25 @@ export const setupCommand: Subcommand<SetupInvocation, SetupInvocation> = {
       throw new CliUsageError(
         `${CLI_NAME}: setup is interactive unless you answer it up front. ` +
           `Non-interactive:\n` +
-          `  ${CLI_NAME} setup --yes [--harness <id>]... [--no-mcp] [--json]`,
+          `  ${CLI_NAME} setup --yes [--harness <id>]... [--no-mcp] [--json] ` +
+          `[--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]`,
       );
     }
     return await runSetup(resolved, {
       // `input` stays absent for `--yes` — exactOptionalPropertyTypes means "absent"
       // is a decision, not a field carrying undefined.
       ...(io.initInput === undefined ? {} : { input: io.initInput }),
-      output: (text) =>
-        io.stdout(colorize(text, io.color === true && !resolved.yes && !resolved.json)),
+      // Wrapped: the wizard writes its prompt before it reads an answer, so a closed
+      // or invalid stdout (`smelt setup | head`, `yes | smelt setup`) must be one
+      // line and the usage exit rather than a stack trace and "internal error".
+      output: refusingSink(
+        (text) => io.stdout(colorize(text, io.color === true && !resolved.yes && !resolved.json)),
+        (why) =>
+          new CliUsageError(
+            `${CLI_NAME}: setup could not write its output — the stream is closed ` +
+              `(${why}). Answer it up front with --yes, and pipe the receipt with --json.`,
+          ),
+      ),
       cwd: io.cwd ?? process.cwd(),
       ...(io.home === undefined ? {} : { home: io.home }),
       version: io.version,

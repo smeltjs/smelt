@@ -10,7 +10,7 @@ import { cliUsage } from './usage.ts';
 
 import { parseSmeltArgs } from './args.ts';
 
-export { CLI_NAME, EXIT } from './shell.ts';
+export { CLI_NAME, closedSinkCode, EXIT } from './shell.ts';
 export type { AnswerStream, CliIo } from './shell.ts';
 export { cliUsage } from './usage.ts';
 export { parseSmeltArgs } from './args.ts';

@@ -6,8 +6,8 @@ USAGE
   smelt map <dir> --budget <bytes> [--focus <term>]... [--ignore <entry>]... [--cache <dir>]
   smelt retrieve <hash>
   smelt stats [--json]
-  smelt hooks install [--harness <id>] [--scope <where>]
-  smelt hooks remove [--harness <id>] [--scope <where>]
+  smelt hooks install [--harness <id>] [--scope <where>] [--yes] [--<toggle> on|off]...
+  smelt hooks remove [--harness <id>] [--scope <where>] [--yes]
   smelt agents lint [dir] [--strict] [--json]
   smelt doctor [--scope <where>] [--json]
   smelt --reconstruct <result.json>
@@ -71,8 +71,17 @@ HOOKS
   (Gemini, Grok, Hermes, Cursor, opencode, Cline — schemas from the capability
   matrix, not yet smoke-tested), advisory (KiloCode, Aider — instructions only,
   nothing enforced). Same discipline as init: every file listed before a final
-  confirm, no existing file overwritten without a per-file yes, re-runs edit
-  toggles. smelt hooks remove takes it back out. Guard settings live in
+  confirm, nothing overwritten without a per-file yes, re-runs edit toggles.
+  For an agent, answer it up front:
+
+    smelt hooks install --yes [--harness <id>] [--scope <where>]
+      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]
+
+  A toggle you do not name keeps whatever is already installed; nothing is,
+  and the defaults are guard on, stats on, map off, lint off. Under --yes an
+  existing file is merged byte-faithfully rather than overwritten, and a file
+  smelt writes whole is left alone unless it is already smelt's.
+  smelt hooks remove takes it back out. Guard settings live in
   smelt.config.json ("hooks": {"thresholdBytes", "enforcement": "deny"|"rewrite"});
   deny is the default — rewrite substitutes commands in-flight only where a
   harness supports it, and never silently.
@@ -114,12 +123,14 @@ SETUP
   an agent, answer everything up front:
 
     smelt setup --yes [--harness <id>]... [--scope <where>] [--no-mcp] [--json]
+      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]
 
   The defaults are the recipe's: budget 4000 bytes
   (written only when the config carries none), a directory store at
   .smelt/store (only when the config carries none). Existing
-  files are never overwritten — they are skipped with a note; hooks install edits
-  them, and it asks per file. Re-running on a current machine writes nothing and
+  files are merged byte-faithfully, never overwritten; one smelt would write whole
+  is left alone unless it is already smelt's. A toggle you do not name keeps
+  whatever is installed. Re-running on a current machine writes nothing and
   exits 0. --json prints a receipt: every file, every check, the exit's meaning.
 
 DOCTOR
@@ -174,13 +185,22 @@ OPTIONS
                        and each harness file goes to that harness's own documented
                        user-level location; one that documents none is reported skipped,
                        never guessed.
-  --yes                setup only. Non-interactive setup: the recipe's defaults, printed
-                       loudly as they are applied. Existing files are never
-                       overwritten — skipped with a note; hooks install edits
-                       them, and it asks per file.
+  --yes                Answer everything up front: the recipe's defaults for setup,
+                       the install's current toggles for hooks, printed loudly as
+                       they are applied. An existing file is merged, never
+                       overwritten; one smelt would write whole is skipped unless it
+                       is already smelt's.
   --no-mcp             setup only. Setup only: skip the MCP registration step — the
                        printed command and its note — for a hooks-only
                        setup.
+  --guard on|off       The PreToolUse size-guard. Answers the wizard question of
+                       the same name.
+  --stats on|off       `smelt stats` when a session ends — observation only,
+                       never blocking.
+  --map on|off         An opening `smelt map` at session start, so the agent
+                       starts oriented.
+  --lint on|off        `smelt agents lint .` at session start, reporting on the
+                       instruction files this session loads.
   --strict             agents only. Turn any lint finding into exit 1, for CI. Findings are
                        advisory by default: the rules are heuristics about somebody
                        else's house style, and enforcing them uninvited would be

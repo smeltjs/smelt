@@ -56,6 +56,17 @@ export const CLI_FLAGS = {
   scope: { type: 'string' },
   yes: { type: 'boolean' },
   'no-mcp': { type: 'boolean' },
+  /**
+   * The four preset toggles, as `on|off` strings rather than as `--guard` /
+   * `--no-guard` boolean pairs: the wizard asks each of them `(on/off)`, and a flag
+   * that spells the same question differently is a second vocabulary for one setting.
+   * A string also lets *absent* mean "leave it as the install found it", which a
+   * boolean flag cannot say.
+   */
+  guard: { type: 'string' },
+  stats: { type: 'string' },
+  map: { type: 'string' },
+  lint: { type: 'string' },
   strict: { type: 'boolean' },
   json: { type: 'boolean' },
   reconstruct: { type: 'boolean' },
@@ -242,10 +253,11 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
   yes: {
     label: '--yes',
     body: () => [
-      "Non-interactive setup: the recipe's defaults, printed",
-      'loudly as they are applied. Existing files are never',
-      'overwritten — skipped with a note; hooks install edits',
-      'them, and it asks per file.',
+      "Answer everything up front: the recipe's defaults for setup,",
+      "the install's current toggles for hooks, printed loudly as",
+      'they are applied. An existing file is merged, never',
+      'overwritten; one smelt would write whole is skipped unless it',
+      "is already smelt's.",
     ],
   },
   'no-mcp': {
@@ -254,6 +266,25 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
       'Setup only: skip the MCP registration step — the',
       'printed command and its note — for a hooks-only',
       'setup.',
+    ],
+  },
+  guard: {
+    label: '--guard on|off',
+    body: () => ['The PreToolUse size-guard. Answers the wizard question of', 'the same name.'],
+  },
+  stats: {
+    label: '--stats on|off',
+    body: () => ['`smelt stats` when a session ends — observation only,', 'never blocking.'],
+  },
+  map: {
+    label: '--map on|off',
+    body: () => ['An opening `smelt map` at session start, so the agent', 'starts oriented.'],
+  },
+  lint: {
+    label: '--lint on|off',
+    body: () => [
+      '`smelt agents lint .` at session start, reporting on the',
+      'instruction files this session loads.',
     ],
   },
   strict: {
@@ -318,6 +349,22 @@ export function parseBudget(raw: string | undefined): number | undefined {
 /** The malformed-budget refusal, in the CLI's currency: prefixed, and exit 2. */
 function refuseBudget(fault: BudgetFault, raw: string): CliUsageError {
   return new CliUsageError(`${CLI_NAME}: ${budgetMalformed(fault, '--budget', raw)}`);
+}
+
+/**
+ * `--guard on|off` and its three siblings, or `undefined` when nobody typed one —
+ * which is not the same as `off`: absent means *leave it as the install found it*,
+ * and both verbs read the installed state for that answer (`presetToggles`).
+ *
+ * It lives with the flags rather than with a verb because two verbs own these four,
+ * and both of them meaning the same thing by `on` is the whole point: `smelt setup
+ * --yes --map on` and `smelt hooks install --yes --map on` must wire the same hook.
+ */
+export function parseToggle(flag: string, raw: string | undefined): boolean | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === 'on') return true;
+  if (raw === 'off') return false;
+  throw new CliUsageError(`${CLI_NAME}: --${flag} takes on or off, got "${raw}".`);
 }
 
 /**

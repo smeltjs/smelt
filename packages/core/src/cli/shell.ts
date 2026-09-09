@@ -168,13 +168,26 @@ export interface CliIo {
 }
 
 /**
- * The errno codes a write to a stream nobody is reading raises. `EPIPE` is the reader
- * closing the pipe (`smelt hooks install | head`); `EINVAL` is a descriptor that is
- * not writable in the mode Node is using — what `yes | smelt hooks install` produced,
- * where the flooded stdin left the process writing prompts into a stream that had
- * already been torn down.
+ * The errno codes a write to a stream nobody is reading raises, and `undefined` for
+ * every other failure — which is somebody else's bug and must keep travelling.
+ *
+ * `EPIPE` is the reader closing the pipe (`smelt hooks install | head`). `EINVAL` is
+ * a descriptor that is no longer writable in the mode Node is using — what
+ * `yes | smelt hooks install` produces: the flooded stdin tears the socketpair down
+ * underneath a wizard that is still printing prompts. `ERR_STREAM_DESTROYED` is the
+ * same fact raised by the stream layer rather than by the syscall.
+ *
+ * Both spellings matter, because the two arrive by different routes: a synchronous
+ * `write` throw (handled by {@link refusingSink}) and an asynchronous `'error'` event
+ * on the stream itself, which no `try`/`catch` around the write can see at all — that
+ * one is `bin.ts`'s to listen for, and unheard it is an unhandled `'error'` event,
+ * which is a stack trace and a non-zero exit nobody chose.
  */
-const CLOSED_SINK_CODES: readonly string[] = ['EPIPE', 'EINVAL', 'ERR_STREAM_DESTROYED'];
+export function closedSinkCode(error: unknown): string | undefined {
+  const code = (error as { code?: string } | null | undefined)?.code;
+  if (typeof code !== 'string') return undefined;
+  return ['EPIPE', 'EINVAL', 'ERR_STREAM_DESTROYED'].includes(code) ? code : undefined;
+}
 
 /**
  * An output sink that **refuses** instead of crashing when nobody is on the other end.
@@ -183,12 +196,10 @@ const CLOSED_SINK_CODES: readonly string[] = ['EPIPE', 'EINVAL', 'ERR_STREAM_DES
  * that writes into a stream a caller may already have closed. Unwrapped, that write
  * throws past every `catch` in the CLI and the user gets a stack trace and exit 4 —
  * "unexpected internal error — this is a bug" — for the entirely ordinary act of
- * piping a wizard into `head`, or of answering it with `yes`. Wrapped, it is one line
- * and the usage exit, which is what it always was: a wizard driven by something that
- * is not listening.
+ * piping a wizard into `head`. Wrapped, it is one line and the usage exit, which is
+ * what it always was: a wizard driven by something that is not listening.
  *
- * Only the closed-sink codes are answered. Any other write failure is somebody else's
- * bug and still travels, unswallowed.
+ * Only the closed-sink codes are answered; see {@link closedSinkCode}.
  */
 export function refusingSink(
   write: (text: string) => void,
@@ -198,11 +209,9 @@ export function refusingSink(
     try {
       write(text);
     } catch (error) {
-      const code = (error as { code?: string } | null | undefined)?.code;
-      if (typeof code === 'string' && CLOSED_SINK_CODES.includes(code)) {
-        throw refusal(code);
-      }
-      throw error;
+      const code = closedSinkCode(error);
+      if (code === undefined) throw error;
+      throw refusal(code);
     }
   };
 }
