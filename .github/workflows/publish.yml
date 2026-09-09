@@ -225,10 +225,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The same guard mcp carries, for the same reason: this package names the core
-      # through the workspace protocol in its devDependencies, and a pack that left a
-      # workspace range in a published manifest is exactly the 0.1.0 defect. Publishing
-      # a packed tarball runs no lifecycle script, so the guard runs here.
+      # The same guard mcp carries, but not the same reach, and the difference matters:
+      # this package's peerDependency on the core is a hand-written literal
+      # (`>=0.7.0 <1`), not a workspace range, so the only workspace spelling here is the
+      # devDependencies entry npm never ships. The guard is therefore a no-op for what a
+      # consumer resolves today, and is kept for the day a peer or dependency is written
+      # as `workspace:^` — cheap insurance, not the thing that proves this tarball. What
+      # proves it is ci.yml's packed-manifest check, which reads the peer range out of the
+      # packed bytes and refuses a `workspace:` in it. Publishing a packed tarball runs no
+      # lifecycle script, so the guard runs here rather than at pack time.
       - name: run the workspace:^ publish guard
         run: pnpm --filter @smeltjs/rerank-voyage run prepublishOnly
 

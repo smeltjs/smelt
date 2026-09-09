@@ -282,8 +282,14 @@ and rerank-voyage from the packed tarballs, computes the core tarball's sha256 i
 served, and renders `packaging/homebrew/smelt.rb` from those two facts. The
 `workspace:^` publish guard runs inside the pipeline for each dependent package —
 explicit, because publishing a packed tarball skips lifecycle scripts, and
-`@smeltjs/mcp@0.1.0` is the reason the guard exists. A version already on npm is
-skipped rather than failed, so re-firing a tag finishes a half-completed release.
+`@smeltjs/mcp@0.1.0` is the reason the guard exists. It reaches further on mcp than on
+rerank-voyage: mcp names the core through the workspace protocol in a real dependency,
+whereas rerank-voyage's `peerDependencies` range is a hand-written literal and its only
+workspace spelling is the devDependencies entry npm never ships — so on that package the
+guard is insurance against a future `workspace:` peer, and what proves the shipped range
+is CI's packed-manifest check, which reads it out of a real pack. A version already on
+npm is skipped rather than failed, so re-firing a tag finishes a half-completed
+release.
 
 One-time owner setup, and the tap:
 

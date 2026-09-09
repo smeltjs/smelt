@@ -129,6 +129,12 @@ jobs:
       # in a peerDependency where npm reports it as an unsatisfiable range rather
       # than a missing package), and a peer range that does not admit the core this
       # release publishes.
+      #
+      # This step is what actually rules on that, because the peer range here is a
+      # hand-written literal rather than a workspace range: the package's
+      # prepublishOnly guard only ever covers the `workspace:*` devDependencies entry,
+      # which npm does not ship, so it can say nothing about the range a consumer
+      # resolves. These bytes came out of a real pack, and they are the ones npm serves.
       - name: the rerank-voyage tarball carries its licence and a resolvable peer range
         run: |
           tar -tzf "$RUNNER_TEMP/smeltjs-rerank-voyage.tgz" > "$RUNNER_TEMP/rerank-tarball-files.txt"
