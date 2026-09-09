@@ -1,6 +1,6 @@
 {
-  "guards": 36,
-  "mutations": 185,
+  "guards": 40,
+  "mutations": 201,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -24,7 +24,7 @@
     },
     {
       "guard": "packages/core/test/guards/doctor.test.ts",
-      "count": 4
+      "count": 5
     },
     {
       "guard": "packages/core/test/guards/expansion-counter.test.ts",
@@ -39,12 +39,28 @@
       "count": 8
     },
     {
+      "guard": "packages/core/test/guards/hook-command.test.ts",
+      "count": 5
+    },
+    {
       "guard": "packages/core/test/guards/hooks-preset.test.ts",
+      "count": 3
+    },
+    {
+      "guard": "packages/core/test/guards/hooks-yes.test.ts",
       "count": 3
     },
     {
       "guard": "packages/core/test/guards/init-wizard.test.ts",
       "count": 2
+    },
+    {
+      "guard": "packages/core/test/guards/install-scope.test.ts",
+      "count": 3
+    },
+    {
+      "guard": "packages/core/test/guards/invocation.test.ts",
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/json-edit.test.ts",
@@ -100,7 +116,7 @@
     },
     {
       "guard": "packages/core/test/guards/setup-verb.test.ts",
-      "count": 6
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/site-facts.test.ts",
