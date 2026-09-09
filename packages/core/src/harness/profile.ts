@@ -1,5 +1,6 @@
 import { shimFromSchema } from '../hooks/shim.ts';
 import type { HarnessHookSchema, ShimAdapter } from '../hooks/shim.ts';
+import { MCP_RUN_ARGS } from '../setup/recipe.ts';
 import type { TomlValue } from '../text/toml-edit.ts';
 
 import type { InstallScope } from './scope.ts';
@@ -80,6 +81,21 @@ export interface HarnessProfile {
    */
   readonly install: readonly HarnessInstallStep[];
   /**
+   * How **this** harness registers smelt's MCP server, in the words a person would
+   * use to do it by hand. Present exactly when {@link install} carries a registration
+   * step, and it is the same registration: `mcp-registration` and
+   * `toml-mcp-registration` are smelt writing this by itself, and there is no fourth
+   * spelling of it anywhere.
+   *
+   * It is a per-harness fact because the mechanism is: Claude Code has a CLI verb,
+   * Codex and Grok read a TOML table, opencode a JSON key. `smelt setup` used to print
+   * the recipe's Claude Code command for *every* harness — telling somebody who wired
+   * Codex to run a `claude` binary they may not have, about a file it does not read.
+   * Pinned against `packages/mcp/README.md`, the outside witness, by
+   * `test/guards/setup-recipe.test.ts`.
+   */
+  readonly mcp?: HarnessMcpManual;
+  /**
    * This harness's native pre-tool hook schema, as data. Present exactly when the
    * harness ships a shim script (`dist/hooks/shims/<id>.js`) — absent for the advisory
    * tier, and for opencode, whose hook API is a JavaScript plugin rather than a stdin
@@ -91,6 +107,21 @@ export interface HarnessProfile {
    * cannot express. Wins over {@link hooks} when both are present.
    */
   readonly shim?: ShimAdapter;
+}
+
+/**
+ * One harness's MCP registration, as a person performs it — what `smelt setup` prints
+ * for the registration it wrote, and what it hands back where the file is the
+ * harness's own to rewrite.
+ */
+export interface HarnessMcpManual {
+  /** The command to run, or the table to add, and where. Always project-truthful. */
+  readonly manual: string;
+  /**
+   * The machine-wide spelling, where the harness has a different one — Claude Code's
+   * `--scope user`. Absent means {@link manual} is the answer at either scope.
+   */
+  readonly manualUser?: string;
 }
 
 /** How much smelt is willing to claim about a harness. */
@@ -136,6 +167,22 @@ export const HARNESS_TIERS: readonly HarnessTier[] = Object.keys(TIER_HONESTY) a
  */
 export function harnessLabel(profile: HarnessProfile): string {
   return profile.shortName ?? profile.name;
+}
+
+/**
+ * The by-hand spelling of a `[mcp_servers.smelt]` table, for the two harnesses whose
+ * registration is TOML — composed from the recipe's own spawn array, beside the table
+ * `toml-mcp-registration` writes, so the sentence a user reads and the bytes smelt
+ * writes cannot say different things. `file` is the project spelling; the machine one
+ * is the same file under `$HOME`, which is where both harnesses document their config.
+ * `packages/mcp/README.md`'s per-harness sections are the outside witness
+ * (`test/guards/setup-recipe.test.ts`).
+ */
+export function tomlMcpManual(file: string): HarnessMcpManual {
+  const table =
+    `[mcp_servers.smelt] command = "${MCP_RUN_ARGS[0] ?? ''}", ` +
+    `args = ${JSON.stringify(MCP_RUN_ARGS.slice(1))}`;
+  return { manual: `${file}: ${table}`, manualUser: `~/${file}: ${table}` };
 }
 
 /**

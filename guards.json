@@ -1,6 +1,6 @@
 {
-  "guards": 41,
-  "mutations": 208,
+  "guards": 42,
+  "mutations": 213,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -79,6 +79,10 @@
       "count": 3
     },
     {
+      "guard": "packages/core/test/guards/module-seams.test.ts",
+      "count": 3
+    },
+    {
       "guard": "packages/core/test/guards/no-network.test.ts",
       "count": 8
     },
@@ -112,11 +116,11 @@
     },
     {
       "guard": "packages/core/test/guards/setup-recipe.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/setup-verb.test.ts",
-      "count": 7
+      "count": 8
     },
     {
       "guard": "packages/core/test/guards/site-facts.test.ts",

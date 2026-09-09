@@ -859,24 +859,43 @@ function mcpVerdict(
   // "Written" is asked of the resolver, not of the profile: a step with a documented
   // user-level location that is the harness's own file to rewrite has a path and is
   // still not ours to write.
-  const applied = choices.harnesses.some((profile) =>
+  const applied = choices.harnesses.find((profile) =>
     profile.install.some((step) => {
       if (!isMcpStep(step)) return false;
       const located = locateStep(step, choices.scope, { ...roots, harness: profile.name });
       return located.path !== undefined && located.manual === undefined;
     }),
   );
-  if (applied) {
-    return { mcp: { status: 'applied', command: SETUP_RECIPE.mcp.register }, fromProfile: false };
+  if (applied !== undefined) {
+    return {
+      mcp: { status: 'applied', command: mcpManual(applied, choices.scope) },
+      fromProfile: false,
+    };
   }
   const manualMcp = manual.find(isMcpStep);
   // Two different manuals: a location that is the harness's own to rewrite (the step
   // carries the command), or no selected harness carrying a registration this preset
   // knows how to write at all — which is the older of the two, and the one whose
-  // sentence the prose has always said out loud.
+  // sentence the prose has always said out loud. The second one names no harness, so
+  // it names none: the plain stdio command any MCP client registers, not one harness's
+  // CLI verb printed at somebody who is not using that harness.
   return manualMcp === undefined
-    ? { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.register }, fromProfile: true }
+    ? { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.run }, fromProfile: true }
     : { mcp: { status: 'manual', command: manualMcp.command }, fromProfile: false };
+}
+
+/**
+ * How **this** harness's registration is performed by hand, at this scope — the
+ * profile's own fact (CONTEXT.md, **HarnessProfile**), not the recipe's Claude Code
+ * command printed at everybody. A harness carrying a registration step carries this
+ * too; `test/guards/setup-recipe.test.ts` pins the pair, and pins each one against
+ * the section `packages/mcp/README.md` gives it.
+ */
+function mcpManual(profile: HarnessProfile, scope: InstallScope): string {
+  const manual = profile.mcp;
+  /* v8 ignore next -- unreachable: pinned by test/guards/setup-recipe.test.ts */
+  if (manual === undefined) return SETUP_RECIPE.mcp.run;
+  return scope === 'user' ? (manual.manualUser ?? manual.manual) : manual.manual;
 }
 
 function tierLine(profile: HarnessProfile): string {

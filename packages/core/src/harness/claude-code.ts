@@ -66,6 +66,10 @@ export const claudeCode: ShimmedHarnessProfile = {
   // user settings file (.../settings-reference).
   userInstructionFile: '.claude/CLAUDE.md',
   instructions: 'snippet',
+  // The registration, as a person performs it — Claude Code's own CLI verb, and its
+  // `--scope user` spelling for the machine. Both are the recipe's, imported rather
+  // than retyped: this exact string had four owners once.
+  mcp: { manual: SETUP_RECIPE.mcp.register, manualUser: SETUP_RECIPE.mcp.registerUser },
   caveats: [],
   hooks: HOOKS,
   install: [

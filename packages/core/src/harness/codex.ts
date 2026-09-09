@@ -1,6 +1,7 @@
 import type { HarnessHookSchema } from '../hooks/shim.ts';
 
 import { MCP_RUN_ARGS } from '../setup/recipe.ts';
+import { tomlMcpManual } from './profile.ts';
 import type { ShimmedHarnessProfile } from './profile.ts';
 import { SNIPPET_END_HASH, SNIPPET_START_HASH } from './snippet.ts';
 
@@ -67,6 +68,9 @@ ${SNIPPET_END_HASH}
 // `args`, `env`), so the CLI command the README teaches and the file setup writes
 // cannot disagree.
 
+/** Codex's one config file — the [features] block and the MCP table both land here. */
+const CONFIG_TOML = '.codex/config.toml';
+
 export const codex: ShimmedHarnessProfile = {
   id: 'codex',
   name: 'Codex CLI',
@@ -81,6 +85,10 @@ export const codex: ShimmedHarnessProfile = {
   // (codex-rs/config/src/state.rs `hooks_config_folder`).
   userInstructionFile: '.codex/AGENTS.md',
   instructions: 'snippet',
+  // The registration this harness reads, as a person would add it: the same TOML
+  // table the step below writes. Codex documents no registration verb we could
+  // verify, so the table *is* the mechanism, and it is the one the README shows.
+  mcp: tomlMcpManual(CONFIG_TOML),
   caveats: [
     'project-level Codex hooks run only once the project is trusted (features.hooks; see docs/research/2026-09-02-agent-enforcement.md § 3)',
   ],
@@ -97,8 +105,8 @@ export const codex: ShimmedHarnessProfile = {
     },
     {
       kind: 'marker-block',
-      file: '.codex/config.toml',
-      user: { file: '.codex/config.toml' },
+      file: CONFIG_TOML,
+      user: { file: CONFIG_TOML },
       block: codexConfigTomlBlock,
       start: SNIPPET_START_HASH,
       end: SNIPPET_END_HASH,
@@ -109,8 +117,8 @@ export const codex: ShimmedHarnessProfile = {
     },
     {
       kind: 'toml-mcp-registration',
-      file: '.codex/config.toml',
-      user: { file: '.codex/config.toml' },
+      file: CONFIG_TOML,
+      user: { file: CONFIG_TOML },
       path: ['mcp_servers', 'smelt'],
       entry: () => ({ command: MCP_RUN_ARGS[0]!, args: MCP_RUN_ARGS.slice(1) }),
     },

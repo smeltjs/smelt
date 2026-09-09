@@ -149,6 +149,30 @@ describe('smelt setup applies the recipe in one command', () => {
     }
   });
 
+  it('the MCP step is the one the chosen harness actually reads', async () => {
+    const cwd = scratch('mcp-per-harness');
+    try {
+      const receipt = await runYes(cwd, ['--harness', 'codex']);
+
+      // Codex's registration is a TOML table in its own config file, and setup wrote
+      // it. The receipt used to hand back Claude Code's CLI verb for every harness —
+      // a command about a file Codex does not read, run by a binary the user may not
+      // have. What it names now is what was written, in the words Codex's own docs use.
+      expect(receipt.mcp.status).toBe('applied');
+      expect(receipt.mcp.command).toContain('[mcp_servers.smelt]');
+      expect(receipt.mcp.command).toContain('.codex/config.toml');
+      expect(
+        receipt.mcp.command,
+        'the recipe’s Claude Code command, printed at somebody wiring Codex',
+      ).not.toContain('claude mcp add');
+      expect(readFileSync(join(cwd, '.codex', 'config.toml'), 'utf8')).toContain(
+        '[mcp_servers.smelt]',
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('re-runs a current machine as a byte-neutral no-op', async () => {
     const cwd = scratch('idempotent');
     try {
@@ -542,11 +566,19 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     kind: 'src',
+    id: 'setup-prints-one-harness-command-for-all',
+    file: 'cli/setup.ts',
+    find: "  return scope === 'user' ? (manual.manualUser ?? manual.manual) : manual.manual;",
+    replace: '  return SETUP_RECIPE.mcp.register;',
+    why: 'the MCP step read off the recipe again instead of off the harness that carries it — somebody wiring Codex or Grok is told to run a `claude` CLI verb against a file their harness never reads, which is the defect the per-harness fact exists to end',
+  },
+  {
+    kind: 'src',
     id: 'setup-claims-applied-when-manual',
     file: 'cli/setup.ts',
-    find: "    return { mcp: { status: 'applied', command: SETUP_RECIPE.mcp.register }, fromProfile: false };",
+    find: "    return {\n      mcp: { status: 'applied', command: mcpManual(applied, choices.scope) },\n      fromProfile: false,\n    };",
     replace:
-      "    return { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.register }, fromProfile: false };",
+      "    return {\n      mcp: { status: 'manual', command: mcpManual(applied, choices.scope) },\n      fromProfile: false,\n    };",
     why: 'the receipt calling an applied registration manual — the agent reading --json would re-register by hand what setup already wrote, and the receipt would be wrong in the direction that costs work',
   },
 ];

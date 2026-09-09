@@ -87,6 +87,11 @@ export const SmeltGuard = async () => ({
 // Same derivation as claude-code's, from the one place it lives (MCP_RUN_ARGS):
 // the recipe's run command in opencode's spawn shape (a single `command` array,
 // `type: "local"`).
+const MCP_ENTRY = { type: 'local', command: [...MCP_RUN_ARGS] } as const;
+
+/** Where the registration goes, at each scope — one owner for both spellings. */
+const CONFIG_JSON = 'opencode.json';
+const USER_CONFIG_JSON = '.config/opencode/opencode.json';
 
 export const opencode: HarnessProfile = {
   id: 'opencode',
@@ -103,6 +108,12 @@ export const opencode: HarnessProfile = {
   // `.opencode/plugin/`. Changing the project path is not this change's to make.
   userInstructionFile: '.config/opencode/AGENTS.md',
   instructions: 'snippet',
+  // The registration, as a person would add it — the same JSON value the step below
+  // merges in, under the same key, in the file that scope reads.
+  mcp: {
+    manual: `${CONFIG_JSON}: "mcp": { "smelt": ${JSON.stringify(MCP_ENTRY)} }`,
+    manualUser: `~/${USER_CONFIG_JSON}: "mcp": { "smelt": ${JSON.stringify(MCP_ENTRY)} }`,
+  },
   caveats: [
     'MCP tools can bypass opencode plugin hooks (sst/opencode#2319) — the guard sees built-in tools only',
   ],
@@ -116,10 +127,10 @@ export const opencode: HarnessProfile = {
     },
     {
       kind: 'mcp-registration',
-      file: 'opencode.json',
-      user: { file: '.config/opencode/opencode.json' },
+      file: CONFIG_JSON,
+      user: { file: USER_CONFIG_JSON },
       path: ['mcp', 'smelt'],
-      entry: () => ({ type: 'local', command: [...MCP_RUN_ARGS] }),
+      entry: () => ({ ...MCP_ENTRY, command: [...MCP_ENTRY.command] }),
     },
   ],
 };

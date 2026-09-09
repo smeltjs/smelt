@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import { SETUP_RECIPE, SETUP_STEPS } from '@guard/setup/recipe';
 import { DEFAULT_STORE_DIR } from '@guard/harness/plan';
+import { HARNESSES } from '@guard/harness/registry';
+import type { HarnessProfile } from '@guard/harness/profile';
 import type { GuardMutation } from './_mutations.ts';
 import { guardRoot, packageRoot, repoRoot } from './_source.ts';
 
@@ -129,6 +131,84 @@ describe('the recipe is the only place the facts are spelled', () => {
   });
 });
 
+/**
+ * Every harness whose profile writes an MCP registration — the ones that must also
+ * say how a person does it by hand, because `smelt setup` prints exactly that.
+ */
+function registersMcp(profile: HarnessProfile): boolean {
+  return profile.install.some(
+    (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
+  );
+}
+
+/**
+ * What `packages/mcp/README.md` must show for each of them, restated by hand: a guard
+ * that asks the source what the docs should say proves nothing. The section heading is
+ * the harness's own name, and the fragments are the mechanism that harness reads.
+ */
+const README_SECTIONS: readonly {
+  readonly id: string;
+  readonly heading: string;
+  readonly shows: readonly string[];
+}[] = [
+  {
+    id: 'claude-code',
+    heading: '### Claude Code',
+    shows: ['claude mcp add smelt -- npx @smeltjs/mcp'],
+  },
+  { id: 'codex', heading: '### Codex CLI', shows: ['~/.codex/config.toml', '[mcp_servers.smelt]'] },
+  { id: 'grok', heading: '### Grok CLI', shows: ['~/.grok/config.toml', '[mcp_servers.smelt]'] },
+  {
+    id: 'opencode',
+    heading: '### opencode',
+    shows: ['opencode.json', '"smelt": { "type": "local"'],
+  },
+];
+
+describe('an MCP registration is a per-harness fact, not the recipe’s one command', () => {
+  it('a harness that registers carries its own manual step, and no other does', () => {
+    for (const profile of HARNESSES) {
+      if (registersMcp(profile)) {
+        expect(
+          profile.mcp?.manual,
+          `${profile.id} writes an MCP registration but says nothing about how a ` +
+            `person performs it — so setup would fall back to naming another ` +
+            `harness's command at somebody using this one.`,
+        ).toBeTruthy();
+      } else {
+        expect(
+          profile.mcp,
+          `${profile.id} claims a registration mechanism smelt never writes; the ` +
+            `manual step is the by-hand spelling of the step beside it, not a survey.`,
+        ).toBeUndefined();
+      }
+    }
+  });
+
+  it('no two harnesses print the same registration', () => {
+    const manuals = HARNESSES.filter(registersMcp).map((profile) => profile.mcp?.manual ?? '');
+    expect(
+      new Set(manuals).size,
+      `two harnesses print the same MCP step: ${manuals.join(' | ')}. One command for ` +
+        `every harness is the defect — a Codex user told to run a \`claude\` verb.`,
+    ).toBe(manuals.length);
+  });
+
+  it('the MCP README gives each of them its own section', () => {
+    const readme = repoFile('packages/mcp/README.md');
+    expect(
+      README_SECTIONS.map((section) => section.id),
+      'a harness gained (or lost) an MCP registration without the README following',
+    ).toEqual(HARNESSES.filter(registersMcp).map((profile) => profile.id));
+    for (const section of README_SECTIONS) {
+      expect(readme, `no "${section.heading}" section`).toContain(section.heading);
+      for (const shows of section.shows) {
+        expect(readme, `the ${section.id} section no longer shows ${shows}`).toContain(shows);
+      }
+    }
+  });
+});
+
 describe('the docs stay pinned to the recipe', () => {
   it('the README spells the commands the recipe carries — and no longer the typo', () => {
     const readme = repoFile('README.md');
@@ -171,6 +251,14 @@ describe('the docs stay pinned to the recipe', () => {
  * file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    kind: 'src',
+    id: 'mcp-manual-names-another-harness-file',
+    file: 'harness/grok.ts',
+    find: '  mcp: tomlMcpManual(CONFIG_TOML),',
+    replace: "  mcp: tomlMcpManual('.codex/config.toml'),",
+    why: 'one harness’s manual MCP step naming another harness’s config file — the shape of the defect this fact exists to end, where a user is told to edit a file the harness they run never reads',
+  },
   {
     kind: 'artifact',
     id: 'recipe-store-default-renamed',
