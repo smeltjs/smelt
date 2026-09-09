@@ -454,17 +454,98 @@ describe('the closing block counts what was applied, not what was planned', () =
   });
 });
 
+/**
+ * A wizard's closing block, sliced off its output: the rule that opens it is the only
+ * line in this CLI that is all rule cells, in either spelling.
+ */
+function block(out: string): string {
+  const at = out.search(/^(?:━{4,}|-{4,})$/mu);
+  return at === -1 ? '' : out.slice(at);
+}
+
 describe('the ASCII fallback reaches the wizards, not just the primitives', () => {
   /**
-   * The one non-ASCII character the fallback does **not** remove.
+   * The one non-ASCII character still left in a wizard's *older* prose.
    *
-   * Every prose surface in this CLI — the help page, the reports, doctor, every wizard
-   * — punctuates with an em dash, and always has. The `unicode` switch is about the
-   * characters smelt *draws*: the marks, the rule, the bar, the wordmark. Folding the
-   * prose's punctuation as well is a separate job, and a real one; this test states
-   * exactly where the line is today rather than pretending it is somewhere else.
+   * smelt punctuates with an em dash and keeps doing so: the voice is not a casualty of
+   * a terminal's locale. What the locale decides is which *character set* a page is
+   * rendered in, and `palette.dash()` is that decision made once — so the pages this
+   * overhaul owns (the four closing blocks, `doctor`, `stats`) fold to `-` and carry
+   * nothing above ASCII at all (the case below). The lines above the block here are
+   * older prose, untouched by design; this states exactly where the line is today
+   * rather than pretending it is somewhere else.
    */
   const PROSE_DASH = '—';
+
+  /** Every character above ASCII in `text`, deduplicated — the assertion's evidence. */
+  function aboveAscii(text: string): readonly string[] {
+    return [...new Set([...text].filter((ch) => (ch.codePointAt(0) ?? 0) > 127))];
+  }
+
+  /**
+   * THE PAGES THIS OVERHAUL OWNS ARE ASCII WHEN THE LOCALE SAID SO — every byte of
+   * them, punctuation included.
+   *
+   * A page is not ASCII because its author remembered: `doctor`'s findings are
+   * sentences other modules composed (a hook probe's detail, an orphan's reason) and a
+   * closing block's summary is counted somewhere else again. So the switch is folded at
+   * the page, through the one primitive — and this asserts the result rather than the
+   * mechanism, which is why it is an end-to-end run of the real verbs.
+   */
+  it.each([
+    ['doctor', ['doctor'] as readonly string[], (out: string) => out],
+    ['stats', ['stats'] as readonly string[], (out: string) => out],
+    // The blocks only: everything above them is the wizard's own older prose.
+    ['setup', ['setup', '--yes', '--harness', 'claude-code'], block],
+    ['hooks install', ['hooks', 'install', '--yes', '--harness', 'claude-code'], block],
+    ['hooks remove', ['hooks', 'remove', '--yes', '--harness', 'claude-code'], block],
+  ])('%s carries nothing above ASCII', async (_name, argv, page) => {
+    const cwd = projectRoot();
+    // Something installed, so doctor has findings to render and remove has files to
+    // take out: an empty page would be ASCII by having nothing to say.
+    await runCli(['setup', '--yes', '--harness', 'claude-code'], {
+      stdout: () => {},
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd,
+      home: join(cwd, 'home'),
+    });
+    let stdout = '';
+    await runCli(argv, {
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd,
+      home: join(cwd, 'home'),
+      unicode: false,
+    });
+    const rendered = page(stdout);
+    expect(rendered, 'the page under test was empty').not.toBe('');
+    expect(
+      aboveAscii(rendered),
+      `unexpected non-ASCII: ${JSON.stringify(aboveAscii(rendered))}`,
+    ).toEqual([]);
+  });
+
+  it('init closes on a block with nothing above ASCII either', async () => {
+    // The fourth block, and the only wizard with no `--yes`: it is answered through
+    // its own stream, which is why it is not in the table above.
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-ascii-init-'));
+    roots.push(cwd);
+    let output = '';
+    await runInit({
+      // budget, store=memory, strategy, measure, rerank=none, confirm
+      input: scripted(['4000', '1', '1', '1', '1', 'yes']),
+      output: (text) => void (output += text),
+      cwd,
+      unicode: false,
+    });
+    const rendered = block(output);
+    expect(rendered, 'the page under test was empty').not.toBe('');
+    expect(aboveAscii(rendered), JSON.stringify(aboveAscii(rendered))).toEqual([]);
+  });
 
   it.each([
     ['setup', ['setup', '--yes', '--harness', 'claude-code']],
@@ -643,6 +724,14 @@ export const MUTATIONS: GuardMutation[] = [
     find: "        applied.push('skipped');",
     replace: "        applied.push('written');",
     why: 'the closing block counting a file the person declined as a file it wrote — the most quietly wrong line a wizard can print, because it is the last one they read and the one they believe',
+  },
+  {
+    kind: 'src',
+    id: 'palette-dash-ignores-the-switch',
+    file: 'cli/lava.ts',
+    find: '  const dash = (): string => (unicode ? EM_DASH : DASH_ASCII);',
+    replace: '  const dash = (): string => EM_DASH;',
+    why: "the em dash written to a terminal whose locale never promised more than ASCII — three bytes of UTF-8 in the middle of doctor's findings and every wizard's closing verdict, rendered as mojibake on exactly the machines the ASCII fallback exists for",
   },
   {
     kind: 'src',

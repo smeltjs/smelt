@@ -14,6 +14,7 @@ import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
 import { presetToggles, withToggleFlags } from './installed.ts';
 import type { PresetToggles, ToggleFlags } from './installed.ts';
 import { countedFiles, doneBlock, palette } from './lava.ts';
+import type { Palette } from './lava.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import type { AppliedFile } from './merge-policy.ts';
 import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
@@ -367,6 +368,7 @@ async function applyWithoutAsking(
     );
   }
   for (const note of plan.notes) io.output(`note: ${note}\n`);
+  const lava = palette({ unicode: io.unicode !== false });
   io.output(
     doneBlock(
       {
@@ -375,16 +377,16 @@ async function applyWithoutAsking(
         // The skips count too: a harness whose file this preset will not write is a
         // file this run did not write, and a verdict that named only what was applied
         // would quietly round four-of-six up to four-of-four.
-        summary: countedFiles([
-          ...applied.map((one) => one.action),
-          ...plan.skipped.map(() => 'skipped' as const),
-        ]),
+        summary: countedFiles(
+          [...applied.map((one) => one.action), ...plan.skipped.map(() => 'skipped' as const)],
+          lava,
+        ),
         note:
           `Re-run with different toggles to edit them; ` +
           `\`${CLI_NAME} hooks remove --yes\` takes it all back out.`,
-        next: INSTALLED_NEXT,
+        next: installedNext(lava),
       },
-      palette({ unicode: io.unicode !== false }),
+      lava,
     ),
   );
   return 0;
@@ -396,10 +398,12 @@ async function applyWithoutAsking(
  * blocks that disagree about the next command is exactly the drift the block exists to
  * end.
  */
-const INSTALLED_NEXT: readonly (readonly [string, string])[] = [
-  [`${CLI_NAME} doctor`, 'prove the wiring fires, and what is behind'],
-  [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
-];
+function installedNext(lava: Palette): readonly (readonly [string, string])[] {
+  return [
+    [`${CLI_NAME} doctor`, 'prove the wiring fires, and what is behind'],
+    [`${CLI_NAME} <file> --budget 4000`, `smelt one file ${lava.dash()} the report says what went`],
+  ];
+}
 
 /** One toggle, as both the wizard prompt and the --yes summary spell it. */
 const onOff = (on: boolean): string => (on ? 'on' : 'off');
@@ -614,21 +618,22 @@ async function confirmAndInstall(
   for (const one of applied) io.output(sayApplied(one));
 
   for (const note of plan.notes) io.output(`note: ${note}\n`);
+  const lava = palette({ unicode: io.unicode !== false });
   io.output(
     doneBlock(
       {
         ok: true,
         what: `${CLI_NAME} hooks install`,
-        summary: countedFiles([
-          ...applied.map((one) => one.action),
-          ...plan.skipped.map(() => 'skipped' as const),
-        ]),
+        summary: countedFiles(
+          [...applied.map((one) => one.action), ...plan.skipped.map(() => 'skipped' as const)],
+          lava,
+        ),
         note:
           `Re-run \`${CLI_NAME} hooks install\` to edit toggles; ` +
           `\`${CLI_NAME} hooks remove\` takes it all back out.`,
-        next: INSTALLED_NEXT,
+        next: installedNext(lava),
       },
-      palette({ unicode: io.unicode !== false }),
+      lava,
     ),
   );
   return 'done';
@@ -693,6 +698,7 @@ async function removeFlow(
     }
     removed += 1;
   }
+  const lava = palette({ unicode: io.unicode !== false });
   io.output(
     doneBlock(
       {
@@ -709,7 +715,7 @@ async function removeFlow(
           [`${CLI_NAME} hooks install`, 'put the guard preset back'],
         ],
       },
-      palette({ unicode: io.unicode !== false }),
+      lava,
     ),
   );
   return 0;

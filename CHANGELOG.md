@@ -203,6 +203,12 @@ the guard was inert through the `opt` symlink besides — a re-run rewrites both
   empty store says so in one line instead of printing a page of zeroes.
 - **`smelt doctor` marks every line** — `✓`, `✗`, `⚠` — and sets the repair block apart
   from the findings it repairs. Same information, same sentences, no line removed.
+- **The ASCII fallback reaches the punctuation, on the pages this release added.** A
+  terminal whose locale never promised UTF-8 was already given `+`/`x`/`!` for the marks
+  and `-` for the rule, and then an em dash three bytes wide in the middle of the
+  sentence. The palette now owns that character too (`dash()`), so `smelt doctor`,
+  `smelt stats` and the four closing blocks carry nothing above ASCII at all where the
+  locale said so. smelt's prose keeps its em dash everywhere a terminal can render one.
 - **Every wizard ends with the same block.** `smelt setup`, `smelt hooks install`,
   `smelt hooks remove` and `smelt init` close on a lava rule, a verdict counted off what
   they actually applied (`wrote 2, skipped 2 — 4 files in all`), the one sentence that

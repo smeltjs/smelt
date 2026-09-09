@@ -721,16 +721,23 @@ function renderOutcome(outcome: ApplyOutcome, say: Say, unicode: boolean): boole
         ok,
         what: `${CLI_NAME} setup`,
         summary:
-          `${countedFiles(files.map((file) => file.action))}; ` +
-          `${String(passed)} of ${String(checks.length)} checks passed`,
+          `${countedFiles(
+            files.map((file) => file.action),
+            lava,
+          )}; ` + `${String(passed)} of ${String(checks.length)} checks passed`,
         ...(ok
           ? {}
           : {
-              note: 'A check did not pass — the lines above say which, and this run exits non-zero.',
+              note:
+                `A check did not pass ${lava.dash()} the lines above say which, ` +
+                `and this run exits non-zero.`,
             }),
         next: [
           [`${CLI_NAME} doctor`, 'read back what was written, and what is behind'],
-          [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
+          [
+            `${CLI_NAME} <file> --budget 4000`,
+            `smelt one file ${lava.dash()} the report says what went`,
+          ],
           [`${CLI_NAME} stats`, 'the store, once a run has put something in it'],
         ],
       },

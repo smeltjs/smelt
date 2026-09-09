@@ -298,6 +298,19 @@ export interface Palette {
   bar(fraction: number, width: number): string;
   /** A fraction as a percentage, never rounding a non-zero to zero. */
   percent(fraction: number): string;
+  /**
+   * The em dash smelt's prose is written with, or `-` where the terminal's locale never
+   * promised more than ASCII.
+   *
+   * A glyph, like the marks {@link glyph} answers for, and here for the same reason:
+   * `—` is 3 bytes of UTF-8 and a terminal that has not said it can render them shows
+   * mojibake. It is a *primitive*, not a policy — smelt's voice keeps its em dash, and
+   * a page composed through this one renders in whichever character set the reader's
+   * terminal actually has. {@link EM_DASH} is what it returns when unicode is on, which
+   * is also what folds a sentence composed somewhere else (a probe's detail, an
+   * orphan's) down to the same set.
+   */
+  dash(): string;
   /** An aligned `name   value` block. */
   kv(rows: readonly KvRow[], indent?: number): string;
   /** An aligned table with a header row. */
@@ -330,6 +343,16 @@ const ROLE_CODES: Readonly<Record<Role, string | number>> = {
   dim: CODE.dim,
   strong: CODE.bold,
 };
+
+/**
+ * The em dash, and its ASCII stand-in. Exported because it is also what a *fold* looks
+ * for: a sentence composed by a module with no palette in hand (a hook probe's detail,
+ * a doctor orphan) is folded to the terminal's character set by replacing this.
+ */
+export const EM_DASH = '\u2014';
+
+/** What an ASCII terminal gets in its place. Not `--`: one dash, one column. */
+const DASH_ASCII = '-';
 
 /** The two glyph sets, as one table so a third mark cannot be added to only one. */
 const GLYPHS: Readonly<Record<Glyph, { readonly unicode: string; readonly ascii: string }>> = {
@@ -397,6 +420,8 @@ export function palette(options: PaletteOptions = {}): Palette {
   const unicode = options.unicode !== false;
   const glyphOf = (glyph: Glyph): string => GLYPHS[glyph][unicode ? 'unicode' : 'ascii'];
 
+  const dash = (): string => (unicode ? EM_DASH : DASH_ASCII);
+
   const paint = (role: Role, text: string): string => {
     if (!on || text === '') return text;
     const code = ROLE_CODES[role];
@@ -411,8 +436,11 @@ export function palette(options: PaletteOptions = {}): Palette {
     paint,
     heading: (text) => paint('heading', text),
     glyph: (glyph) => paint(GLYPH_ROLE[glyph], glyphOf(glyph)),
+    dash,
     bar: (fraction, width) => renderBar(fraction, width, unicode, paint),
-    percent,
+    // The one place a percentage is not a number is the placeholder for a fraction that
+    // is not one, and that placeholder is a dash — so it is this palette's dash.
+    percent: (fraction) => (Number.isFinite(fraction) ? percent(fraction) : dash()),
     kv: (rows, indent = 2) => renderKv(rows, indent, paint),
     table: (spec) => renderTable(spec, paint),
     logo: () => renderLogo(depth, unicode),
@@ -478,7 +506,7 @@ export interface PaletteSource {
  * and the same in the other direction for a negative delta.
  */
 export function percent(fraction: number): string {
-  if (!Number.isFinite(fraction)) return '—';
+  if (!Number.isFinite(fraction)) return EM_DASH;
   const value = fraction * 100;
   if (value === 0) return '0.0%';
   if (value > 0 && value < 0.05) return '<0.1%';
@@ -682,7 +710,7 @@ const TALLY: Readonly<
  * not. The three wizards share it for the same reason they share the block: three
  * hand-counted summaries are three chances to say "wrote 4 files" about three.
  */
-export function countedFiles(actions: readonly FileAction[]): string {
+export function countedFiles(actions: readonly FileAction[], lava: Palette = PLAIN): string {
   const files = actions.length === 1 ? 'file' : 'files';
   const buckets = (Object.keys(TALLY) as FileAction[])
     .map((action) => ({ action, n: actions.filter((one) => one === action).length }))
@@ -694,7 +722,7 @@ export function countedFiles(actions: readonly FileAction[]): string {
   }
   return (
     `${buckets.map((bucket) => TALLY[bucket.action].beside(String(bucket.n))).join(', ')}` +
-    ` — ${String(actions.length)} ${files} in all`
+    ` ${lava.dash()} ${String(actions.length)} ${files} in all`
   );
 }
 

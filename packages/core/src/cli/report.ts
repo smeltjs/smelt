@@ -545,7 +545,7 @@ export function formatStatsReport(
 
   if (stats.elisionsStored === 0) {
     lines.push('');
-    lines.push('  nothing stored yet — no run has elided anything into this store.');
+    lines.push(`  nothing stored yet ${lava.dash()} no run has elided anything into this store.`);
     lines.push(`  ${CLI_NAME} <file> --budget 4000 fills it, and this page reports on it.`);
     return `${lines.join('\n')}\n`;
   }

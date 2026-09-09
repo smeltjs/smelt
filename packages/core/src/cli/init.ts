@@ -664,20 +664,24 @@ async function confirmAndWrite(
         `\`${CLI_NAME} doctor\` reports whether ${VOYAGE_DEFAULT_KEY_ENV} is set.\n`,
     );
   }
+  const lava = palette({ unicode: io.unicode !== false });
   io.output(
     doneBlock(
       {
         ok: true,
         what: `${CLI_NAME} init`,
-        summary: countedFiles(applied),
-        note: `${CONFIG_FILE_NAME} is defaults only — every flag still wins over it.`,
+        summary: countedFiles(applied, lava),
+        note: `${CONFIG_FILE_NAME} is defaults only ${lava.dash()} every flag still wins over it.`,
         next: [
           [`${CLI_NAME} setup`, 'wire the guard preset into the harness you use'],
-          [`${CLI_NAME} <file> --budget 4000`, 'smelt one file — the report says what went'],
+          [
+            `${CLI_NAME} <file> --budget 4000`,
+            `smelt one file ${lava.dash()} the report says what went`,
+          ],
           [`${CLI_NAME} doctor`, 'read back what is installed, and what is behind'],
         ],
       },
-      palette({ unicode: io.unicode !== false }),
+      lava,
     ),
   );
   return 'done';

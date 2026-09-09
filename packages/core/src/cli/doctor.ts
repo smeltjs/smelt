@@ -19,7 +19,7 @@ import {
 } from './config.ts';
 import type { SmeltConfig } from './config.ts';
 import { readInstalledState } from './installed.ts';
-import { PLAIN } from './lava.ts';
+import { EM_DASH, PLAIN } from './lava.ts';
 import type { Glyph, Palette } from './lava.ts';
 import { formatStoreSize } from './report.ts';
 import type {
@@ -213,7 +213,12 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
    * always printed, which is what the guards assert.
    */
   const line = (glyph: Glyph, text: string): void => {
-    say(`  ${lava.glyph(glyph)} ${text}\n`);
+    // Folded to the terminal's character set on the way out. Doctor's findings are
+    // sentences other modules composed — a probe's detail, an orphan's reason — and the
+    // page is where the character set is decided, exactly as it is where the colour is:
+    // a caller that read a fact has no business knowing what the reader's locale
+    // promised. `dash()` is the same primitive the composed lines below use.
+    say(`  ${lava.glyph(glyph)} ${text.replaceAll(EM_DASH, lava.dash())}\n`);
   };
   const orphans: string[] = [];
   const repair: string[] = [];
@@ -337,7 +342,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   // directory is what this line has always meant, and every byte of that prose stays
   // what it was.
   say(
-    `${lava.paint('brand', `${CLI_NAME} doctor`)} — binary ${lava.paint('number', io.version)}, ` +
+    `${lava.paint('brand', `${CLI_NAME} doctor`)} ${lava.dash()} binary ${lava.paint('number', io.version)}, ` +
       `reading ${lava.paint('path', root)}` +
       `${scope === 'user' ? ' (machine scope)' : ''}\n`,
   );
@@ -353,7 +358,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
             ? 'MALFORMED'
             : `schema ${String(config.schemaVersion)}, budget ${
                 config.budgetBytes === undefined ? 'unset' : String(config.budgetBytes)
-              }, store ${describeStore(config)}`
+              }, store ${describeStore(config, lava)}`
         }`,
       );
     } else {
@@ -371,7 +376,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       const file = hooks.find((one) => one.file === name);
       line(
         file === undefined ? 'ok' : PROBE_GLYPH[hookFileStatus(file)],
-        `${name}: ${describeWiring(file)}`,
+        `${name}: ${describeWiring(file, lava)}`,
       );
     }
     for (const one of state.mcp) {
@@ -412,7 +417,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     say(
       current
         ? `${lava.glyph('ok')} Current: everything on disk agrees with binary ${io.version}.\n`
-        : `${lava.glyph('bad')} Not current — see above. Doctor never writes; ` +
+        : `${lava.glyph('bad')} Not current ${lava.dash()} see above. Doctor never writes; ` +
             `${CLI_NAME} setup is the repair.\n`,
     );
   }
@@ -580,12 +585,14 @@ function hookFileStatus(file: DoctorHookFile): HookProbe['status'] {
  * probe behind it — a hook file whose entries were all somebody else's, or a
  * whole-owned file whose profile declares no way to ask it.
  */
-function describeWiring(file: DoctorHookFile | undefined): string {
+function describeWiring(file: DoctorHookFile | undefined, lava: Palette): string {
   if (file === undefined || file.entries.length === 0) return 'wired';
   const worst = file.entries.find((entry) => entry.probe.status === 'missing');
-  if (worst !== undefined) return `wired but missing — ${worst.script ?? worst.probe.detail}`;
+  if (worst !== undefined) {
+    return `wired but missing ${lava.dash()} ${worst.script ?? worst.probe.detail}`;
+  }
   const inert = file.entries.find((entry) => entry.probe.status === 'inert');
-  if (inert !== undefined) return `wired but inert — ${inert.probe.detail}`;
+  if (inert !== undefined) return `wired but inert ${lava.dash()} ${inert.probe.detail}`;
   return 'wired (verified)';
 }
 
@@ -593,13 +600,13 @@ function describeWiring(file: DoctorHookFile | undefined): string {
  * The store, as one clause of the config line. The size half is rendered from the two
  * receipt fields rather than counted here — one arithmetic, two surfaces.
  */
-function describeStore(config: DoctorConfig): string {
+function describeStore(config: DoctorConfig, lava: Palette): string {
   if (config.store.kind === undefined) return 'unset';
   if (config.store.kind === 'memory') return 'memory';
   const size =
     config.store.blobs === undefined || config.store.bytes === undefined
       ? ''
-      : ` — ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
+      : ` ${lava.dash()} ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
   return `directory at ${config.store.path ?? ''} (${
     config.store.dirExists ? 'present' : 'MISSING'
   })${size}`;
