@@ -285,9 +285,9 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'palette-pads-after-painting',
     file: 'cli/lava.ts',
-    find: "        .map((column, index) => paint(column.role ?? 'plain', lay(row[index] ?? '', index)))",
+    find: "      .map((column, index) => paint(column.role ?? 'plain', lay(row[index] ?? '', index)))",
     replace:
-      "        .map((column, index) => lay(paint(column.role ?? 'plain', row[index] ?? ''), index))",
+      "      .map((column, index) => lay(paint(column.role ?? 'plain', row[index] ?? ''), index))",
     why: 'a cell padded after it was painted — an escape sequence has zero width on screen and a dozen bytes in the string, so the column is padded to a width nobody can see and the table is ragged on the only machine that matters',
   },
 ];

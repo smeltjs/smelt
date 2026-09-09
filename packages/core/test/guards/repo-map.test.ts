@@ -1185,9 +1185,10 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'repomap-map-report-bytes-invented',
     file: 'cli/report.ts',
-    find: '    `bytes used ${group(map.outputBytes)} of ${group(map.budgetBytes)} budget (${budgetSource}) ` +',
-    replace:
-      '    `bytes used ${group(map.budgetBytes)} of ${group(map.budgetBytes)} budget (${budgetSource}) ` +',
+    // Re-anchored when the report started painting its numbers: the figure moved
+    // inside a palette role, and the mutation still wires it to the budget.
+    find: "    `bytes used ${lava.paint('number', group(map.outputBytes))} of ` +",
+    replace: "    `bytes used ${lava.paint('number', group(map.budgetBytes))} of ` +",
     why: "the map report's bytes-used figure wired to the budget — a budget-fitting report that always claims the budget spent, so the one number a human reads off `smelt map` stops being a measurement",
   },
   {
