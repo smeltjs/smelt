@@ -479,8 +479,8 @@ describe('an opt-in rerank adapter is resolved by a real loader', () => {
       // smelt searched. A user with a `$HOME` config and a global smelt could follow it
       // forever.
       expect(run.stderr).toContain('is not installed');
-      expect(run.stderr).toContain(`npm install --prefix ${cwd}`);
-      expect(run.stderr).toContain(cwd);
+      // The directory is quoted, so the command survives a path with a space in it.
+      expect(run.stderr).toContain(`npm install --prefix "${cwd}"`);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

@@ -32,6 +32,11 @@ import type { GuardMutation } from './_mutations.ts';
  *     specifier back to `import()` puts the adapter's name in a position the Law 1 walk
  *     reads as an edge, and resolves it from smelt's location again — the bug and the
  *     Law 1 arrangement break together, which is why they are guarded together.
+ *  5. **"Installed and unreachable" is not "not installed".** The question is asked
+ *     under Node's `require` conditions, so an adapter whose `exports` map answers only
+ *     `import` throws rather than answering — and a swallowed exception turns that into
+ *     an `npm install` for a package the reader already has, which they run, and which
+ *     changes nothing.
  *
  * No install and no network: an "installed" package below is a directory holding a
  * `package.json` and one file, which is all a resolver ever wanted from one.
@@ -49,6 +54,22 @@ function install(dir: string, name: string): string {
   );
   writeFileSync(join(home, 'index.js'), `export const id = '${dir}';\n`);
   return join(home, 'index.js');
+}
+
+/** The same, reachable only under the `import` condition — installed, and unloadable. */
+function installEsmOnly(dir: string, name: string): void {
+  const home = join(dir, 'node_modules', ...name.split('/'));
+  mkdirSync(home, { recursive: true });
+  writeFileSync(
+    join(home, 'package.json'),
+    `${JSON.stringify({
+      name,
+      version: '1.0.0',
+      type: 'module',
+      exports: { '.': { import: './index.js' } },
+    })}\n`,
+  );
+  writeFileSync(join(home, 'index.js'), `export const id = '${dir}';\n`);
 }
 
 describe('an opt-in adapter is looked for where the consumer could have installed it', () => {
@@ -122,13 +143,14 @@ describe('an opt-in adapter is looked for where the consumer could have installe
 
     expect(missing.found).toBe(false);
     if (missing.found) return;
-    expect(missing.why).toContain(missing.install);
+    expect(missing.reason).toBe('missing');
+    expect(missing.why).toContain(missing.install ?? '');
     // Both directories must be named as places that were *searched*, which is not the
     // same as appearing anywhere in the sentence: the install command carries the
     // config directory inside it, so a message that dropped "smelt looked beside …"
     // would still mention that path. The command is cut out before the check, so what
     // is left is the part that actually says where smelt looked.
-    const places = missing.why.split(missing.install).join('');
+    const places = missing.why.split(missing.install ?? '\u0000').join('');
     for (const named of [configDir, missing.ownDir]) {
       expect(
         places,
@@ -152,6 +174,31 @@ describe('an opt-in adapter is looked for where the consumer could have installe
     expect(missing.install).toContain('--prefix');
     expect(missing.install).toContain(configDir);
     expect(missing.install).toContain(PACKAGE);
+    // And the directory is quoted, because real paths have spaces in them — an
+    // unquoted `C:\\Users\\Jane Doe` is two arguments npm cannot use, and the reader
+    // cannot tell that from smelt being wrong about the directory.
+    expect(missing.install).toContain(`"${configDir}"`);
+  });
+
+  it('an installed-but-unreachable adapter is refused as that, with no install command', () => {
+    // `createRequire(...).resolve()` asks under Node's `require` conditions. A package
+    // whose `exports` map answers only `import` is *there* and unloadable this way, and
+    // saying "not installed" sends the reader to run a command that changes nothing.
+    installEsmOnly(configDir, PACKAGE);
+
+    const blocked = resolveAdapter(PACKAGE, configPath(), { ownRequire });
+
+    expect(blocked.found).toBe(false);
+    if (blocked.found) return;
+    expect(
+      blocked.reason,
+      'an adapter that is installed and cannot be reached under the `require` ' +
+        'conditions this resolver asks with was reported as absent. The two have ' +
+        'different fixes, and only one of them is an install.',
+    ).toBe('unreachable');
+    expect(blocked.install).toBeUndefined();
+    expect(blocked.why).not.toContain('npm install');
+    expect(blocked.why).toContain(configDir);
   });
 
   it('hands back a file: URL, never the package name', () => {
@@ -181,15 +228,15 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'adapter-resolver-skips-the-config-dir',
     file: 'rerank/resolve.ts',
-    find: 'const beside = tryResolve(createRequire(resolvePath(configPath)), name);',
-    replace: 'const beside = tryResolve(io.ownRequire ?? ownRequireDefault, name);',
+    find: 'const beside = probe(createRequire(resolvePath(configPath)), name);',
+    replace: 'const beside = probe(io.ownRequire ?? ownRequireDefault, name);',
     why: 'the resolver asking smelt’s own location twice instead of the config file’s directory — the original bug exactly, and it is invisible in a project-local checkout where the two are the same place, which is why it shipped',
   },
   {
     id: 'adapter-resolver-drops-its-own-install',
     file: 'rerank/resolve.ts',
-    find: 'const own = tryResolve(io.ownRequire ?? ownRequireDefault, name);',
-    replace: 'const own = undefined;',
+    find: 'const own = probe(io.ownRequire ?? ownRequireDefault, name);',
+    replace: "const own = { kind: 'missing' };",
     why: 'the fallback dropped while adding the new first choice — a project that installed the adapter beside @smeltjs/core would start being refused for a package it has',
   },
   {
@@ -200,9 +247,23 @@ export const MUTATIONS: GuardMutation[] = [
     why: 'a refusal that names smelt’s own install and not the config file’s directory — the shape of the original message, which sent the reader to install into a directory smelt does not search',
   },
   {
+    id: 'adapter-resolver-hands-back-the-bare-name',
+    file: 'rerank/resolve.ts',
+    find: "return { found: true, url: pathToFileURL(beside.path).href, from: 'config' };",
+    replace: "return { found: true, url: name, from: 'config' };",
+    why: 'the package name handed back where the file: URL belongs — `import()` of a bare specifier is an edge the Law 1 walk follows and a bundler resolves, and it resolves from smelt’s own location, so the search this module exists for is undone and the adapter is back in the graph by the same edit',
+  },
+  {
+    id: 'adapter-esm-only-package-reported-as-absent',
+    file: 'rerank/resolve.ts',
+    find: "if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_PACKAGE_IMPORT_NOT_DEFINED') {",
+    replace: "if (code === 'ERR_NOTHING_EVER_THROWS_THIS') {",
+    why: 'the resolver swallowing “installed, and not reachable under require conditions” into “not installed” — the reader is handed an npm install for a package they already have, runs it, and is told the same thing again',
+  },
+  {
     id: 'adapter-install-command-forgets-the-prefix',
     file: 'rerank/resolve.ts',
-    find: 'return `npm install --prefix ${dir} ${name}`;',
+    find: 'return `npm install --prefix "${dir}" ${name}`;',
     replace: 'return `npm install ${name}`;',
     why: '`npm install <pkg>` installs into whatever directory the shell is in, which is the one place the resolver never looks — a repair command that cannot repair anything is worse than none, because the reader believes they tried',
   },

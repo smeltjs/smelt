@@ -106,7 +106,18 @@ describe('Law 1 — zero network', () => {
       minEdges: 15,
       // The modules with the most dangerous surface must be in the walk, by name: the
       // policy itself, the grammar loader, and the CLI's argument handling.
-      mustVisit: ['index.ts', 'net/policy.ts', 'plan/grammar.ts', 'cli/args.ts', 'cli/run.ts'],
+      mustVisit: [
+        'index.ts',
+        'net/policy.ts',
+        'plan/grammar.ts',
+        // The other `createRequire` in the tree, beside the grammar loader: it turns an
+        // adapter package's name into a path, and a walk that stopped reaching it would
+        // stop watching the module whose whole job is to keep the adapter's name out of
+        // an `import()`.
+        'rerank/resolve.ts',
+        'cli/args.ts',
+        'cli/run.ts',
+      ],
     },
     messages: {
       violation: 'Law 1 violation: smelt v1 makes zero network calls',

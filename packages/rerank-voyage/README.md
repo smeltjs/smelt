@@ -21,10 +21,18 @@ environment variable this package reads on its own.
 
 ## Install and configure
 
+Install it **beside the `smelt.config.json` that asks for it**: smelt looks in that
+file's own directory first and in its own install second, so a `~/smelt.config.json`
+works with a `smelt` from Homebrew or `npm -g`.
+
 ```sh
-npm install @smeltjs/rerank-voyage
+npm install @smeltjs/rerank-voyage                  # config at your project root
+npm install --prefix ~ @smeltjs/rerank-voyage       # config at ~/smelt.config.json
 export VOYAGE_API_KEY=...
 ```
+
+If it is in neither place, smelt refuses and names both directories and the exact
+command for yours.
 
 ```json
 {
@@ -33,6 +41,16 @@ export VOYAGE_API_KEY=...
   "rerank": { "kind": "voyage", "model": "rerank-2.5", "apiKeyEnv": "VOYAGE_API_KEY", "topK": 8 }
 }
 ```
+
+### The adapter contract: `default` or `require`
+
+smelt asks where an adapter is with `createRequire(...).resolve()`, so **an adapter's
+`exports` map must reach its entry under a `default` or a `require` condition** — this
+package states `default`, and any adapter written against the same seam should. A package
+that exports only an `import` condition is _installed and unreachable_, which smelt
+reports as exactly that rather than telling you to install it again. A dual package
+resolves to its `require` entry, so an adapter whose two builds differ in behaviour has
+to say so here.
 
 `smelt init` writes that block for you if you answer `voyage` at the reranker step, and
 `smelt doctor` tells you whether `VOYAGE_API_KEY` is set (presence only — never the

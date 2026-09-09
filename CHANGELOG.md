@@ -30,20 +30,32 @@ the runner rather than by hand.
   path rule the schema promises). It resolves and never imports — what comes back is a
   `file:` URL, so the specifier at every `import()` is still a value and Law 1's walk still
   finds no edge to an adapter; the zero-network guard's literal-specifier mutation is
-  re-anchored to the new call shape and still goes red.
-  `test/guards/adapter-resolver.test.ts` holds the order, the fallback, the one-message
-  refusal and the `file:` URL, with four mutations.
-- **`smelt doctor` says where the adapter is.** The rerank line now carries
-  `adapter from config dir`, `adapter from smelt's own install`, or
-  `adapter not installed:` with the install command for your config's directory — asked
-  through the same resolver a run uses, and resolving only: nothing is imported to answer
-  it. `smelt.doctor.v1` gains `rerank.adapterFrom` and `rerank.install`, exactly one of the
-  two and both optional; no existing field changed spelling or meaning, and the key's
-  _value_ still never appears. A configured `voyage` opt-in whose adapter is in neither
-  place is an orphan with that command as its repair — the same treatment an unset key
-  already had, for the same reason: every run that would rerank refuses instead.
+  re-anchored to the new call shape and still goes red, and `rerank/resolve.ts` joined that
+  guard's `mustVisit`. The question is asked under Node's `require` conditions, so the
+  adapter contract is now written down: an adapter's `exports` map must answer under
+  `default` or `require`, and one that answers only `import` is refused as **installed and
+  unreachable** — a distinct refusal with no install command, because installing it again
+  would change nothing. `test/guards/adapter-resolver.test.ts` holds the order, the
+  fallback, the one-message refusal, the `file:` URL and that distinction, with six
+  mutations. The install command quotes its directory, so it survives a path with a space
+  in it.
+- **`smelt doctor` says where the adapter is, and reads the `module` kind by the loader's
+  rule.** The rerank line now carries `adapter from config dir`,
+  `adapter from smelt's own install`, `adapter not installed:` with the install command for
+  your config's directory, or `adapter installed but not loadable` — asked through the same
+  resolver a run uses, and resolving only: nothing is imported to answer it.
+  `{"kind":"module","path":"my-reranker"}` is a config every run loads and doctor reported
+  as a missing file, orphan and exit 3, because it asked `existsSync` where the loader asks
+  for a file **or** a package; it now asks the loader's question, absolute paths included.
+  `smelt.doctor.v1` gains `rerank.adapterFrom`, `rerank.adapterProblem` and
+  `rerank.install`, all optional; no existing field changed spelling or meaning, and the
+  key's _value_ still never appears. A configured opt-in whose adapter is in neither place
+  is an orphan with that command as its repair — the same treatment an unset key already
+  had, for the same reason: every run that would rerank refuses instead. An installed but
+  unreachable one is an orphan with no repair command, because there is no command that
+  would repair it.
 - **`smelt init`'s voyage answer prints a command that can work**:
-  `npm install --prefix <dir> @smeltjs/rerank-voyage` for the directory it is writing the
+  `npm install --prefix "<dir>" @smeltjs/rerank-voyage` for the directory it is writing the
   config into, rather than a bare `npm install` that lands wherever the reader's shell
   happens to be.
 

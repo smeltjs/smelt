@@ -139,7 +139,7 @@ describe('a fresh run', () => {
     // and the install command names the directory this config is being written into,
     // which is where a run looks first. A bare `npm install <pkg>` would install into
     // whatever directory the reader's shell happens to be in.
-    expect(output).toContain(`npm install --prefix ${dir} @smeltjs/rerank-voyage`);
+    expect(output).toContain(`npm install --prefix "${dir}" @smeltjs/rerank-voyage`);
     expect(output).toContain('export VOYAGE_API_KEY=');
     // And never a key: the wizard names the variable and reads nothing.
     expect(readFileSync(join(dir, CONFIG_FILE_NAME), 'utf8')).not.toContain('apiKey"');

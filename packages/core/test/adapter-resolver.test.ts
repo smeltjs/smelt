@@ -33,6 +33,25 @@ function installFake(dir: string, name: string, marker: string): string {
   return join(home, 'index.js');
 }
 
+/**
+ * The same package, reachable only under the `import` condition — which is what a great
+ * many ESM-only packages publish, and what `createRequire(...).resolve()` cannot answer.
+ */
+function installEsmOnly(dir: string, name: string): void {
+  const home = join(dir, 'node_modules', ...name.split('/'));
+  mkdirSync(home, { recursive: true });
+  writeFileSync(
+    join(home, 'package.json'),
+    `${JSON.stringify({
+      name,
+      version: '1.0.0',
+      type: 'module',
+      exports: { '.': { import: './index.js' } },
+    })}\n`,
+  );
+  writeFileSync(join(home, 'index.js'), `export const marker = 'esm-only';\n`);
+}
+
 describe('resolveAdapter: the config file’s directory first, smelt’s own install second', () => {
   let configDir: string;
   let coreDir: string;
@@ -98,13 +117,16 @@ describe('resolveAdapter: the config file’s directory first, smelt’s own ins
 
     expect(missing.found).toBe(false);
     if (missing.found) return;
+    expect(missing.reason).toBe('missing');
     expect(missing.configDir).toBe(configDir);
-    expect(missing.install).toBe(`npm install --prefix ${configDir} ${PACKAGE}`);
+    // The directory is quoted: real paths have spaces in them, and an unquoted one
+    // makes the command smelt printed two arguments npm cannot use.
+    expect(missing.install).toBe(`npm install --prefix "${configDir}" ${PACKAGE}`);
     // Both places, in one sentence — a refusal that named only one of them would send
     // the reader to install into the directory that was not the problem.
     expect(missing.why).toContain(configDir);
     expect(missing.why).toContain(missing.ownDir);
-    expect(missing.why).toContain(missing.install);
+    expect(missing.why).toContain(missing.install ?? '');
   });
 
   it('hands back a file: URL, so a Windows path shape is a legal import specifier', () => {
@@ -129,6 +151,49 @@ describe('resolveAdapter: the config file’s directory first, smelt’s own ins
     const loaded = (await import(found.url)) as { marker: string };
 
     expect(loaded.marker).toBe('from-config');
+  });
+
+  it('an ESM-only package is “installed and unreachable”, not “not installed”', () => {
+    // The refusal that would otherwise be a lie. `createRequire(...).resolve()` asks
+    // under Node's `require` conditions, so a package whose `exports` map answers only
+    // `import` throws — and swallowing that into "not installed" hands the reader an
+    // `npm install` for a package they already have, which they run, and which changes
+    // nothing.
+    installEsmOnly(configDir, PACKAGE);
+
+    const blocked = resolveAdapter(PACKAGE, configPath, { ownRequire: ownRequire() });
+
+    expect(blocked.found).toBe(false);
+    if (blocked.found) return;
+    expect(blocked.reason).toBe('unreachable');
+    expect(blocked.install, 'an install command for a package that is installed').toBeUndefined();
+    expect(blocked.why).toContain(configDir);
+    expect(blocked.why).toContain('installed at');
+    expect(blocked.why).toContain('require');
+    expect(blocked.why).not.toContain('npm install');
+  });
+
+  it('says which of the two directories holds the unreachable copy', () => {
+    installEsmOnly(coreDir, PACKAGE);
+
+    const blocked = resolveAdapter(PACKAGE, configPath, {
+      ownRequire: {
+        resolve: (specifier: string) => {
+          // The seam stands in for smelt's own `require`, so it must fail the way one
+          // does: with Node's own code, not a bare Error.
+          const error: Error & { code?: string } = new Error(
+            `No "exports" main defined in ${join(coreDir, 'node_modules', specifier, 'package.json')}`,
+          );
+          error.code = 'ERR_PACKAGE_PATH_NOT_EXPORTED';
+          throw error;
+        },
+      },
+    });
+
+    expect(blocked.found).toBe(false);
+    if (blocked.found) return;
+    expect(blocked.reason).toBe('unreachable');
+    expect(blocked.why).toContain(blocked.ownDir);
   });
 
   it('names smelt’s own install by its package directory, never by a module file', () => {

@@ -783,11 +783,18 @@ describe('loading a stage from a config block', () => {
       join(home, 'package.json'),
       `${JSON.stringify({ name: 'my-reranker', version: '1.0.0', type: 'module', main: 'i.js' })}\n`,
     );
-    writeFileSync(join(home, 'i.js'), `export default { id: 'p/v1', rerank: async () => [] };\n`);
+    // The stage says which module answered, because `stage.id` cannot: attribution is
+    // stamped from the config's own path, so it reads `module/my-reranker` whichever
+    // file was loaded — an assertion on it alone would pass without a resolver at all.
+    writeFileSync(
+      join(home, 'i.js'),
+      `export default { id: 'p/v1', rerank: async () => [{ id: 'from-package' }] };\n`,
+    );
 
     const stage = await load({ kind: 'module', path: 'my-reranker' });
 
     expect(stage?.id).toBe('module/my-reranker');
+    expect(await stage?.rerank([], 'q')).toEqual([{ id: 'from-package' }]);
   });
 
   it('a file beside the config still wins over a package of the same name', async () => {
@@ -799,13 +806,22 @@ describe('loading a stage from a config block', () => {
       join(home, 'package.json'),
       `${JSON.stringify({ name: 'ranker.mjs', version: '1.0.0', type: 'module', main: 'i.js' })}\n`,
     );
-    writeFileSync(join(home, 'i.js'), `export default { id: 'pkg', rerank: async () => [] };\n`);
+    // Same `id` on both, so the attribution cannot do the work: `module/ranker.mjs` is
+    // stamped from the config path whichever of the two answered. What each one
+    // *returns* is the only thing that tells them apart.
+    writeFileSync(
+      join(home, 'i.js'),
+      `export default { id: 'same', rerank: async () => [{ id: 'from-package' }] };\n`,
+    );
     writeFileSync(
       join(dir, 'ranker.mjs'),
-      `export default { id: 'file', rerank: async () => [] };\n`,
+      `export default { id: 'same', rerank: async () => [{ id: 'from-file' }] };\n`,
     );
 
-    expect((await load({ kind: 'module', path: 'ranker.mjs' }))?.id).toBe('module/ranker.mjs');
+    const stage = await load({ kind: 'module', path: 'ranker.mjs' });
+
+    expect(stage?.id).toBe('module/ranker.mjs');
+    expect(await stage?.rerank([], 'q')).toEqual([{ id: 'from-file' }]);
   });
 
   it('a bare path that is neither a file nor a package names both, and the "./" fix', async () => {

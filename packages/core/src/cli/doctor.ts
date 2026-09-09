@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { probeHookCommand, probeOwnFile } from '../harness/hook-command.ts';
 import type { HookCommand, HookProbe } from '../harness/hook-command.ts';
@@ -10,7 +10,7 @@ import { harnessById } from '../harness/registry.ts';
 import { resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
 import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
-import { originLabel, resolveAdapter } from '../rerank/resolve.ts';
+import { isBareSpecifier, originLabel, resolveAdapter } from '../rerank/resolve.ts';
 import { readStoreSize } from '../store-dir.ts';
 
 import {
@@ -167,16 +167,28 @@ export interface DoctorRerank {
   readonly keyEnv?: string;
   /** Whether that variable is set. Presence only — never the value. */
   readonly keySet?: boolean;
-  /** For `module`: whether the file the config points at exists. */
+  /**
+   * For `module`: whether the module the config names is **there** — as a file beside
+   * the config, or, for a bare specifier, as an installed package. The `module` kind
+   * takes either (see `rerank/resolve.ts`), so a receipt that only ever asked about a
+   * file reported a loadable config as broken.
+   */
   readonly moduleExists?: boolean;
   /**
-   * For `voyage`: which of the two directories the adapter package resolved from —
-   * `'config'` for the one holding `smelt.config.json`, `'core'` for smelt's own
-   * install. Absent when it resolved from neither, which is when {@link install} is
-   * there instead. Presence only: nothing is imported to answer this.
+   * Which of the two directories the adapter package resolved from — `'config'` for the
+   * one holding `smelt.config.json`, `'core'` for smelt's own install. Absent when it
+   * resolved from neither, and absent for a `module` kind that named a file rather than
+   * a package. Presence only: nothing is imported to answer this.
    */
   readonly adapterFrom?: 'config' | 'core';
-  /** For `voyage`: the command that installs the adapter. Absent when it is installed. */
+  /**
+   * Why the adapter package could not be resolved: `'missing'` (in neither place, and
+   * {@link install} says what to run) or `'unreachable'` (installed, and its `exports`
+   * map answers under neither `default` nor `require`, so no install command would help).
+   * Absent when it resolved, and absent for a `module` kind that named a file.
+   */
+  readonly adapterProblem?: 'missing' | 'unreachable';
+  /** The command that installs the adapter. Present only with `adapterProblem: 'missing'`. */
   readonly install?: string;
 }
 
@@ -314,16 +326,25 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       // switched on here, and does it have what it needs?" must be answerable without
       // running anything. Presence of the key only — never the key.
       rerank = readRerank(parsed.rerank, configPath, io.env ?? {});
-      if (rerank?.install !== undefined) {
+      if (rerank?.adapterProblem === 'missing') {
         // The same class of failure as an unset key, and the one this receipt could
         // not report at all before: the opt-in is written down, the adapter is in
         // neither place smelt looks, and every run that would rerank refuses.
         orphans.push(
-          `rerank is configured (${rerank.adapter}) but ${RERANK_VOYAGE_PACKAGE} is not ` +
-            `installed in the config's directory or in smelt's own — every run that ` +
-            `would rerank refuses instead`,
+          `rerank is configured (${rerank.adapter}) but its adapter package is installed ` +
+            `in neither the config's directory nor smelt's own — every run that would ` +
+            `rerank refuses instead`,
         );
-        repair.push(rerank.install);
+        if (rerank.install !== undefined) repair.push(rerank.install);
+      }
+      if (rerank?.adapterProblem === 'unreachable') {
+        // No repair command: the package is there, and the fix is a condition in its own
+        // "exports" map. A command that reinstalls it would be a command that changes
+        // nothing, printed under a heading that says it repairs.
+        orphans.push(
+          `rerank is configured (${rerank.adapter}) but its ${UNREACHABLE_LINE} — every ` +
+            `run that would rerank refuses instead`,
+        );
       }
       if (rerank?.keySet === false) {
         orphans.push(
@@ -332,7 +353,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
         );
         repair.push(`export ${rerank.keyEnv ?? ''}=...`);
       }
-      if (rerank?.moduleExists === false) {
+      if (rerank?.moduleExists === false && rerank.adapterProblem === undefined) {
         orphans.push(
           `rerank points at ${rerank.adapter.replace('module/', '')}, which does not exist — ` +
             `every run that would rerank refuses instead`,
@@ -425,7 +446,9 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
     }
     if (rerank !== undefined) {
       line(
-        rerank.keySet === false || rerank.moduleExists === false || rerank.install !== undefined
+        rerank.keySet === false ||
+          rerank.moduleExists === false ||
+          rerank.adapterProblem !== undefined
           ? 'bad'
           : 'ok',
         `rerank: ${rerank.adapter}` +
@@ -525,21 +548,56 @@ function readRerank(
     return {
       kind: 'module',
       adapter: `module/${configured.path}`,
-      moduleExists: existsSync(join(dirname(configPath), configured.path)),
+      ...readModule(configured.path, configPath),
     };
   }
   const keyEnv = configured.apiKeyEnv ?? VOYAGE_DEFAULT_KEY_ENV;
   const key = env[keyEnv];
-  // Where the adapter would come from, asked through the same resolver a run uses so
-  // the two cannot disagree. It resolves; it does not import — nothing an adapter
-  // package would do on load happens because somebody ran `smelt doctor`.
-  const adapter = resolveAdapter(RERANK_VOYAGE_PACKAGE, configPath);
   return {
     kind: 'voyage',
     adapter: `voyage/${configured.model ?? VOYAGE_DEFAULT_MODEL}`,
     keyEnv,
     keySet: key !== undefined && key !== '',
-    ...(adapter.found ? { adapterFrom: adapter.from } : { install: adapter.install }),
+    ...readAdapter(RERANK_VOYAGE_PACKAGE, configPath),
+  };
+}
+
+/**
+ * The `module` kind's presence, by the loader's own rule rather than a second one.
+ *
+ * `moduleUrl` in `rerank/load.ts` takes a file beside the config first and a bare
+ * specifier as a package second, so a reader that only ever asked `existsSync` reported
+ * `{"kind":"module","path":"my-reranker"}` — a config a run loads without complaint —
+ * as an orphan at exit 3. The path arithmetic is the loader's too: absolute means
+ * absolute, and everything else resolves against the config file's directory.
+ */
+function readModule(
+  path: string,
+  configPath: string,
+): Pick<DoctorRerank, 'moduleExists' | 'adapterFrom' | 'adapterProblem' | 'install'> {
+  const file = isAbsolute(path) ? path : resolve(dirname(configPath), path);
+  if (existsSync(file)) return { moduleExists: true };
+  if (!isBareSpecifier(path)) return { moduleExists: false };
+  const found = readAdapter(path, configPath);
+  return { moduleExists: found.adapterFrom !== undefined, ...found };
+}
+
+/**
+ * Where an adapter package would come from, asked through the resolver a run uses so
+ * that doctor and the loader cannot disagree.
+ *
+ * It resolves; it does not import. Nothing an adapter package would do on load happens
+ * because somebody ran `smelt doctor`.
+ */
+function readAdapter(
+  name: string,
+  configPath: string,
+): Pick<DoctorRerank, 'adapterFrom' | 'adapterProblem' | 'install'> {
+  const adapter = resolveAdapter(name, configPath);
+  if (adapter.found) return { adapterFrom: adapter.from };
+  return {
+    adapterProblem: adapter.reason,
+    ...(adapter.install === undefined ? {} : { install: adapter.install }),
   };
 }
 
@@ -552,10 +610,24 @@ function readRerank(
  * is a problem — which is why the missing case is the one that carries a command.
  */
 function adapterWhere(rerank: DoctorRerank): string {
-  if (rerank.install !== undefined) return ` — adapter not installed: ${rerank.install}`;
-  if (rerank.adapterFrom === undefined) return '';
-  return ` — adapter ${originLabel(rerank.adapterFrom)}`;
+  if (rerank.adapterFrom !== undefined) return ` — adapter ${originLabel(rerank.adapterFrom)}`;
+  if (rerank.adapterProblem === 'missing') {
+    return ` — adapter not installed: ${rerank.install ?? ''}`;
+  }
+  if (rerank.adapterProblem === 'unreachable') return ` — ${UNREACHABLE_LINE}`;
+  return '';
 }
+
+/**
+ * The `unreachable` state in one line, and why it carries no command.
+ *
+ * The package is there. `npm install` would put the same bytes in the same place and
+ * doctor would say this again, so the repair is in the adapter's own `exports` map —
+ * naming a command here would be naming one the reader has already run.
+ */
+const UNREACHABLE_LINE =
+  'adapter installed but not loadable: its "exports" map answers under neither ' +
+  '`default` nor `require`';
 
 /** The verdict over one block: whole-owned files carry no stamp to compare. */
 function blockStatus(block: InstalledBlock, binaryVersion: string): DoctorBlock['status'] {

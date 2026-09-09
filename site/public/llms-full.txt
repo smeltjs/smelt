@@ -836,7 +836,14 @@ npm install @smeltjs/rerank-voyage               # for a config at your project 
 ```
 
 If it is in neither place, the refusal names both of them and the exact command for
-yours.
+yours. Reading the config's directory is the same trust you already gave that file: a
+`smelt.config.json` chooses code smelt imports the moment it uses the `module` kind, and
+nothing is loaded from either directory unless the config carries a `rerank` block —
+nor does anything leave your machine until the environment variable it names is set.
+
+An adapter's `exports` map must reach its entry under `default` or `require` (smelt asks
+through `createRequire`). One that answers only `import` is reported as _installed and
+unreachable_ rather than missing, because installing it again would change nothing.
 
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
@@ -860,7 +867,10 @@ rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept)
 The same three facts ride in the `--json` envelope (`result.rerank`) and in
 `smelt_file`'s report block, and `smelt doctor` says whether your key variable is set and
 where the adapter resolved from (`adapter from config dir`, `adapter from smelt's own
-install`, or `adapter not installed:` with the command) — presence only, never the value.
+install`, `adapter not installed:` with the command, or `adapter installed but not
+loadable`) — presence only, never the value. It reads the `module` kind by the same rule
+the loader uses, so a config naming a package rather than a file is not reported as a
+missing file.
 
 Writing your own stage is unchanged:
 
@@ -1573,10 +1583,21 @@ skipped?}`) on `SmeltResult`, which the stderr report, the `--json` envelope and
   directory nobody installs into, and then named `npm install <pkg>`, which installs
   into neither place it had searched. Both kinds use it — `voyage` with the package name
   from `net/policy.ts`, `module` for a **bare** specifier that names no file beside the
-  config (a relative or absolute path keeps the path rule the schema promises). It is
-  asked by `smelt doctor` too, which is why it refuses without throwing: a report line,
-  not an exception. _Avoid_: "where smelt is installed" as a synonym for where an adapter is —
-  the whole point is that they are two directories.
+  config (a relative or absolute path keeps the path rule the schema promises).
+  It is asked by `smelt doctor` too, which is why it refuses without throwing: a report
+  line, not an exception. **The condition set is part of the adapter contract**: the
+  question goes through `createRequire`, so an adapter's `exports` map must answer under
+  `default` or `require`; one that answers only `import` is _installed and unreachable_
+  — a second, distinct refusal, and it offers no install command because installing it
+  again changes nothing. **On trust**: reading the config directory's `node_modules` is
+  not a new trust. A `smelt.config.json` already chooses code smelt imports — that is
+  the whole of the `module` kind — so a file that can name a path to import can name a
+  package beside itself; and the reach this widens (a global `smelt` finding an adapter
+  in a repository somebody cloned) is bounded by the gate it always had: nothing is
+  loaded unless that config carries a `rerank` block, and nothing leaves the machine
+  unless the environment variable that config names is set. _Avoid_: "where smelt is
+  installed" as a synonym for where an adapter is — the whole point is that they are two
+  directories.
 - **guard-kit**: the guards' shared machine — `packages/guard-kit`, test-only,
   `private: true`, never published and never more than a devDependency. It owns the
   import-graph **walker** (`walkImportGraph`, `assertNoNetwork`) that both packages'
@@ -1940,7 +1961,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/src/types.ts`                | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `RerankAttribution`, `DistillStage`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `packages/core/src/rerank/protect.ts`       | The rerank **slot**: between the planner's decision and the cut. The candidates are the planner's own proposed elisions; what a stage returns is what is spared, never added — and every way it can fail, throwing included, becomes a `RerankStageError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `packages/core/src/rerank/load.ts`          | A `rerank` config block to a live stage. `undefined` in, `undefined` out; the opt-in adapter package is loaded by computed specifier and imported by nothing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `packages/core/src/rerank/resolve.ts`       | The **adapter resolver**: where an opt-in adapter package is looked for. The config file's own directory first, smelt's own install second, and otherwise one refusal naming both places and `npm install --prefix <configDir> <name>`. Resolves and never imports — what comes back is a `file:` URL, so the specifier at every `import()` stays a value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `packages/core/src/rerank/resolve.ts`       | The **adapter resolver**: where an opt-in adapter package is looked for. The config file's own directory first, smelt's own install second, and otherwise one refusal — `missing`, with `npm install --prefix "<configDir>" <name>`, or `unreachable` for a package that is installed and whose `exports` map answers under neither `default` nor `require`, which no install would fix. Resolves and never imports — what comes back is a `file:` URL, so the specifier at every `import()` stays a value.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `packages/core/src/errors.ts`               | Every error is a `SmeltError`, so callers can tell "the library said no" from "something broke".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `packages/core/src/hash.ts`                 | 16 hex chars of sha256. Short because the hash goes in every marker and the model pays for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `packages/core/src/detect.ts`               | Extension → language. `'unknown'` is a first-class answer, not a failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -2011,7 +2032,7 @@ digit for the tally appears anywhere in this document.
 
 | Guard                                                   | What it guards                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core/test/guards/adapter-resolver.test.ts`    | Where an opt-in rerank adapter is looked for: the config file's own directory first, smelt's own install second, and one refusal naming both places plus `npm install --prefix <configDir> <name>`. A user-scope config with a global `smelt` used to search a Homebrew keg and then name a command that installs somewhere neither — the resolver asking its own location twice, dropping the fallback, naming one place, or losing the `--prefix` all go red. What comes back is a `file:` URL, never the package name, which is the Law 1 half of the same value.                                                                                                                              |
+| `packages/core/test/guards/adapter-resolver.test.ts`    | Where an opt-in rerank adapter is looked for: the config file's own directory first, smelt's own install second, and one refusal naming both places plus a quoted `npm install --prefix`. A user-scope config with a global `smelt` used to search a Homebrew keg and then name a command that installs somewhere neither — the resolver asking its own location twice, dropping the fallback, naming one place, losing the `--prefix`, handing back the bare name instead of a `file:` URL, or swallowing "installed but unreachable under `require` conditions" into "not installed" all go red.                                                                                                |
 | `packages/core/test/guards/agents-lint.test.ts`         | Every claim `smelt agents` makes about somebody's instruction files. Each rule fires on its own fixture and no other rule is quietly doing the work; `dead-path` resolves against the real tree, counted call by call at the reader; the budget is the user's and there is no default; a mirror is not a level in the merged sum; every finding carries a published rule id, an explanation and an attribution; `--strict` is the only thing that turns a finding into a failure; and `split` neither overwrites without a per-file yes nor mints the finding it then reports.                                                                                                                    |
 | `packages/core/test/guards/auto-strategy.test.ts`       | The `auto` strategy's two promises: every plan it returns carries the id of the planner that actually ran (never `auto/v1`), and a grammar that will not load comes back as `GrammarUnavailableError` rather than as line windows. The selector relabelling the plan it delegated, and the selector degrading into a `catch`-and-fall-back, both go red.                                                                                                                                                                                                                                                                                                                                          |
 | `packages/core/test/guards/bench-results.test.ts`       | The harness's honesty: `RESULTS.md` rows carry date + corpus commit + tier (and model where required), stay append-only, never say "up to"; network shapes confined to `tier2.mjs`/`tier3.mjs`; `bench/` never enters the published `files` list.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -3663,10 +3684,18 @@ environment variable this package reads on its own.
 
 ## Install and configure
 
+Install it **beside the `smelt.config.json` that asks for it**: smelt looks in that
+file's own directory first and in its own install second, so a `~/smelt.config.json`
+works with a `smelt` from Homebrew or `npm -g`.
+
 ```sh
-npm install @smeltjs/rerank-voyage
+npm install @smeltjs/rerank-voyage                  # config at your project root
+npm install --prefix ~ @smeltjs/rerank-voyage       # config at ~/smelt.config.json
 export VOYAGE_API_KEY=...
 ```
+
+If it is in neither place, smelt refuses and names both directories and the exact
+command for yours.
 
 ```json
 {
@@ -3675,6 +3704,16 @@ export VOYAGE_API_KEY=...
   "rerank": { "kind": "voyage", "model": "rerank-2.5", "apiKeyEnv": "VOYAGE_API_KEY", "topK": 8 }
 }
 ```
+
+### The adapter contract: `default` or `require`
+
+smelt asks where an adapter is with `createRequire(...).resolve()`, so **an adapter's
+`exports` map must reach its entry under a `default` or a `require` condition** — this
+package states `default`, and any adapter written against the same seam should. A package
+that exports only an `import` condition is _installed and unreachable_, which smelt
+reports as exactly that rather than telling you to install it again. A dual package
+resolves to its `require` entry, so an adapter whose two builds differ in behaviour has
+to say so here.
 
 `smelt init` writes that block for you if you answer `voyage` at the reranker step, and
 `smelt doctor` tells you whether `VOYAGE_API_KEY` is set (presence only — never the

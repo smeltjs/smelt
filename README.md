@@ -826,7 +826,14 @@ npm install @smeltjs/rerank-voyage               # for a config at your project 
 ```
 
 If it is in neither place, the refusal names both of them and the exact command for
-yours.
+yours. Reading the config's directory is the same trust you already gave that file: a
+`smelt.config.json` chooses code smelt imports the moment it uses the `module` kind, and
+nothing is loaded from either directory unless the config carries a `rerank` block —
+nor does anything leave your machine until the environment variable it names is set.
+
+An adapter's `exports` map must reach its entry under `default` or `require` (smelt asks
+through `createRequire`). One that answers only `import` is reported as _installed and
+unreachable_ rather than missing, because installing it again would change nothing.
 
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
@@ -868,8 +875,10 @@ the one you configured with no explanation beside it. The same facts ride in the
 envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
 and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
 set and where the adapter resolved from (`adapter from config dir`, `adapter from smelt's
-own install`, or `adapter not installed:` with the command) — presence only, never the
-value.
+own install`, `adapter not installed:` with the command, or `adapter installed but not
+loadable`) — presence only, never the value. It reads the `module` kind by the same rule
+the loader uses, so a config naming a package rather than a file is not reported as a
+missing file.
 
 Writing your own stage is unchanged:
 

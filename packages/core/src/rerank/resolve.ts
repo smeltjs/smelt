@@ -37,6 +37,16 @@ import { CONFIG_FILE_NAME } from '../config.ts';
  * - **One refusal names both places and the command.** A refusal naming only smelt's
  *   own install is the bug this module exists for; a refusal naming only the config
  *   directory would hide that the fallback was tried at all.
+ *
+ * THE CONDITION SET, which is part of the adapter contract rather than an implementation
+ * detail: the question is asked through `createRequire(...).resolve()`, so an adapter's
+ * `exports` map must reach its entry under **`default`** or **`require`**. A package that
+ * exports only an `import` condition is *installed and unreachable* — a different answer
+ * from *not installed*, and it gets a different refusal, because installing it again
+ * fixes nothing. A **dual** package resolves to its `require` entry — the build a
+ * CommonJS consumer would have been given, not the one an ESM consumer would; an adapter
+ * whose two builds differ in behaviour has to say so in its own README. The adapter this
+ * repository publishes states `default`, which is what every adapter should state.
  */
 
 /**
@@ -64,16 +74,29 @@ export interface ResolvedAdapter {
   readonly from: AdapterOrigin;
 }
 
-/** The adapter, in neither place — with everything a refusal needs to name. */
+/** The adapter, not loadable — with everything a refusal needs to name. */
 export interface UnresolvedAdapter {
   readonly found: false;
+  /**
+   * Which kind of "no" this is, because the two have different fixes.
+   *
+   * `'missing'` — in neither place, and {@link install} is the command that changes
+   * that. `'unreachable'` — *installed*, and Node's `require` conditions cannot reach
+   * its entry (an `exports` map with only an `import` condition), so there is no
+   * install command: running one again would put the same package in the same place.
+   */
+  readonly reason: 'missing' | 'unreachable';
   /** The directory holding the config file: the first place tried. */
   readonly configDir: string;
   /** Smelt's own package directory: the second place tried. */
   readonly ownDir: string;
-  /** The command that puts the adapter where {@link configDir} can see it. */
-  readonly install: string;
-  /** One sentence naming both places and the command. Rendered as-is by both doors. */
+  /**
+   * The command that puts the adapter where {@link configDir} can see it. Present for
+   * `'missing'` only — offering it for `'unreachable'` would send a reader to install a
+   * package they already have.
+   */
+  readonly install?: string;
+  /** One sentence, the whole refusal. Rendered as-is by both front doors. */
   readonly why: string;
 }
 
@@ -117,16 +140,38 @@ export function resolveAdapter(
   io: AdapterResolverIo = {},
 ): AdapterResolution {
   const configDir = dirname(resolvePath(configPath));
+  const unreachable = (dir: string, detail: string): UnresolvedAdapter => ({
+    found: false,
+    reason: 'unreachable',
+    configDir,
+    ownDir: OWN_PACKAGE_DIR,
+    why:
+      `${name} is installed at ${dir} but is not reachable under Node's \`require\` ` +
+      `conditions, so smelt cannot load it and installing it again would change ` +
+      `nothing. An adapter's "exports" map must reach its entry under \`default\` or ` +
+      `\`require\`; this one reaches it under neither. (${detail})`,
+  });
 
-  const beside = tryResolve(createRequire(resolvePath(configPath)), name);
-  if (beside !== undefined) return { found: true, url: pathToFileURL(beside).href, from: 'config' };
+  const beside = probe(createRequire(resolvePath(configPath)), name);
+  if (beside.kind === 'found') {
+    return { found: true, url: pathToFileURL(beside.path).href, from: 'config' };
+  }
+  // Stopping here rather than trying smelt's own install next: the consumer put this
+  // package beside their config, and "you have it, and it cannot be loaded this way" is
+  // the answer about *their* install. Falling through to a working copy elsewhere would
+  // load a package they did not point at and say nothing about the one they did.
+  if (beside.kind === 'unreachable') return unreachable(configDir, beside.detail);
 
-  const own = tryResolve(io.ownRequire ?? ownRequireDefault, name);
-  if (own !== undefined) return { found: true, url: pathToFileURL(own).href, from: 'core' };
+  const own = probe(io.ownRequire ?? ownRequireDefault, name);
+  if (own.kind === 'found') {
+    return { found: true, url: pathToFileURL(own.path).href, from: 'core' };
+  }
+  if (own.kind === 'unreachable') return unreachable(OWN_PACKAGE_DIR, own.detail);
 
   const install = installCommand(name, configDir);
   return {
     found: false,
+    reason: 'missing',
     configDir,
     ownDir: OWN_PACKAGE_DIR,
     install,
@@ -147,7 +192,11 @@ export function resolveAdapter(
  * documentation, and run once against a scratch directory, rather than assumed.
  */
 export function installCommand(name: string, dir: string): string {
-  return `npm install --prefix ${dir} ${name}`;
+  // The directory is quoted because it is a real path off this machine and real paths
+  // have spaces in them — `C:\\Users\\Jane Doe`, `~/Library/Application Support`. An
+  // unquoted one turns the command smelt printed into two arguments npm cannot use, and
+  // the reader has no way to tell that from smelt being wrong about the directory.
+  return `npm install --prefix "${dir}" ${name}`;
 }
 
 /**
@@ -167,12 +216,34 @@ export function isBareSpecifier(specifier: string): boolean {
   return true;
 }
 
-/** A resolver's "no" is an exception; this module's is a value. */
-function tryResolve(resolver: SpecifierResolver, name: string): string | undefined {
+/** One place's answer about one name. A resolver's "no" is an exception; this is a value. */
+type Probe =
+  | { readonly kind: 'found'; readonly path: string }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'unreachable'; readonly detail: string };
+
+/**
+ * Ask one resolver, and keep the two kinds of "no" apart.
+ *
+ * A swallowed exception here is how "you already have this, and it cannot be loaded"
+ * became "install it" — a refusal that names a command the reader has already run.
+ * Node distinguishes the two by code, so this does too: `ERR_PACKAGE_PATH_NOT_EXPORTED`
+ * and `ERR_PACKAGE_IMPORT_NOT_DEFINED` mean the package is *there* and its `exports` map
+ * does not answer under the `require` conditions this resolver asks with. Anything else
+ * — `MODULE_NOT_FOUND` above all — means it is not there.
+ */
+function probe(resolver: SpecifierResolver, name: string): Probe {
   try {
-    return resolver.resolve(name);
-  } catch {
-    return undefined;
+    return { kind: 'found', path: resolver.resolve(name) };
+  } catch (cause) {
+    const code = (cause as { code?: unknown }).code;
+    if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_PACKAGE_IMPORT_NOT_DEFINED') {
+      return {
+        kind: 'unreachable',
+        detail: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+    return { kind: 'missing' };
   }
 }
 
