@@ -512,7 +512,6 @@ function describeWiring(file: DoctorHookFile | undefined): string {
   return 'wired (verified)';
 }
 
-
 /**
  * The store, as one clause of the config line. The size half is rendered from the two
  * receipt fields rather than counted here — one arithmetic, two surfaces.

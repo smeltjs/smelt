@@ -1,6 +1,6 @@
 {
-  "guards": 36,
-  "mutations": 184,
+  "guards": 41,
+  "mutations": 208,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -12,7 +12,7 @@
     },
     {
       "guard": "packages/core/test/guards/bench-results.test.ts",
-      "count": 7
+      "count": 8
     },
     {
       "guard": "packages/core/test/guards/cache-hygiene.test.ts",
@@ -20,11 +20,11 @@
     },
     {
       "guard": "packages/core/test/guards/config-writer.test.ts",
-      "count": 2
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/doctor.test.ts",
-      "count": 4
+      "count": 6
     },
     {
       "guard": "packages/core/test/guards/expansion-counter.test.ts",
@@ -39,12 +39,28 @@
       "count": 8
     },
     {
+      "guard": "packages/core/test/guards/hook-command.test.ts",
+      "count": 5
+    },
+    {
       "guard": "packages/core/test/guards/hooks-preset.test.ts",
+      "count": 3
+    },
+    {
+      "guard": "packages/core/test/guards/hooks-yes.test.ts",
       "count": 3
     },
     {
       "guard": "packages/core/test/guards/init-wizard.test.ts",
       "count": 2
+    },
+    {
+      "guard": "packages/core/test/guards/install-scope.test.ts",
+      "count": 3
+    },
+    {
+      "guard": "packages/core/test/guards/invocation.test.ts",
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/json-edit.test.ts",
@@ -64,7 +80,7 @@
     },
     {
       "guard": "packages/core/test/guards/no-network.test.ts",
-      "count": 6
+      "count": 8
     },
     {
       "guard": "packages/core/test/guards/ops-seam.test.ts",
@@ -100,7 +116,7 @@
     },
     {
       "guard": "packages/core/test/guards/setup-verb.test.ts",
-      "count": 6
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/site-facts.test.ts",
@@ -136,7 +152,7 @@
     },
     {
       "guard": "packages/mcp/test/guards/no-network.test.ts",
-      "count": 4
+      "count": 5
     },
     {
       "guard": "packages/mcp/test/guards/ops-seam.test.ts",
@@ -145,6 +161,10 @@
     {
       "guard": "packages/mcp/test/guards/packaging.test.ts",
       "count": 3
+    },
+    {
+      "guard": "packages/rerank-voyage/test/guards/packaging.test.ts",
+      "count": 2
     }
   ]
 }
