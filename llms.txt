@@ -1,0 +1,98 @@
+# smelt
+
+> Structure-aware, reversible, offline context optimization for AI coding agents. Hand
+> smelt a blob — a source file, a log, a diff, a grep result — and a byte budget, and it
+> returns a smaller blob in which the regions the task needs survive verbatim and every
+> removed region is one marker line naming the rule that removed it, how many bytes it
+> took, and a hash that brings the exact original back. Published as `@smeltjs/core`
+> (the library and the `smelt` CLI) and `@smeltjs/mcp` (the MCP server), Apache-2.0.
+> It makes zero network calls.
+
+smelt is a library, not a proxy: nothing is interposed between an agent and its model,
+and no hosted model is asked which lines matter. A planner decides what to keep from the
+file's own structure, the removed bytes go to a content-addressed ElisionStore on the
+same machine (`.smelt/store` by default), and a marker stands where they were:
+
+    <<smelt/v1: collapsed 3 sibling functions (2224B) — retrieve("84998967370f38bc")>>
+
+The budget is in bytes, because bytes are what smelt can count without shipping a
+tokenizer it would have to guess with.
+
+## Important notes
+
+The four laws. `docs/ARCHITECTURE.md` carries the reasoning for each — why breaking one
+produces a library that still looks like it works.
+
+- **Zero network.** No external call in any code path, enforced by a guard that walks the
+  real import graph from every entrypoint the manifests advertise.
+- **Every elision is explainable.** A named rule and a sentence a human can read in a
+  diff, never a model's opinion about what mattered.
+- **Every elision is reversible, and expansions are counted.** `smelt stats` reports the
+  expansion rate, so cutting too much surfaces as a rising number rather than as a model
+  that is quietly wrong about the code.
+- **Claim no number that has not been measured.** This file therefore states none. Every
+  figure smelt publishes is a dated, corpus-pinned row in `packages/core/bench/RESULTS.md`,
+  linked under Optional below — quote it from there, with its date and corpus commit, or
+  not at all.
+
+## Three commands
+
+- `npm install -g @smeltjs/core` — the CLI onto the machine. `npx @smeltjs/core` runs it
+  without installing anything, and `brew install smeltjs/tap/smelt` is the Homebrew path.
+- `smelt setup --yes` — applies the whole SetupRecipe idempotently: `smelt.config.json`,
+  the hooks preset for the harnesses you name, the MCP registration step, and a real
+  smelt → retrieve round trip to prove the loop. `--scope user` installs once for the
+  machine instead of once per project. `smelt doctor` then reads installed state back
+  and names the exact repair; it never writes.
+- `smelt <file> --budget 4000 --focus <term>` — the round trip itself:
+  smelted text on stdout, the report on stderr. `smelt retrieve <hash>` brings back any
+  marker's exact original bytes, and every retrieval is counted.
+
+An agent's owner installs the SkillPack with `npx skills add smeltjs/smelt`; it and the
+marker block `smelt setup` writes beside the enforcement hooks are the two instruction
+channels (ADR-0002), and they teach the same commands from the same recipe.
+
+## MCP tools
+
+`npx @smeltjs/mcp` serves five tools. The config's store is shared with the CLI, so a hash
+a marker gave you retrieves the same bytes from either surface.
+
+- `smelt_file` — smelt a file under a byte budget with a focus.
+- `smelt_retrieve` — the elided bytes back, by hash. This contract and the marker
+  format are the wire surface, stable from 0.1 and treated as 1.0.
+- `smelt_retrieve_batch` — several hashes in one call. Prefer it when more than one
+  marker matters: every call re-bills the conversation.
+- `repo_map` — a ranked symbol map of a directory tree, inside a byte budget.
+- `smelt_stats` — the retrieval counters, including the expansion rate.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/smeltjs/smelt/main/README.md): What smelt is, how to install it, the sixty-second round trip, how it wires into each harness, and the measured tables with their dates and corpus commits.
+- [SkillPack (skills/smelt/SKILL.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/SKILL.md): The instructions an agent runs on, installed by its owner. Generated from the SetupRecipe, never hand-written.
+- [llms-full.txt](https://smeltjs.github.io/smelt/llms-full.txt): Every document listed below, concatenated, for one-shot context. Fetch this one when you can spend the tokens.
+
+## Reference
+
+- [CONTEXT.md](https://raw.githubusercontent.com/smeltjs/smelt/main/CONTEXT.md): The domain vocabulary — every term the code uses, with its exact meaning and what to avoid calling it. Read it before renaming anything.
+- [docs/ARCHITECTURE.md](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/ARCHITECTURE.md): The four laws and why each is load-bearing, the module map, the seams, and the consumer contract.
+- [ADR-0001](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0001-no-go-tui-for-the-setup-surface.md): No Go TUI for the setup surface.
+- [ADR-0002](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0002-skill-pack-complements-marker-blocks.md): The skill pack complements the marker block; it does not replace it.
+- [ADR-0003](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0003-doctor-reports-never-migrates.md): Doctor reports; setup repairs; nothing migrates silently.
+- [ADR-0004](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0004-rerank-config-seam.md): A reranker is an explicit config opt-in, never a default.
+
+## Packages
+
+- [@smeltjs/core](https://raw.githubusercontent.com/smeltjs/smelt/main/packages/core/README.md): The library and the `smelt` CLI: planners, the marker, the ElisionStore, the setup verbs.
+- [@smeltjs/mcp](https://raw.githubusercontent.com/smeltjs/smelt/main/packages/mcp/README.md): The MCP server: the same operations seam as the CLI, over stdio, as the five tools above.
+- [@smeltjs/rerank-voyage](https://raw.githubusercontent.com/smeltjs/smelt/main/packages/rerank-voyage/README.md): The opt-in rerank adapter you install yourself — the only package in this repository that reaches the network, and nothing loads it unless your config names it.
+
+## Changelog
+
+- [CHANGELOG.md](https://raw.githubusercontent.com/smeltjs/smelt/main/CHANGELOG.md): Every release, what changed in it, and why — including which upgrades need a `smelt setup` re-run.
+
+## Optional
+
+- [bench/RESULTS.md](https://raw.githubusercontent.com/smeltjs/smelt/main/packages/core/bench/RESULTS.md): Every measured row, append-only, each with its date and the corpus commit it ran against. The only place smelt states a number; quote it from here or not at all.
+- [The bench harness](https://github.com/smeltjs/smelt/tree/main/packages/core/bench): The corpus, the four tiers, and the runner that writes those rows.
+- [CONTRIBUTING.md](https://raw.githubusercontent.com/smeltjs/smelt/main/CONTRIBUTING.md): Dev setup, the one-command gate, and the guard-and-mutation convention every new guarantee ships under.
+- [smeltjs.github.io/smelt](https://smeltjs.github.io/smelt/): The project page: the install, the harness tiers, and the measured tables rendered from the packages themselves.

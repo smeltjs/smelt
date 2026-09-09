@@ -11,6 +11,35 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
+## Unreleased
+
+### Docs
+
+- **`llms.txt` and `llms-full.txt`, for the agent that arrives before the install.** The
+  llmstxt.org index now sits at the repository root and is served by the site: the summary,
+  the four laws as its notes, the three commands a newcomer needs, the five MCP tool names,
+  and link lists of every document — with `llms-full.txt` beside it inlining each of those
+  documents for a reader that would rather spend the tokens than the round trips. Neither
+  is hand-written. `scripts/generate-llms-txt.mjs` renders both from one document list and
+  the built packages' own facts (the ADRs discovered rather than listed), writes each to
+  the repository root and to `site/public/` byte-identically, and
+  `test/guards/llms-txt.test.ts` regenerates all four, compares the two copies of each
+  directly, and resolves every link in the index back to a file that exists — because
+  regenerating an index reproduces a dead link exactly. `pnpm generate:llms-txt` writes
+  them; a hand edit is a red `pnpm verify`. Law 4 holds in the index as it does everywhere
+  else: it states no measured figure and links `packages/core/bench/RESULTS.md` instead.
+- **The SkillPack now teaches the 0.7.0 surface.** Four sections joined it, still rendered
+  from the package rather than retyped: setting up (`smelt setup --yes` with `--scope
+user`, the repeatable `--harness` over the ids the registry carries, and the four
+  toggles), checking the install (doctor's `wired (verified)` / `wired but inert` /
+  `wired but missing`, and the refused exit meaning "re-run setup"), keeping the store
+  small (`smelt store prune --older-than 30d --dry-run`, then the same line without it),
+  and reranking (the config block, `module` or `voyage`, the environment variable your
+  config names, and never a default).
+- **A "For agents" section near the top of the README**, naming the two instruction
+  channels and the one-line version of each 0.7.0 action; `AGENTS.md` points at `llms.txt`;
+  the site footer links it.
+
 ## 0.7.0 — 2026-09-09
 
 `@smeltjs/core@0.7.0` · `@smeltjs/mcp@0.6.0` · `@smeltjs/rerank-voyage@0.1.0` (first

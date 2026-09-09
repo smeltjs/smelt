@@ -1,6 +1,6 @@
 {
-  "guards": 43,
-  "mutations": 226,
+  "guards": 44,
+  "mutations": 230,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -69,6 +69,10 @@
     {
       "guard": "packages/core/test/guards/lava.test.ts",
       "count": 2
+    },
+    {
+      "guard": "packages/core/test/guards/llms-txt.test.ts",
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/marker-format.test.ts",

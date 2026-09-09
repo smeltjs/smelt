@@ -17,6 +17,7 @@
     "generate:guards": "node scripts/mutate.mjs --write-guards",
     "generate:third-party": "node scripts/generate-third-party.mjs",
     "generate:skill": "node scripts/generate-skill.mjs",
+    "generate:llms-txt": "node scripts/generate-llms-txt.mjs",
     "bench": "pnpm --filter @smeltjs/core run bench",
     "verify": "pnpm run format:check && pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run mutate"
   },
