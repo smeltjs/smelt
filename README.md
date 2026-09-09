@@ -251,8 +251,9 @@ smelt setup
 harnesses it detects, the MCP registration for Claude Code, opencode, Codex and Grok
 (JSON or TOML, whichever the harness reads), and a real
 smelt → retrieve round trip to prove the loop. Interactive from a terminal — Enter
-accepts every default. An existing file is **merged**, never overwritten: your bytes
-stay exactly where they are and smelt's own entries are the only ones it touches. The
+accepts every default. An existing file is **merged**, never overwritten: every entry
+that is not smelt's is preserved, and every byte outside the region smelt edits is
+unchanged. The
 one file it will not write is one it would have to write whole (the opencode plugin,
 Cline's hook wrapper) when the file there is somebody else's — that is reported
 skipped, with the reason.
@@ -398,11 +399,15 @@ smelt hooks remove  --yes --harness claude-code
 
 Three hooks, individually toggleable, written into the harness's own config with the
 same discipline as `smelt init` — every file listed before a final confirm, nothing
-overwritten without a per-file yes, re-runs edit toggles, and a merge into an existing
-settings file leaves every byte outside smelt's own entries untouched. Under `--yes`
-there is nobody to ask, so the plan's own shape answers instead: a file with a
-byte-faithful merge behind it is written (nothing of yours can be lost), and a file
-smelt would write whole is left alone unless it is already smelt's. The install also points `smelt.config.json` at a directory store (unless
+overwritten without a per-file yes in the wizard, re-runs edit toggles. A merge into an
+existing settings file preserves **every entry that is not smelt's**, and leaves every
+byte outside the `hooks` key unchanged — your other top-level keys, their indentation,
+their escapes and their number spellings ride through verbatim. (Inside `hooks`, the
+value is re-serialised: a foreign entry keeps its content and may come back formatted
+differently.) Under `--yes` there is nobody to ask, so the plan's own shape answers
+instead: a file with a merge behind it is written, because no entry of yours can be
+lost, and a file smelt would write whole is left alone unless it is already smelt's —
+reported skipped, with the reason, and the run still exits 0. The install also points `smelt.config.json` at a directory store (unless
 the config already chose one), so the `smelt retrieve` the guard teaches actually
 works across processes:
 

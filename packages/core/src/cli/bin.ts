@@ -151,10 +151,11 @@ function refuseClosedSink(code: string): void {
   if (sinkRefused) return;
   sinkRefused = true;
   try {
+    // Verb-agnostic on purpose: this listener sees every verb, and `smelt big.log
+    // --json | head` must not be told about a flag its verb does not own.
     process.stderr.write(
       `smelt: nothing is reading smelt's output (${code}) — refusing rather than ` +
-        `writing into a closed stream. If you meant to script this, answer the verb ` +
-        `up front (\`--yes\`) and pipe its output.\n`,
+        `writing into a closed stream.\n`,
     );
   } catch {
     // stderr is gone too; the exit code is the whole message.

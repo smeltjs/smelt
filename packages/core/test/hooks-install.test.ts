@@ -439,6 +439,28 @@ describe('smelt hooks install --yes', () => {
     expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toContain(SNIPPET_START_MD);
   });
 
+  it('the wizard can still overwrite a whole-owned file that is not ours, on a yes', async () => {
+    // The one case a policy run refuses and a human can allow — and the only one where
+    // bytes that were not smelt's are gone, which is why it is a literal `yes` and why
+    // it is spelled `overwritten` rather than `merged` or `repaired`.
+    mkdirSync(join(dir, '.opencode/plugin'), { recursive: true });
+    const plugin = join(dir, '.opencode/plugin/smelt-guard.js');
+    writeFileSync(plugin, 'export const theirs = true;\n');
+
+    let output = '';
+    await runHooks('install', 'opencode', {
+      // Six steps, the confirm, then a yes for each existing file the plan names.
+      input: Readable.from([`${['', '', '', '', '', '', 'yes', 'yes', 'yes'].join('\n')}\n`]),
+      output: (text) => {
+        output += text;
+      },
+      cwd: dir,
+      home,
+    });
+    expect(output).toContain('smelt-guard.js exists — overwrite it? (yes/no)');
+    expect(readFileSync(plugin, 'utf8')).toContain('tool.execute.before');
+  });
+
   it('remove --yes takes it back out with no confirm and no per-file question', async () => {
     await yes('install', 'claude-code');
     const { code, output } = await yes('remove', 'claude-code');
@@ -446,6 +468,24 @@ describe('smelt hooks install --yes', () => {
     expect(output).not.toContain('confirm (yes / no)');
     expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(false);
     expect(existsSync(join(dir, '.claude/settings.json'))).toBe(false);
+  });
+
+  it('with no --harness, installs every detected harness', async () => {
+    // Detection reads the project *and* the home directory, and `--yes` takes what it
+    // finds — the same set the wizard would have preselected. A `--yes` that quietly
+    // installed one of two detected harnesses would be a half-install with a clean
+    // exit, which is this repository's own definition of a bug.
+    mkdirSync(join(dir, '.claude'), { recursive: true });
+    mkdirSync(join(home, '.codex'), { recursive: true });
+
+    const { code, output } = await yes('install', undefined);
+    expect(code).toBe(0);
+    expect(output).toContain('claude-code');
+    expect(output).toContain('codex');
+    expect(existsSync(join(dir, '.claude/settings.json'))).toBe(true);
+    expect(existsSync(join(dir, '.codex/hooks.json'))).toBe(true);
+    // And nothing it did not detect.
+    expect(existsSync(join(dir, '.gemini/settings.json'))).toBe(false);
   });
 
   it('names --harness when nothing is detected and nothing was named', async () => {

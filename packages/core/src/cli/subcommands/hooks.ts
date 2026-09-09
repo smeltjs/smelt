@@ -4,7 +4,7 @@ import { CliUsageError } from '../../errors.ts';
 import { harnessesByTier, harnessNames } from '../../harness/registry.ts';
 import type { HarnessTier } from '../../harness/profile.ts';
 import { colorize } from '../lava.ts';
-import { runHooks } from '../hooks.ts';
+import { noInteractiveInput, runHooks } from '../hooks.ts';
 import { CLI_NAME, refusingSink } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
@@ -76,8 +76,8 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
         `  (${tierNames('experimental')} — schemas from the capability\n` +
         `  matrix, not yet smoke-tested), advisory (${tierNames('advisory')} — instructions only,\n` +
         `  nothing enforced). Same discipline as init: every file listed before a final\n` +
-        `  confirm, nothing overwritten without a per-file yes, re-runs edit toggles.\n` +
-        `  For an agent, answer it up front:\n\n` +
+        `  confirm, nothing overwritten without a per-file yes in the wizard, re-runs\n` +
+        `  edit toggles. For an agent, answer it up front:\n\n` +
         `    ${CLI_NAME} hooks install --yes [--harness <id>] [--scope <where>]\n` +
         `      [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]\n\n` +
         `  A toggle you do not name keeps whatever is already installed; nothing is,\n` +
@@ -144,16 +144,8 @@ export const hooksCommand: Subcommand<HooksInvocation, HooksInvocation> = {
    * `init`'s and `setup`'s refusals use.
    */
   async run(resolved: HooksInvocation, io: CliIo): Promise<number> {
-    if (!resolved.yes && io.initInput === undefined) {
-      throw new CliUsageError(
-        `${CLI_NAME}: hooks ${resolved.action} is interactive unless you answer it up ` +
-          `front, and this invocation has no interactive input stream. Non-interactive:\n` +
-          `  ${CLI_NAME} hooks ${resolved.action} --yes [--harness <id>] [--scope <where>]` +
-          (resolved.action === 'install'
-            ? ` [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]`
-            : ''),
-      );
-    }
+    // The same sentence the flow itself throws — one refusal, not two spellings of it.
+    if (!resolved.yes && io.initInput === undefined) throw noInteractiveInput(resolved.action);
     return await runHooks(resolved.action, resolved.harness, {
       // `input` stays absent under --yes — exactOptionalPropertyTypes means "absent"
       // is a decision, not a field carrying undefined.

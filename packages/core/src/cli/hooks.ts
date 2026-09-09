@@ -969,8 +969,34 @@ export interface AppliedFile {
   readonly detail?: string;
 }
 
-/** What a policy write over an existing file changed, said the same way everywhere. */
-const MERGED_DETAIL = "merged — every byte outside smelt's own entries is unchanged";
+/**
+ * What a write over an existing file did, in the three shapes it can take. Stated as
+ * narrowly as what actually holds, which is not the same thing for all three:
+ *
+ *  - **merged** — the honest claim is about *entries*, not bytes. A JSON hooks merge
+ *    splices a re-serialised `hooks` value back into the file, so a foreign entry
+ *    inside it keeps its content and loses its formatting: a one-line matcher comes
+ *    back multi-line. Everything outside the edited region — every other top-level
+ *    key, its indentation, its escapes, its number spellings — is byte-identical, and
+ *    for a marker-block file or an MCP registration the edited region is our block or
+ *    our server entry alone. An earlier cut of this said "every byte outside smelt's
+ *    own entries is unchanged", which is a stronger claim than the editor makes.
+ *  - **repaired** — a file smelt owns whole, already carrying our token, rewritten to
+ *    this release. Every byte changed; all of them were ours.
+ *  - **overwritten** — the same file when it was *not* ours, written because somebody
+ *    typed `yes` to the per-file question. Only a wizard run can reach it, and it is
+ *    the one case where bytes that were not smelt's are gone.
+ */
+const WRITE_DETAIL = {
+  merged:
+    "merged — every entry that is not smelt's is preserved, and every byte outside " +
+    'the edited region is unchanged',
+  repaired: "repaired — only smelt's own entries in it changed",
+  overwritten: "overwritten — you confirmed it; the file is smelt's own now",
+} as const;
+
+/** What a write over an existing file turned out to be, or that it did not happen. */
+type WriteVerdict = keyof typeof WRITE_DETAIL | 'refused';
 
 /**
  * Whether an existing planned file is smelt's to write over without being asked.
@@ -1023,7 +1049,8 @@ export async function applyPlanFiles(
       applied.push({ name: file.name, action: 'unchanged' });
       continue;
     }
-    if (file.exists && !(await allowedToWrite(file, consent))) {
+    const verdict = file.exists ? await verdictFor(file, consent) : undefined;
+    if (verdict === 'refused') {
       applied.push({
         name: file.name,
         action: 'skipped',
@@ -1038,18 +1065,30 @@ export async function applyPlanFiles(
     applied.push({
       name: file.name,
       action: 'written',
-      ...(file.exists ? { detail: MERGED_DETAIL } : {}),
+      ...(verdict === undefined ? {} : { detail: WRITE_DETAIL[verdict] }),
     });
   }
   return applied;
 }
 
-/** The consent question itself, asked or answered by policy. */
-async function allowedToWrite(file: PlannedFile, consent: Consent): Promise<boolean> {
-  if (consent.kind === 'policy') return policyMayWrite(file);
+/**
+ * May this write happen, and — since they are one question — what is it. The consent
+ * decides whether; the plan's `ownership` and the file's current bytes decide which of
+ * the three {@link WRITE_DETAIL} sentences is the true one.
+ */
+async function verdictFor(file: PlannedFile, consent: Consent): Promise<WriteVerdict> {
+  const allowed =
+    consent.kind === 'policy' ? policyMayWrite(file) : await askOverwrite(file, consent.ask);
+  if (!allowed) return 'refused';
+  if (file.ownership === 'merged') return 'merged';
+  return fileIsOursToRepair(file) ? 'repaired' : 'overwritten';
+}
+
+/** The per-file consent question. */
+async function askOverwrite(file: PlannedFile, ask: Ask): Promise<boolean> {
   // The one hard rule, same as `smelt init`: an existing file is never touched
   // without an explicit per-file yes — not `y`, not Enter, a literal `yes`.
-  const answer = await consent.ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
+  const answer = await ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
   return answer === 'yes';
 }
 
@@ -1070,11 +1109,12 @@ export async function runHooks(
   harnessFlag: string | undefined,
   io: HooksIo,
 ): Promise<number> {
+  if (io.yes !== true && io.input === undefined) throw noInteractiveInput(action);
   const wizard =
-    io.yes === true
+    io.yes === true || io.input === undefined
       ? undefined
       : wizardAsk(
-          io.input!,
+          io.input,
           io.output,
           `${CLI_NAME} hooks: input ended before the wizard finished. ` +
             `Files already confirmed and written stay; nothing further was written.`,
@@ -1096,6 +1136,23 @@ export async function runHooks(
   } finally {
     await wizard?.release();
   }
+}
+
+/**
+ * The refusal for "no `--yes`, and no stream to ask on" — one sentence, thrown by the
+ * verb before the flow starts *and* by the flow itself, because they are the same
+ * fact. A non-null assertion in the flow would have been the flow trusting the verb to
+ * have checked, which is exactly the kind of promise nothing enforces.
+ */
+export function noInteractiveInput(action: 'install' | 'remove'): CliUsageError {
+  return new CliUsageError(
+    `${CLI_NAME}: hooks ${action} is interactive unless you answer it up front, and ` +
+      `this invocation has no interactive input stream. Non-interactive:\n` +
+      `  ${CLI_NAME} hooks ${action} --yes [--harness <id>] [--scope <where>]` +
+      (action === 'install'
+        ? ` [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]`
+        : ''),
+  );
 }
 
 function resolveHarnessFlag(flag: string): HarnessProfile {

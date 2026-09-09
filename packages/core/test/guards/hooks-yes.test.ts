@@ -98,6 +98,19 @@ function commandsUnder(event: string): readonly string[] {
   );
 }
 
+/**
+ * `smelt.config.json` appears exactly once in the files list, and says the same thing
+ * there as `config.action` does. The two spellings differ — `current` is the verdict's
+ * word for what the files list calls `unchanged` — so the map is written out rather
+ * than assumed, one arm per action the receipt can carry.
+ */
+function expectConfigNamedOnce(receipt: SetupReceipt): void {
+  const configs = receipt.files.filter((file) => file.name === 'smelt.config.json');
+  expect(configs.length, JSON.stringify(receipt.files)).toBe(1);
+  const sameFact = { current: 'unchanged', written: 'written', updated: 'updated' } as const;
+  expect(configs[0]!.action, receipt.config.action).toBe(sameFact[receipt.config.action]);
+}
+
 async function cli(argv: readonly string[]): Promise<{ code: number; stdout: string }> {
   let stdout = '';
   const code = await runCli(argv, {
@@ -146,7 +159,7 @@ describe("`hooks install --yes` merges into somebody else's settings file", () =
     expect(settingsText()).toBe(first);
   });
 
-  it('--guard off takes ours back out and leaves theirs alone', async () => {
+  it('--guard off takes ours back out and leaves theirs alone, bytes included', async () => {
     writeForeignSettings();
     await cli(['hooks', 'install', '--yes', '--harness', 'claude-code']);
     const { code } = await cli([
@@ -162,8 +175,12 @@ describe("`hooks install --yes` merges into somebody else's settings file", () =
     expect(
       commandsUnder('PreToolUse').filter((command) => command.includes('hooks/shims/')),
     ).toEqual([]);
+    // Taking ours out is an edit like any other: the entries that are not ours are
+    // intact, and outside the `hooks` key the file is byte-identical — which is the
+    // whole claim, and the only one an `editTopLevelProperty` splice can make.
     expect(commandsUnder('PreToolUse')).toContain('echo mine');
     expect(commandsUnder('Stop')).toContain('echo bye');
+    for (const bytes of UNTOUCHABLE) expect(settingsText(), bytes).toContain(bytes);
   });
 
   it('refuses with the flag that answers it when there is nothing to detect', async () => {
@@ -228,11 +245,34 @@ describe('`smelt setup --yes` applies the same policy', () => {
     expect(code, stdout).toBe(EXIT.ok);
     const receipt = JSON.parse(stdout) as SetupReceipt;
 
-    const configs = receipt.files.filter((file) => file.name === 'smelt.config.json');
-    expect(configs.length, JSON.stringify(receipt.files)).toBe(1);
-    // `config.action` and the files list are two statements about one file, and a
-    // reader that reconciles them must not find them contradicting each other.
-    expect(configs[0]!.action).toBe(receipt.config.action === 'current' ? 'unchanged' : 'written');
+    expectConfigNamedOnce(receipt);
+  });
+
+  it('agrees with itself on a config it updated, not only on one it wrote', async () => {
+    // The `updated` arm: a config that exists but lacks the fields setup fills. The
+    // first cut of this reconciliation collapsed `updated` into `written` and would
+    // have passed on a receipt saying two different things about one file.
+    writeFileSync(
+      join(dir, 'smelt.config.json'),
+      `${JSON.stringify({ smeltConfig: 1 }, null, 2)}\n`,
+    );
+
+    let stdout = '';
+    const code = await runCli(['setup', '--yes', '--json', '--harness', 'claude-code'], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd: dir,
+      home,
+    });
+    expect(code, stdout).toBe(EXIT.ok);
+    const receipt = JSON.parse(stdout) as SetupReceipt;
+
+    expect(receipt.config.action).toBe('updated');
+    expectConfigNamedOnce(receipt);
   });
 });
 

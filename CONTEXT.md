@@ -442,8 +442,12 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0003 carry the reasonin
   nothing but a literal `yes`. A **policy** consent — what `--yes` and `smelt setup`
   use — reads the plan's own shape: a file whose planned bytes were computed _from_ the
   existing bytes (a JSON hooks merge, a marker-block upsert, a registration edit) is
-  written, because every foreign byte is already in it; a file smelt writes _whole_ is
-  refused unless it is already smelt's, and the refusal names it. Recorded on
+  written, because **every entry that is not smelt's is already in it**; a file smelt
+  writes _whole_ is refused unless it is already smelt's, and the refusal names it. The
+  claim a merge makes is about entries, not bytes: outside the edited region — the
+  `hooks` key, our marker block, our server entry — the file is byte-identical, but the
+  edited region is re-serialised, so a foreign entry inside `hooks` keeps its content
+  and can come back formatted differently. Recorded on
   `PlannedFile.ownership` (`'merged' | 'whole'`), so the question is answered by data
   the planner produced rather than by a list of filenames. _Avoid_: "overwrite" for the
   merged case — nothing of anybody else's is overwritten.

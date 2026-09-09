@@ -71,8 +71,8 @@ HOOKS
   (Gemini, Grok, Hermes, Cursor, opencode, Cline — schemas from the capability
   matrix, not yet smoke-tested), advisory (KiloCode, Aider — instructions only,
   nothing enforced). Same discipline as init: every file listed before a final
-  confirm, nothing overwritten without a per-file yes, re-runs edit toggles.
-  For an agent, answer it up front:
+  confirm, nothing overwritten without a per-file yes in the wizard, re-runs
+  edit toggles. For an agent, answer it up front:
 
     smelt hooks install --yes [--harness <id>] [--scope <where>]
       [--guard on|off] [--stats on|off] [--map on|off] [--lint on|off]

@@ -249,7 +249,14 @@ describe('smelt setup applies the recipe in one command', () => {
       const claudeMd = readFileSync(join(cwd, 'CLAUDE.md'), 'utf8');
       expect(claudeMd).toContain(theirs.trim());
       expect(claudeMd).toContain('smelt:hooks');
-      expect(receipt.files.find((file) => file.name === 'CLAUDE.md')?.action).toBe('written');
+      const merged = receipt.files.find((file) => file.name === 'CLAUDE.md');
+      expect(merged?.action).toBe('written');
+      // The receipt says only what the editor can deliver. It used to claim "every
+      // byte outside smelt's own entries is unchanged", which a JSON hooks merge does
+      // not give: it re-serialises the `hooks` value, so a foreign entry inside it
+      // keeps its content and loses its formatting. The claim is about entries.
+      expect(merged?.detail).toContain("every entry that is not smelt's is preserved");
+      expect(merged?.detail).not.toContain("every byte outside smelt's own entries");
 
       // A whole-owned file has nothing to merge into, so it is refused — untouched,
       // reported skipped, with a reason that names it.
@@ -275,9 +282,12 @@ describe('smelt setup applies the recipe in one command', () => {
       const receipt = await runYes(cwd, ['--harness', 'opencode']);
 
       expect(readFileSync(plugin, 'utf8')).toContain('tool.execute.before');
-      expect(receipt.files.find((file) => file.name.endsWith('smelt-guard.js'))?.action).toBe(
-        'written',
-      );
+      const repaired = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
+      expect(repaired?.action).toBe('written');
+      // A file rewritten whole cannot claim bytes outside the edit survived — there
+      // was no edit, and there is nothing outside it. What is true is that all of
+      // those bytes were smelt's.
+      expect(repaired?.detail).toBe("repaired — only smelt's own entries in it changed");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -505,6 +515,14 @@ export const MUTATIONS: GuardMutation[] = [
     find: 'else index -= 1;',
     replace: 'else index += 1;',
     why: 'the step machine’s back moving forward — a wizard that eats the answer instead of returning for it is the defect the kit itself was extracted to end',
+  },
+  {
+    kind: 'src',
+    id: 'setup-writes-a-whole-file-that-is-not-ours',
+    file: 'cli/hooks.ts',
+    find: '  return fileIsOursToRepair(file);',
+    replace: '  return true;',
+    why: "the merge policy's one refusal wired shut — a run with nobody to ask would write smelt's own bytes over a file it does not own and cannot merge into (somebody's opencode plugin, Cline's hook wrapper), which is the single act the whole policy exists to prevent",
   },
   {
     kind: 'src',
