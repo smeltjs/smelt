@@ -41,9 +41,13 @@ the guard was inert through the `opt` symlink besides — a re-run rewrites both
   order and its v2 config spec); smelt wrote the singular `.opencode/plugin/`, so the
   guard plugin sat in a directory opencode does not load from. The documented spelling
   is what is written now. An install already at the old name is still **read** — doctor
-  reports it, a re-run reads your toggles back off it — and `smelt hooks remove` takes
-  it out; an install writes only the new name and names the old file so you know it is
-  there. One artefact, two names: nothing is orphaned and nothing is duplicated.
+  reports it as the install it is, a re-run reads your toggles back off it — and
+  `smelt hooks remove` takes it out. An install writes only the new name and names the
+  old file; once both are on disk, `smelt doctor` calls the old one an orphan — it says
+  where an earlier release wrote it and that opencode does not load it — and names the
+  command that removes it, which costs `current`, because a file smelt wrote and no
+  longer maintains is exactly that. One artefact, two names: nothing is orphaned by
+  accident and nothing is silently duplicated.
 - **`smelt setup` run from your home directory installed into files no harness reads.**
   Every path the installer wrote was a project-relative path joined to the working
   directory, so from `$HOME` it produced `~/CLAUDE.md`, `~/.mcp.json`, `~/AGENTS.md`,

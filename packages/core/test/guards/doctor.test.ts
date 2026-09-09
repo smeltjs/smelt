@@ -565,6 +565,41 @@ describe('a hook file smelt owns whole is run too', () => {
     }
   });
 
+  it('cline: a wrapper whose shim runs and says nothing is `wired but inert`', async () => {
+    const cwd = scratch('whole-cline-inert');
+    try {
+      const path = await setupHarness(cwd, 'cline', '.clinerules/hooks/PreToolUse');
+      const stub = join(cwd, 'hooks', 'shims', 'cline.js');
+      mkdirSync(join(cwd, 'hooks', 'shims'), { recursive: true });
+      writeFileSync(stub, 'process.exit(0);\n');
+      pointFileAt(path, stub);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.clinerules/hooks/PreToolUse: wired but inert');
+      expect(stdout).toContain('empty stdout is an allow');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('hermes: a YAML naming a shim that was deleted is `wired but missing`', async () => {
+    const cwd = scratch('whole-hermes-missing');
+    try {
+      const path = await setupHarness(cwd, 'hermes', '.hermes/hooks.yaml');
+      const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'shims', 'hermes.js');
+      pointFileAt(path, gone);
+
+      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      expect(code).toBe(EXIT.refused);
+      expect(stdout).toContain('.hermes/hooks.yaml: wired but missing');
+      expect(stdout).toContain(gone);
+      expect(stdout).toContain('smelt setup --harness hermes');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('opencode: a plugin whose guard core is gone is `wired but missing`', async () => {
     const cwd = scratch('plugin-missing');
     try {

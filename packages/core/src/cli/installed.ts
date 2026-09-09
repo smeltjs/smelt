@@ -108,6 +108,24 @@ export interface InstalledHookFile {
   readonly own?: { readonly probe: HarnessOwnFileProbe; readonly path: string };
 }
 
+/**
+ * A file of ours still sitting at an artefact's **former** name while today's name is
+ * there too — what an upgrade leaves behind when a harness renames the directory it
+ * loads from.
+ *
+ * It is a separate list rather than a second {@link InstalledHookFile} because it is a
+ * different fact: not "this is how the guard is wired" but "this is a file smelt wrote
+ * that nothing reads any more". Doctor reports it as an orphan; `remove` takes it out.
+ */
+export interface InstalledSuperseded {
+  /** The former spelling, as the user sees it. */
+  readonly file: string;
+  /** The harness whose artefact it was, for the sentence and the repair command. */
+  readonly harness: string;
+  /** That harness's own name, as its makers spell it. */
+  readonly harnessName: string;
+}
+
 /** Everything the readers need, in one reading. */
 export interface InstalledState {
   readonly blocks: readonly InstalledBlock[];
@@ -119,6 +137,8 @@ export interface InstalledState {
   readonly hookFiles: readonly string[];
   /** The same wiring, read as commands — {@link hookFiles}'s structured sibling. */
   readonly hooks: readonly InstalledHookFile[];
+  /** Files of ours left at a former name, with today's name written too. */
+  readonly superseded: readonly InstalledSuperseded[];
   readonly mcp: readonly InstalledMcp[];
   readonly config: InstalledConfig;
 }
@@ -184,6 +204,7 @@ export function readInstalledState(
   // nothing to do with what is installed.
   const hookFiles: string[] = [];
   const hooks: InstalledHookFile[] = [];
+  const superseded: InstalledSuperseded[] = [];
   const seenHookPaths = new Set<string>();
   const readHookStep = (
     profile: HarnessProfile,
@@ -196,10 +217,18 @@ export function readInstalledState(
     // existing install from being reported twice: one artefact, one file, whichever
     // name it is under. `remove` still takes both out.
     const here = locateStep(step, scope, roots);
-    const located =
-      here.path !== undefined && existsSync(here.path)
-        ? here
-        : (locateFormer(step, scope, roots) ?? here);
+    const former = locateFormer(step, scope, roots);
+    const current = here.path !== undefined && existsSync(here.path);
+    // Both names on disk: today's is the wiring, and the other one is a file smelt
+    // wrote that nothing reads any more. It is *reported*, not silently preferred and
+    // not silently forgotten — an upgrade leaves exactly this state behind.
+    if (current && former?.path !== undefined && former.name !== undefined) {
+      const stale = readIfExists(former.path);
+      if (stale !== undefined && stale.includes(OURS_TOKEN)) {
+        superseded.push({ file: former.name, harness: profile.id, harnessName: profile.name });
+      }
+    }
+    const located = current ? here : (former ?? here);
     if (located.path === undefined || located.name === undefined) return;
     if (seenHookPaths.has(located.path)) return;
     seenHookPaths.add(located.path);
@@ -281,7 +310,7 @@ export function readInstalledState(
     }
   }
 
-  return { blocks, hookFiles, hooks, mcp: [...mcp.values()], config };
+  return { blocks, hookFiles, hooks, superseded, mcp: [...mcp.values()], config };
 }
 
 /** A path when it exists, `undefined` when it does not — the config's own presence. */

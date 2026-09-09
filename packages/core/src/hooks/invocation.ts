@@ -234,14 +234,30 @@ export const SMELT_COMMAND_NAME = 'smelt';
 /**
  * Which machine this is, as data rather than as a global read.
  *
- * `NodeJS.Platform` in all but name, stated structurally so this module keeps importing
- * nothing but node builtins — and injectable, which is the point: the Windows branch
- * below is two lines of real behaviour that no run of this suite on any developer's
- * machine or in CI would ever execute, and an untested branch in the module that
- * decides what gets written into somebody's config file is the wrong branch to leave
- * unwatched.
+ * The values `process.platform` can take, written out rather than spelled `NodeJS.Platform`
+ * — this module states every type it needs structurally (see {@link InvocationEnv}) and
+ * imports nothing but node builtins. Closed on purpose: a `string` here would take a
+ * mistyped `'win-32'` without complaint and quietly answer it on the posix branch, which
+ * is the failure this parameter exists to make visible. `process.platform` is assignable
+ * to it, so the default costs no cast.
+ *
+ * It is injectable because the Windows branch below is real behaviour that no run of
+ * this suite on any developer's machine or in CI would ever execute, and an untested
+ * branch in the module that decides what gets written into somebody's config file is
+ * the wrong branch to leave unwatched.
  */
-export type InvocationPlatform = string;
+export type InvocationPlatform =
+  | 'aix'
+  | 'android'
+  | 'cygwin'
+  | 'darwin'
+  | 'freebsd'
+  | 'haiku'
+  | 'linux'
+  | 'netbsd'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32';
 
 /** `smelt.cmd`/`smelt.exe` on Windows, `smelt` everywhere else. */
 function executableNames(platform: InvocationPlatform): readonly string[] {

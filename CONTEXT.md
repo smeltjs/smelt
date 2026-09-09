@@ -227,7 +227,9 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   `.opencode/plugins/`), the step declares the old spelling and it is still _read_ and
   still _removed_ — never written. One artefact, two names: without it every existing
   install becomes a file nobody owns, `remove` leaves it behind and a re-run reads the
-  guard toggle back as off.
+  toggles back as though nothing were installed. With both names on disk the reading
+  carries the old one as **superseded**, and doctor reports it as an orphan with the
+  command that takes it out.
 - **InstallPlan** (`src/harness/plan.ts`): every file an install would write, and every
   one `remove` would take back out, computed against the disk and writing nothing —
   `planInstall(cwd, choices)` → `{files, skipped, notes, manual}` and its mirror

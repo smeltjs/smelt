@@ -521,7 +521,10 @@ describe('the ASCII fallback reaches the wizards, not just the primitives', () =
       home: join(cwd, 'home'),
       unicode: false,
     });
-    const rendered = page(stdout);
+    // The scratch directory's own path is not smelt's prose: `mkdtemp` is handed a
+    // system temp root this test does not choose, and a non-ASCII byte in *that* would
+    // be a fact about the machine rather than about the palette.
+    const rendered = page(stdout).replaceAll(cwd, '<cwd>');
     expect(rendered, 'the page under test was empty').not.toBe('');
     expect(
       aboveAscii(rendered),

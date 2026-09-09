@@ -223,6 +223,16 @@ describe("an artefact's former home is still read, and still removed", () => {
   const FORMER = '.opencode/plugin/smelt-guard.js';
   const TODAY = '.opencode/plugins/smelt-guard.js';
 
+  /** `smelt doctor --json` in `dir`, read back as a receipt. */
+  function doctorHere(): DoctorReceipt {
+    let stdout = '';
+    runDoctor(
+      { json: true, scope: 'project' },
+      { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9-test' },
+    );
+    return JSON.parse(stdout) as DoctorReceipt;
+  }
+
   /** What an earlier release left on disk: ours, under the name it used to write. */
   function earlierRelease(): void {
     mkdirSync(join(dir, dirname(FORMER)), { recursive: true });
@@ -231,6 +241,21 @@ describe("an artefact's former home is still read, and still removed", () => {
 
   it('is read back as an install, and named — not orphaned, and not written to again', async () => {
     earlierRelease();
+
+    // **Before** anything is written: the old name is the only install on this disk.
+    // The toggle reader is asked here, and asked for the whole value, because a reader
+    // blind to the old name does not answer "no guard" — it answers *the defaults*
+    // (guard on, stats on), which is a `stats` hook this machine does not have and a
+    // wizard offering to write one. Asking after setup would ask about the file setup
+    // had just written, which reads the same either way and proves nothing.
+    expect(existsSync(join(dir, TODAY)), 'the case must start with only the old name').toBe(false);
+    expect(presetToggles(dir, { home }), 'an existing install read as nothing installed').toEqual({
+      guard: true,
+      statsOnStop: false,
+      mapOnStart: false,
+      lintOnStart: false,
+    });
+
     const receipt = await setup('project', 'opencode');
 
     // Written: today's spelling only. The old copy is somebody's to remove, and this
@@ -239,10 +264,12 @@ describe("an artefact's former home is still read, and still removed", () => {
     expect(readFileSync(join(dir, FORMER), 'utf8')).toContain('an earlier release');
     expect(receipt.files.some((file) => file.name === FORMER)).toBe(false);
 
-    // And read back: the toggle reader is the sharpest witness — it decides what a
-    // re-run offers to keep, so a reader blind to the old name offers to turn off a
-    // guard that is installed.
-    expect(presetToggles(dir, { home }).guard).toBe(true);
+    // And doctor is not silent about the leftover: a file of ours in a directory
+    // opencode no longer loads from is an orphan, and it costs `current`.
+    const read = doctorHere();
+    expect(read.orphans.join('\n')).toContain(FORMER);
+    expect(read.repair).toContain('smelt hooks remove --harness opencode');
+    expect(read.current).toBe(false);
   });
 
   it('comes out on remove, under both names', async () => {

@@ -213,11 +213,13 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
    * always printed, which is what the guards assert.
    */
   const line = (glyph: Glyph, text: string): void => {
-    // Folded to the terminal's character set on the way out. Doctor's findings are
-    // sentences other modules composed — a probe's detail, an orphan's reason — and the
-    // page is where the character set is decided, exactly as it is where the colour is:
-    // a caller that read a fact has no business knowing what the reader's locale
-    // promised. `dash()` is the same primitive the composed lines below use.
+    // Folded to the terminal's character set on the way out, and this is the **only**
+    // place that decision is made for a finding. Doctor's findings are sentences other
+    // modules composed — a probe's detail, an orphan's reason, this file's own
+    // `describeWiring` — and the page is where the character set is decided, exactly as
+    // it is where the colour is: a caller that read a fact has no business knowing what
+    // the reader's locale promised, and two places folding the same dash is two places
+    // to forget it.
     say(`  ${lava.glyph(glyph)} ${text.replaceAll(EM_DASH, lava.dash())}\n`);
   };
   const orphans: string[] = [];
@@ -319,6 +321,17 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   }
 
   // ── orphans: pieces whose partners are missing ──
+  // A file of ours at an artefact's former name, with today's name written beside it:
+  // smelt wrote it, the harness has stopped reading that directory, and nothing else
+  // would ever mention it again. It costs `current`, which is honest — there is a file
+  // in this project that smelt put there and no longer maintains.
+  for (const stale of state.superseded) {
+    orphans.push(
+      `${stale.file} is where an earlier release wrote this file — ` +
+        `${stale.harnessName} does not load it`,
+    );
+    repair.push(`${CLI_NAME} hooks remove --harness ${stale.harness}${scopeFlag(scope)}`);
+  }
   const wired = state.blocks.length > 0 || state.hookFiles.length > 0;
   if (state.mcp.some((one) => one.registered) && !wired) {
     orphans.push(
@@ -358,7 +371,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
             ? 'MALFORMED'
             : `schema ${String(config.schemaVersion)}, budget ${
                 config.budgetBytes === undefined ? 'unset' : String(config.budgetBytes)
-              }, store ${describeStore(config, lava)}`
+              }, store ${describeStore(config)}`
         }`,
       );
     } else {
@@ -376,7 +389,7 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       const file = hooks.find((one) => one.file === name);
       line(
         file === undefined ? 'ok' : PROBE_GLYPH[hookFileStatus(file)],
-        `${name}: ${describeWiring(file, lava)}`,
+        `${name}: ${describeWiring(file)}`,
       );
     }
     for (const one of state.mcp) {
@@ -585,14 +598,12 @@ function hookFileStatus(file: DoctorHookFile): HookProbe['status'] {
  * probe behind it — a hook file whose entries were all somebody else's, or a
  * whole-owned file whose profile declares no way to ask it.
  */
-function describeWiring(file: DoctorHookFile | undefined, lava: Palette): string {
+function describeWiring(file: DoctorHookFile | undefined): string {
   if (file === undefined || file.entries.length === 0) return 'wired';
   const worst = file.entries.find((entry) => entry.probe.status === 'missing');
-  if (worst !== undefined) {
-    return `wired but missing ${lava.dash()} ${worst.script ?? worst.probe.detail}`;
-  }
+  if (worst !== undefined) return `wired but missing — ${worst.script ?? worst.probe.detail}`;
   const inert = file.entries.find((entry) => entry.probe.status === 'inert');
-  if (inert !== undefined) return `wired but inert ${lava.dash()} ${inert.probe.detail}`;
+  if (inert !== undefined) return `wired but inert — ${inert.probe.detail}`;
   return 'wired (verified)';
 }
 
@@ -600,13 +611,13 @@ function describeWiring(file: DoctorHookFile | undefined, lava: Palette): string
  * The store, as one clause of the config line. The size half is rendered from the two
  * receipt fields rather than counted here — one arithmetic, two surfaces.
  */
-function describeStore(config: DoctorConfig, lava: Palette): string {
+function describeStore(config: DoctorConfig): string {
   if (config.store.kind === undefined) return 'unset';
   if (config.store.kind === 'memory') return 'memory';
   const size =
     config.store.blobs === undefined || config.store.bytes === undefined
       ? ''
-      : ` ${lava.dash()} ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
+      : ` — ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
   return `directory at ${config.store.path ?? ''} (${
     config.store.dirExists ? 'present' : 'MISSING'
   })${size}`;

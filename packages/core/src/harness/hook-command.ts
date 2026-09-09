@@ -560,7 +560,7 @@ function probePlugin(
       input: '',
       encoding: 'utf8',
       cwd: scratch,
-      env: { ...process.env, SMELT_PROBE_PLUGIN: path },
+      env: loaderEnv(path),
       timeout: timeoutMs,
     });
     if (run.error !== undefined) {
@@ -581,6 +581,26 @@ function probePlugin(
 
 /** What the loader prints when the plugin loaded and the hook is there. */
 const PLUGIN_FIRES = 'smelt-plugin-fires';
+
+/**
+ * The variables node itself needs to start and resolve a module graph, and nothing
+ * else. The loader resolves imports; it does not run policy, and it is not the harness.
+ *
+ * Handing it this process's whole environment would hand somebody else's code every
+ * secret in it (`smelt doctor` is run inside sessions that hold API keys) for a question
+ * about which files exist. `NODE_OPTIONS` is deliberately not on the list: it can inject
+ * a `--require` into the probe, and a probe that can be steered is not evidence.
+ */
+function loaderEnv(plugin: string): Readonly<Record<string, string>> {
+  const carried: Record<string, string> = { SMELT_PROBE_PLUGIN: plugin };
+  // PATH and HOME because node reads them at startup; the Windows three because a
+  // process started without them cannot even open a temp file there.
+  for (const name of ['PATH', 'Path', 'HOME', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP']) {
+    const value = process.env[name];
+    if (value !== undefined) carried[name] = value;
+  }
+  return carried;
+}
 
 /**
  * The loader script, as source. The plugin's path travels in the environment rather
