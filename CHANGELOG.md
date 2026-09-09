@@ -349,6 +349,25 @@ the guard was inert through the `opt` symlink besides — a re-run rewrites both
   real CLI in a scratch project whose store is thrown away, normalises the store path to
   the README's own spelling, and compares byte for byte. It was the last hand-typed
   rendering of real counters on that page, and it can no longer drift silently.
+- **The config schema moved out of `cli/`** — `SmeltConfig`, `parseConfig`,
+  `renderConfig`, `findConfigFile`, `loadNearestConfig`, `configuredStore` and the two
+  config constants are `@smeltjs/core`'s `src/config.ts` rather than `src/cli/config.ts`.
+  Every exported name and every re-export from the package root is unchanged, so nothing
+  a consumer imports moved; what moved is which layer owns the file. Three layers that
+  are not the CLI read the schema — the install planner, the store seam and the rerank
+  loader — and a module three layers depend on cannot live inside one of them.
+  `harness/` now imports nothing from `cli/` at all, with no exception left in the seam
+  guard.
+- **`SETUP_RECIPE.mcp.register` is gone.** The recipe held Claude Code's
+  `claude mcp add smelt -- npx @smeltjs/mcp` as though a `claude` CLI verb were every
+  harness's registration, and five renderings read it from there. Registration is a
+  `HarnessProfile.mcp` fact — one per harness, in that harness's own words — and what
+  the recipe keeps is `mcp.run`: `npx @smeltjs/mcp`, the plain stdio command any MCP
+  client registers and the only MCP sentence true without naming a harness. The
+  recipe's ordered `mcp` step and the generated `skills/smelt/SKILL.md` line now carry
+  that instead of a `claude` verb; Claude Code's two spellings live in its own profile,
+  composed from `mcp.run` rather than retyped. Both READMEs are byte-identical — they
+  document Claude Code, and are now pinned to the profile that owns what they show.
 
 ## 0.6.0 — 2026-09-07
 
