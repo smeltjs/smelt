@@ -13,6 +13,39 @@ the runner rather than by hand.
 
 ## Unreleased
 
+### Changed
+
+- **The rerank slot now spares only as far as the budget reaches, and `topK` is a cap
+  rather than a quantity.** The slot spared every region a stage returned and never saw
+  `budgetBytes`, so a `topK` written in a config file decided how large the output got —
+  a run that fitted before the reranker could stop fitting after it. `applyRerank` now
+  takes the run's budget and its `MarkerPricing` across the seam, walks the stage's
+  selection best score first, and stops at the first region that would push the predicted
+  output past the ceiling. The prediction is `plan/budget.ts`'s, the same arithmetic the
+  lexical planner picks a ladder rung with and the structural planner runs its own budget
+  rung on, so the slot and the planners cannot disagree about what a marker costs. If the
+  best-ranked region alone breaks the budget, nothing is spared at all: a plan that fits
+  beats a plan that does not, and a stage cannot cut, so the only lever left is not
+  sparing. The doctrine in one line, and it is written at the seam: a K smelt invents is
+  refused; a budget the user typed is honoured. `test/guards/rerank-budget.test.ts` holds
+  both halves, with mutations that remove the budget check and that fabricate the stop
+  reason.
+- **`RerankedCandidate.score` is load-bearing as an order.** The slot sorts a stage's
+  selection score-descending, breaking ties by the order the candidates were sent, so
+  which regions survive a tight budget no longer depends on how an adapter happened to
+  serialise its response. The interface documents it; a stage that returns its selection
+  unsorted now has a defined outcome rather than an incidental one.
+- **The rerank attribution says what was asked for and where the sparing stopped.**
+  `RerankAttribution` gains three optional fields, present exactly when the stage ran:
+  `returned` (how many regions it asked to spare), `sparedBytes` (what those put back —
+  the regions restored, less the markers that no longer land, priced through the same
+  seam the plan was made with) and `stopped` — `budget`, `cap` or `exhausted`. A `topK`
+  of 8 that reports 3 kept now carries the reason beside it instead of leaving the reader
+  to guess whether their ranker or their budget made the decision. The stderr report line
+  gains a `B back` clause and, on a budget stop, `stopped at the budget: the stage offered
+  N`; the `--json` envelope carries `result` verbatim, so `result.rerank` gains the three
+  fields additively and nothing was renamed or dropped.
+
 ### Docs
 
 - **`llms.txt` and `llms-full.txt`, for the agent that arrives before the install.** The

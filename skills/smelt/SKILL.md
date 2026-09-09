@@ -115,6 +115,11 @@ names — there is no key smelt reads that you did not write down. A stage may o
 regions from the cut, never cut more, and a stage that throws is reported as the refusal
 it is, never as a quiet unranked run.
 
+`topK` is a cap under the budget, not a quantity: smelt walks what the stage returns
+best score first and spares while the output still fits the budget, so a `topK` of 8 can
+come back as 3 kept. The report line names the wall the walk hit, and the `--json`
+receipt carries it as `result.rerank.stopped` (`budget`, `cap` or `exhausted`).
+
 ## MCP
 
 If the project registers smelt over MCP, five tools exist: `smelt_file` (shrink a

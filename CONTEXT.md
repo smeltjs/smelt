@@ -314,8 +314,9 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   produced. The escalation is stated where every consumer of a plan already reads a
   rule from — the CLI report's rule column, the `--json` envelope, the per-rule
   ledger — never inferred from which pass happened to run. The lexical planner's
-  context ladder is the sibling of this idea, and `src/plan/budget.ts` is the
-  arithmetic they share.
+  context ladder is the sibling of this idea, the **Rerank budget rung** is the third
+  reader of the same question, and `src/plan/budget.ts` is the arithmetic all three
+  share.
 - **Unit** (structural, `unitsOf` in `src/plan/structural.ts`): one root-level sibling
   the structural planner can match or collapse — a top-level declaration plus its
   attached comment/attribute prefix. **Root children only, one level, a stated
@@ -393,22 +394,45 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
 - **Rerank slot**: where a `RerankStage` actually bites — `src/rerank/protect.ts`,
   between the planner's decision and the cut. The **candidates** are the planner's own
   proposed elisions (the regions actually at stake), the **query** is the run's focus
-  terms joined, and **what the stage returns is what smelt spares**: those entries are
-  dropped from the plan, so they survive into the output as if a focus term had matched
-  them. The returned list is a _selection_, not a ranking of everything — a stage that
-  returns every candidate spares every candidate, and the run emits its input unchanged
-  and exits 0, which is the one implementation mistake here that fails silently. A stage
-  can only spare, never add, so a run may come back **over budget**, reported in the words
-  a too-large focus window already earns. No candidates or no query and the stage is not
-  called at all; every way a stage can fail — including throwing, which a hosted one
-  ordinarily does — comes back as a `RerankStageError`, never as an unhandled crash. What
-  it did comes back as a **RerankAttribution** (`{adapter, model?, candidates, kept,
-skipped?}`) on `SmeltResult`, which the stderr report, the `--json` envelope and
+  terms joined, and **what the stage returns is what smelt spares** — as far as the
+  budget reaches: those entries are dropped from the plan, so they survive into the
+  output as if a focus term had matched them. The returned list is a _selection_ and a
+  _ranking_: not everything the stage was given, and ordered, because the slot walks it
+  score-descending (ties in the order the candidates were sent) and stops at the first
+  region that would push the predicted output past `budgetBytes`. A stage can only spare,
+  never add, and it can no longer spend past the ceiling — a plan that fitted still fits.
+  See the **Rerank budget rung** below for the ruling. No candidates or no query and the
+  stage is not called at all; every way a stage can fail — including throwing, which a
+  hosted one ordinarily does — comes back as a `RerankStageError`, never as an unhandled
+  crash. What it did comes back as a **RerankAttribution**
+  (`{adapter, model?, candidates, returned?, kept?, sparedBytes?, stopped?, skipped?}`)
+  on `SmeltResult`, which the stderr report, the `--json` envelope and
   `smelt_file`'s report block all render from — one value, three surfaces, no front door
   counting anything itself. `candidates` is always the measured size of the candidate set
   and `skipped` names the missing precondition when the stage was not called, so a receipt
   never carries a count nobody took. _Avoid_: "rerank filters", "rerank cuts" — it only
   ever keeps.
+- **Rerank budget rung**: the walk inside the rerank slot that decides how many of a
+  stage's answers a run can afford — `spareWithinBudget` in `src/rerank/protect.ts`, the
+  same shape as the planners' rungs and priced by the same `src/plan/budget.ts`
+  (`predictOutputBytes`, `savingBytes`), so the slot and the planners cannot disagree
+  about what a marker costs. The doctrine, in one line: **a K smelt invents is refused; a
+  budget the user typed is honoured.** `topK` stays the **cap the caller wrote** — smelt
+  never fills it, raises it, or adds a ceiling of its own — and the budget is a ceiling
+  the caller also wrote, on the one number the library exists to control. If the
+  best-ranked region alone breaks the budget, **nothing is spared**: a plan that fits
+  beats a plan that does not, and the stage cannot cut, so the only lever left is not
+  sparing. The walk stops at the first region that does not fit rather than skipping on
+  to a smaller one, because skipping would re-rank the stage's answer by size — a
+  relevance decision the slot has no standing to make. Three fields report it, present
+  exactly when the stage ran: `returned` (how many it asked for), `sparedBytes` (what the
+  spares put back — the regions restored, less the markers that no longer land) and
+  `stopped` — `'budget'` (the next region would not fit; the only outcome where `kept` is
+  below `returned`), `'cap'` (every returned region was spared and the stage returned
+  fewer than it was offered — its own cut-off bound the run) or `'exhausted'` (every
+  returned region was spared and the stage had returned all of them). Guarded by
+  `test/guards/rerank-budget.test.ts`. _Avoid_: calling `topK` a quantity — it is a cap;
+  and calling the budget stop a cap — it is smelt's ruling, not the user's.
 - **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
   smelt setting that can send a caller's source to a third party. Two kinds: `module`
   (an ESM file of the consumer's own, resolved against the config file, default-exporting

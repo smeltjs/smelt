@@ -126,6 +126,10 @@ type RerankChoice = 'none' | 'module' | 'voyage';
  * voyage block without one, exactly as `--budget` refuses. Eight is small enough that a
  * first run is cheap and visible in the report's `(N candidates, M kept)` line, and it
  * makes no claim about relevance — the wizard's copy says so.
+ *
+ * It is a **cap under the budget**, never a quantity: the rerank slot spares the stage's
+ * ranking best-first and stops at the budget, so a `topK` of 8 may well report 3 kept,
+ * with the report line naming the budget as the reason (`rerank/protect.ts`).
  */
 const WIZARD_VOYAGE_TOP_K = 8;
 

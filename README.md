@@ -818,25 +818,36 @@ to an unranked run.
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
 returns is spared** from the cut — a selection, not a ranking of everything, so apply your
-own cut-off (`topK`, a `.slice`). Returning all of them keeps all of them, and the run
-emits its input unchanged. It can only spare, never cut, so the worst a bad answer can do
-is cost you bytes — and bytes are already reported, including when a reranker turns an
-in-budget run into an over-budget one.
+own cut-off (`topK`, a `.slice`). It can only spare, never cut, so the worst a bad answer
+can do is cost you bytes.
+
+**And it spares only as far as your budget reaches.** The list you return is also an
+_order_: smelt walks it best score first and spares while the output still fits the budget
+you asked for, stopping at the first region that would not. So the head of your list is
+what survives a tight run, and `topK` is a **cap** rather than a quantity — smelt never
+fills it, and if the best-ranked region alone would break the budget, nothing is spared at
+all. A plan that fits beats a plan that does not, and a reranker cannot cut, so the only
+lever left is not sparing. The rule in one line: a K smelt invents is refused; a budget you
+typed is honoured.
 
 A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
 refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
 `smelt_file`), never as a crash in smelt.
 
 Every run that reranks says so, on a line of its own beneath the focus line — this is its
-shape, not a measurement; the two counts are tallied per run and never estimated:
+shape, not a measurement; every count is tallied per run and never estimated:
 
 ```
-rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept)
+rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept, <bytes> B back)
+rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept, <bytes> B back)   stopped at the budget: the stage offered <returned>
 ```
 
-The same three facts ride in the `--json` envelope (`result.rerank`) and in
-`smelt_file`'s report block, and `smelt doctor` says whether your key variable is set —
-presence only, never the value.
+The second shape is the one to read closely: your `topK` came back with more regions than
+the budget could afford, and the clause says so rather than leaving a number smaller than
+the one you configured with no explanation beside it. The same facts ride in the `--json`
+envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
+and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
+set — presence only, never the value.
 
 Writing your own stage is unchanged:
 
