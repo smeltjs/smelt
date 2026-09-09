@@ -26,7 +26,7 @@ import {
 } from './config.ts';
 import type { SmeltConfig, SmeltConfigStore } from './config.ts';
 import { HARNESSES, harnessById } from '../harness/registry.ts';
-import { resolveScope, scopeRoot } from '../harness/scope.ts';
+import { locateStep, resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
 import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessLabel, TIER_HONESTY } from '../harness/profile.ts';
@@ -265,10 +265,18 @@ async function wizardPath(
   // Budget: the config's own if it carries one, else the recipe's recommendation —
   // Enter is always an answer here, which is the difference from `init`, whose
   // confirm refuses to proceed without a budget someone typed.
-  const configPath = setupConfigPath(io, choices.scope);
-  const existingText = readIfExists(configPath);
-  const existing = existingText === undefined ? undefined : parseConfig(existingText, configPath);
-  const budgetDefault = existing?.defaultBudgetBytes ?? SETUP_RECIPE.recommendedBudgetBytes;
+  //
+  // Read **when the question is asked**, not when the steps are built: the scope step
+  // runs first and can flip the answer, and `~/smelt.config.json` and the project's are
+  // two different files with two different budgets. Offering the machine's number as
+  // the Enter default for a project install is offering a number from a file this run
+  // will not touch.
+  const budgetDefault = (): number => {
+    const configPath = setupConfigPath(io, choices.scope);
+    const existingText = readIfExists(configPath);
+    const existing = existingText === undefined ? undefined : parseConfig(existingText, configPath);
+    return existing?.defaultBudgetBytes ?? SETUP_RECIPE.recommendedBudgetBytes;
+  };
 
   // The wizard kit's step machine, so back is real back: harnesses ← budget ← store
   // ← mcp, each step returning to the one before it (the first says so).
@@ -288,7 +296,7 @@ async function wizardPath(
       await stepHarnesses(say, a, choices, detectedHarnesses(io.cwd, io.home ?? homedir()));
       return 'ok';
     },
-    async (a) => await stepBudget(say, a, choices, budgetDefault),
+    async (a) => await stepBudget(say, a, choices, budgetDefault()),
     async (a) => await stepStore(say, a, choices),
     async (a) => await stepMcp(say, a, choices),
   ];
@@ -466,7 +474,7 @@ async function confirm(
       fileFate,
     );
   }
-  const mcp = mcpVerdict(choices, plan?.manual ?? []);
+  const { mcp } = mcpVerdict(choices, plan?.manual ?? [], io);
   say(
     `  mcp ${
       mcp.status === 'skipped'
@@ -491,6 +499,13 @@ interface ApplyOutcome {
   readonly receipt: Omit<SetupReceipt, 'format' | 'cwd'>;
   readonly notes: readonly string[];
   readonly failedChecks: number;
+  /**
+   * True when a `manual` MCP verdict means "no selected harness carries a registration
+   * this preset knows how to write" rather than "the file is the harness's own". The
+   * receipt carries the command either way; only the prose distinguishes them, because
+   * only a reader needs to know which of the two it is looking at.
+   */
+  readonly manualFromProfile: boolean;
 }
 
 /**
@@ -596,7 +611,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
   //    handed over as the exact command where none does (no harness named, or a
   //    harness whose registration this preset does not yet know) — never pretending
   //    it ran something it did not ──
-  const mcp = mcpVerdict(choices, plan?.manual ?? []);
+  const { mcp, fromProfile: manualFromProfile } = mcpVerdict(choices, plan?.manual ?? [], io);
 
   // ── verify: the checks that make "set up" a claim with evidence ──
   const checks: SetupCheck[] = [];
@@ -621,6 +636,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
 
   const failedChecks = checks.filter((check) => !check.ok).length;
   return {
+    manualFromProfile,
     receipt: {
       scope: choices.scope,
       config: { action: configAction },
@@ -651,8 +667,13 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
     );
   }
   if (mcp.status === 'manual') {
+    // Two different manuals, and the reason is what the reader needs. Either no
+    // selected harness carries a registration this preset knows how to write — the
+    // sentence this line has always carried — or one does and the file is the
+    // harness's own to rewrite, which the receipt's own command already names.
     say(
-      `MCP registration stays in your hands:\n` +
+      `MCP registration stays in your hands` +
+        `${outcome.manualFromProfile ? ' (no selected harness carries it)' : ''}:\n` +
         `  ${mcp.command}\n` +
         `packages/mcp/README.md has the mechanism for every harness surveyed.\n`,
     );
@@ -826,22 +847,47 @@ function scopeLine(scope: InstallScope, io: SetupIo): string {
  * for a registration nobody performed — the receipt lying in the direction that costs
  * the agent a working MCP server.
  */
-function mcpVerdict(choices: SetupChoices, manual: readonly ManualStep[]): SetupReceipt['mcp'] {
-  if (!choices.registerMcp) return { status: 'skipped' };
-  const manualMcp = manual.find(
-    (step) => step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration',
-  );
-  if (manualMcp !== undefined) return { status: 'manual', command: manualMcp.command };
+/** An MCP registration step, either spelling of it. */
+function isMcpStep(step: { readonly kind: string }): boolean {
+  return step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration';
+}
+
+function mcpVerdict(
+  choices: SetupChoices,
+  manual: readonly ManualStep[],
+  io: SetupIo,
+): { readonly mcp: SetupReceipt['mcp']; readonly fromProfile: boolean } {
+  if (!choices.registerMcp) return { mcp: { status: 'skipped' }, fromProfile: false };
+  const roots = { cwd: io.cwd, home: io.home ?? homedir() };
+
+  // `applied` wins, and that order is the ruling: a run that wrote *any* registration
+  // has applied one, whatever else it also handed over. `--scope user --harness
+  // claude-code --harness codex` writes codex's TOML table and prints Claude Code's
+  // command; calling the whole run `manual` would tell an agent to go and do by hand
+  // something setup already did. The command it could not write stays in `notes`, per
+  // step, with the harness that asked for it.
+  //
+  // "Written" is asked of the resolver, not of the profile: a step with a documented
+  // user-level location that is the harness's own file to rewrite has a path and is
+  // still not ours to write.
   const applied = choices.harnesses.some((profile) =>
-    profile.install.some(
-      (step) =>
-        (step.kind === 'mcp-registration' || step.kind === 'toml-mcp-registration') &&
-        !(choices.scope === 'user' && step.user === undefined),
-    ),
+    profile.install.some((step) => {
+      if (!isMcpStep(step)) return false;
+      const located = locateStep(step, choices.scope, { ...roots, harness: profile.name });
+      return located.path !== undefined && located.manual === undefined;
+    }),
   );
-  return applied
-    ? { status: 'applied', command: SETUP_RECIPE.mcp.register }
-    : { status: 'manual', command: SETUP_RECIPE.mcp.register };
+  if (applied) {
+    return { mcp: { status: 'applied', command: SETUP_RECIPE.mcp.register }, fromProfile: false };
+  }
+  const manualMcp = manual.find(isMcpStep);
+  // Two different manuals: a location that is the harness's own to rewrite (the step
+  // carries the command), or no selected harness carrying a registration this preset
+  // knows how to write at all — which is the older of the two, and the one whose
+  // sentence the prose has always said out loud.
+  return manualMcp === undefined
+    ? { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.register }, fromProfile: true }
+    : { mcp: { status: 'manual', command: manualMcp.command }, fromProfile: false };
 }
 
 function tierLine(profile: HarnessProfile): string {

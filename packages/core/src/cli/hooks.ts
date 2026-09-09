@@ -584,6 +584,10 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
   for (const profile of choices.harnesses) {
     const roots = rootsFor(profile);
     for (const step of profile.install) {
+      // A guard-only file the guard toggle turned off is not installed at any scope,
+      // so it is not located either: reporting it skipped for want of a user-level
+      // home would name a file this run was never going to write.
+      if (step.kind === 'own-file' && step.guardOnly && !ctx.guard) continue;
       // One resolver, before any per-kind work: no path means this harness documents
       // no home for this artefact at this scope, and a `manual` one means the harness
       // owns the file and we print a command instead of writing a byte.
@@ -610,7 +614,6 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
           planBlockFile(path, name, step.block(ctx), step.start, step.end, step.skipWhen);
           break;
         case 'own-file':
-          if (step.guardOnly && !ctx.guard) break;
           files.set(path, planFile(path, name, step.content(ctx), step.mode));
           break;
         case 'mcp-registration': {
@@ -934,6 +937,23 @@ async function installFlow(
     home,
   };
 
+  /**
+   * Take a scope, and re-read the toggles **that scope's** files carry.
+   *
+   * A re-run edits rather than resets, and what it edits is what is installed *at the
+   * scope being installed to*. Reading the machine's toggles and then writing the
+   * project's spellings is the reset this reading exists to prevent, one directory
+   * over: the user answers "project", and the project's own guard/stats/map/lint
+   * settings are replaced by the machine's. Unchanged when the answer is the scope
+   * already settled on, so going `back` past this question does not discard toggles
+   * the user typed after it.
+   */
+  const useScope = (next: InstallScope): void => {
+    if (choices.scope === next) return;
+    choices.scope = next;
+    Object.assign(choices, presetToggles(io.cwd, { scope: next, home }));
+  };
+
   // With --harness the selection step is skipped, so the tier label — and its one
   // line of honesty about what the tier means — is printed here instead.
   if (harnessFlag !== undefined) {
@@ -947,7 +967,7 @@ async function installFlow(
     async (io_, ask_) =>
       io.scope !== undefined || detectedScope === 'project'
         ? 'ok'
-        : stepScope(io_, ask_, choices, home),
+        : stepScope(io_, ask_, useScope, home),
     async (io_, ask_) =>
       harnessFlag !== undefined ? 'ok' : stepHarnesses(io_, ask_, choices, detected),
     async (io_, ask_) =>
@@ -1030,7 +1050,7 @@ function guardCopy(): string {
 async function stepScope(
   io: HooksIo,
   ask: Asker,
-  choices: HooksChoices,
+  useScope: (scope: InstallScope) => void,
   home: string,
 ): Promise<'ok' | 'back'> {
   io.output(
@@ -1046,11 +1066,11 @@ async function stepScope(
     const answer = await ask(`scope (1 machine / 2 project) [1]> `);
     if (answer === 'back') return 'back';
     if (answer === '' || answer === '1') {
-      choices.scope = 'user';
+      useScope('user');
       return 'ok';
     }
     if (answer === '2') {
-      choices.scope = 'project';
+      useScope('project');
       return 'ok';
     }
     io.output(`1 for this machine, 2 for this project.\n`);

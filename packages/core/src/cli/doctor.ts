@@ -233,7 +233,13 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   const current =
     installed && behindBlocks.length === 0 && orphans.length === 0 && brokenHooks.length === 0;
 
-  say(`${CLI_NAME} doctor — binary ${io.version}, reading ${root} (${scope} scope)\n`);
+  // The suffix only where it says something: a project reading from a project
+  // directory is what this line has always meant, and every byte of that prose stays
+  // what it was.
+  say(
+    `${CLI_NAME} doctor — binary ${io.version}, reading ${root}` +
+      `${scope === 'user' ? ' (machine scope)' : ''}\n`,
+  );
   if (!installed) {
     say(`Nothing of smelt's is installed here. \`${CLI_NAME} setup\` would change that.\n`);
   } else {

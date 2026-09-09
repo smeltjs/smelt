@@ -490,8 +490,9 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'setup-claims-applied-when-manual',
     file: 'cli/setup.ts',
-    find: "? { status: 'applied', command: SETUP_RECIPE.mcp.register }",
-    replace: "? { status: 'manual', command: SETUP_RECIPE.mcp.register }",
+    find: "    return { mcp: { status: 'applied', command: SETUP_RECIPE.mcp.register }, fromProfile: false };",
+    replace:
+      "    return { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.register }, fromProfile: false };",
     why: 'the receipt calling an applied registration manual — the agent reading --json would re-register by hand what setup already wrote, and the receipt would be wrong in the direction that costs work',
   },
 ];

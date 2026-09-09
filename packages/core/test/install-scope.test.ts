@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -6,12 +6,20 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runDoctor } from '../src/cli/doctor.ts';
+import { EXIT } from '../src/cli/shell.ts';
 import type { DoctorReceipt } from '../src/cli/doctor.ts';
 import { planInstall, planRemove, presetToggles, runHooks } from '../src/cli/hooks.ts';
 import type { HooksChoices } from '../src/cli/hooks.ts';
 import { readInstalledState } from '../src/cli/installed.ts';
+import { SETUP_RECIPE } from '../src/setup/recipe.ts';
 import { runSetup } from '../src/cli/setup.ts';
-import { HARNESSES, harnessById } from '../src/harness/registry.ts';
+import type { SetupReceipt } from '../src/cli/setup.ts';
+import {
+  GUARD_ONLY_FILES,
+  HARNESSES,
+  harnessById,
+  JSON_HOOK_FILES,
+} from '../src/harness/registry.ts';
 import { detectScope, locateStep, resolveScope } from '../src/harness/scope.ts';
 import { instructionSnippet } from '../src/harness/snippet.ts';
 import type { SmeltInvocation } from '../src/hooks/invocation.ts';
@@ -71,6 +79,17 @@ function choicesFor(ids: readonly string[], extra: Partial<HooksChoices> = {}): 
 /** Plan for the machine, and return the planned paths. */
 function userPlan(ids: readonly string[], extra: Partial<HooksChoices> = {}) {
   return planInstall(dir, choicesFor(ids, { scope: 'user', ...extra }));
+}
+
+/**
+ * The same, but with the **real** invocation — so the scripts the plan names are this
+ * package's own built ones and doctor's probe can actually run them. The fixture
+ * invocation above names `/pkg/dist/cli/bin.js`, which is the point everywhere else and
+ * exactly wrong for the one case that asks whether a machine install reads back healthy.
+ */
+function livePlan(ids: readonly string[], extra: Partial<HooksChoices> = {}) {
+  const { invocation: _fixture, ...live } = choicesFor(ids, { scope: 'user', ...extra });
+  return planInstall(dir, live);
 }
 
 describe('locateStep is the one resolver', () => {
@@ -317,19 +336,26 @@ describe('the readers look where the writer wrote', () => {
   });
 
   it('doctor at user scope reports the machine install, and its project reading is clean', () => {
-    apply(userPlan(['claude-code']));
+    // Stamped by the binary that reads it back, and the store the config promises
+    // created — `smelt setup` does both, and this test applies a plan directly. Without
+    // them doctor is right to say `not current`, for reasons that are not about scope.
+    // (A release version with no prerelease suffix: `snippetStampVersion` reads back
+    // `x.y.z` and would otherwise report a `9.9.9-test` stamp as behind `9.9.9-test`.)
+    apply(livePlan(['claude-code'], { writtenBy: '9.9.9' }));
+    mkdirSync(join(home, SETUP_RECIPE.store.defaultDir), { recursive: true });
 
     let stdout = '';
     const code = runDoctor(
       { json: true, scope: 'user' },
-      { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9-test' },
+      { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9' },
     );
     const receipt = JSON.parse(stdout) as DoctorReceipt;
     expect(receipt.scope).toBe('user');
     expect(receipt.installed, `doctor saw nothing at user scope: ${stdout}`).toBe(true);
     expect(receipt.hookFiles).toContain('.claude/settings.json');
     expect(receipt.blocks.map((block) => block.file)).toContain('.claude/CLAUDE.md');
-    expect(code).toBeTypeOf('number');
+    expect(receipt.current, `not current: ${stdout}`).toBe(true);
+    expect(code).toBe(EXIT.ok);
 
     let projectOut = '';
     runDoctor(
@@ -342,14 +368,20 @@ describe('the readers look where the writer wrote', () => {
   });
 
   it('doctor names --scope user in the repair it prints for a machine install', () => {
-    apply(userPlan(['claude-code']));
+    // Stamped by an older release, so the block reads `behind` and there is a repair
+    // to inspect at all — an unversioned block names none, and an assertion over an
+    // empty list is an assertion about nothing.
+    apply(userPlan(['claude-code'], { writtenBy: '1.0.0' }));
     let stdout = '';
-    runDoctor(
+    const code = runDoctor(
       { json: true, scope: 'user' },
-      { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9-newer' },
+      { output: (text) => void (stdout += text), cwd: dir, home, version: '2.0.0' },
     );
     const receipt = JSON.parse(stdout) as DoctorReceipt;
-    // Whatever else it found, a repair command must repair *this* install.
+    expect(code).toBe(EXIT.refused);
+    expect(receipt.repair.length, `no repair named: ${stdout}`).toBeGreaterThan(0);
+    expect(receipt.repair).toContain('smelt setup --harness claude-code --scope user');
+    // Whatever else it found, every repair command must repair *this* install.
     for (const command of receipt.repair) {
       if (!command.startsWith('smelt setup')) continue;
       expect(command, 'a project-scope repair would fix the wrong install').toContain(
@@ -441,5 +473,229 @@ describe('the wizards state the detected scope and let you flip it', () => {
     expect(existsSync(join(home, 'smelt.config.json'))).toBe(true);
     expect(existsSync(join(home, '.claude', 'CLAUDE.md'))).toBe(true);
     expect(existsSync(join(home, 'CLAUDE.md'))).toBe(false);
+  });
+});
+
+describe('the reading order of hookFiles is the receipt field it has always been', () => {
+  it('project scope lists every JSON hook file, then every guard-only file', () => {
+    apply(planInstall(dir, choicesFor(HARNESSES.map((profile) => profile.id))));
+
+    // Restated by hand: the order `[...JSON_HOOK_FILES, ...GUARD_ONLY_FILES]` produced,
+    // which is the order `smelt.doctor.v1`'s `hookFiles` and doctor's prose list have
+    // always carried. A profile-by-profile fold reads the same *set* and interleaves
+    // it — `.hermes/hooks.yaml` ahead of `.cursor/hooks.json` — which is a receipt
+    // field changing shape for a reason that has nothing to do with what is installed.
+    const state = readInstalledState(dir, { scope: 'project', home });
+    expect(state.hookFiles).toEqual([
+      '.claude/settings.json',
+      '.codex/hooks.json',
+      '.gemini/settings.json',
+      '.grok/hooks.json',
+      '.cursor/hooks.json',
+      '.hermes/hooks.yaml',
+      '.opencode/plugin/smelt-guard.js',
+      '.clinerules/hooks/PreToolUse',
+    ]);
+    // …and it is the registry's own derivation, not a list that happens to agree today.
+    expect(state.hookFiles).toEqual(
+      [...JSON_HOOK_FILES, ...GUARD_ONLY_FILES].filter((name) => existsSync(join(dir, name))),
+    );
+  });
+
+  it('user scope lists them in the same two passes', () => {
+    apply(userPlan(HARNESSES.map((profile) => profile.id)));
+    const state = readInstalledState(dir, { scope: 'user', home });
+    expect(state.hookFiles).toEqual([
+      '.claude/settings.json',
+      '.codex/hooks.json',
+      '.gemini/settings.json',
+      '.cursor/hooks.json',
+      '.config/opencode/plugins/smelt-guard.js',
+      '.cline/hooks/PreToolUse',
+    ]);
+  });
+});
+
+describe('flipping the scope re-reads that scope’s toggles', () => {
+  /**
+   * The wizard's own transcript is the surface under test: the number in
+   * `stats on Stop? (on/off) [on]` is what a re-run offers to keep, and offering the
+   * *machine's* answer for a *project* install is how a toggle the user set gets
+   * turned off by a wizard they answered with Enter.
+   *
+   * From `$HOME` the two scopes share most spellings — `.claude/settings.json` is the
+   * same file either way — so the state that tells them apart is a guard-only file
+   * whose two homes differ: opencode's plugin is `.opencode/plugin/…` for the project
+   * and `.config/opencode/plugins/…` for the machine.
+   */
+  function machineOnlyGuardInstall(): void {
+    apply(planInstall(home, choicesFor(['opencode'], { scope: 'user' })));
+  }
+
+  async function wizardFromHome(answers: readonly string[]): Promise<string> {
+    let output = '';
+    await runHooks('install', 'claude-code', {
+      input: Readable.from([`${answers.join('\n')}\n`]),
+      output: (text) => void (output += text),
+      cwd: home,
+      home,
+    });
+    return output;
+  }
+
+  it('answering “project” offers the project’s toggles, not the machine’s', async () => {
+    machineOnlyGuardInstall();
+
+    // Machine: something of smelt's is installed, and it wires the guard only — so
+    // stats reads back off.
+    const machine = await wizardFromHome(['', '', '', '', '', '', '', 'no']);
+    expect(machine).toContain('stats on Stop? (on/off) [off]');
+
+    // Project: nothing of smelt's is installed under the project spellings, so the
+    // installer's own defaults apply — stats on. Before the toggles were re-read after
+    // the flip, this said `[off]`, and an Enter would have written the machine's
+    // answer into the project's file.
+    const project = await wizardFromHome(['2', '', '', '', '', '', '', 'no']);
+    expect(project).toContain('stats on Stop? (on/off) [on]');
+  });
+
+  it('the written file carries the flipped scope’s toggles', async () => {
+    machineOnlyGuardInstall();
+    await wizardFromHome(['2', '', '', '', '', '', '', 'yes', 'yes']);
+    // The project spelling of the instruction file, and a Stop entry the machine
+    // reading would have left out.
+    expect(existsSync(join(home, 'CLAUDE.md'))).toBe(true);
+    expect(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).toContain('"Stop"');
+  });
+
+  it('setup reads the budget default from the config the settled scope will write', async () => {
+    // A config *above* home: project-scope discovery walks up into it, user scope does
+    // not — `~/smelt.config.json` is decided, not discovered. That is the one place
+    // from `$HOME` where the two scopes name different files.
+    const above = mkdtempSync(join(tmpdir(), 'smelt-scope-above-'));
+    const nested = join(above, 'home');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(
+      join(above, 'smelt.config.json'),
+      `${JSON.stringify({ smeltConfig: 1, defaultBudgetBytes: 1234 }, null, 2)}\n`,
+    );
+    try {
+      const run = async (answers: readonly string[]): Promise<string> => {
+        let output = '';
+        await runSetup(
+          { harnessIds: ['claude-code'], yes: false, noMcp: false, json: false },
+          {
+            input: Readable.from([`${answers.join('\n')}\n`]),
+            output: (text) => void (output += text),
+            cwd: nested,
+            home: nested,
+          },
+        );
+        return output;
+      };
+      // scope, budget, store kind, store path, mcp, confirm
+      expect(await run(['2', 'back', '', '', '', '', 'no'])).toContain(
+        'default budget in bytes [1234]',
+      );
+      expect(await run(['', 'back', '', '', '', '', 'no'])).toContain(
+        `default budget in bytes [${String(SETUP_RECIPE.recommendedBudgetBytes)}]`,
+      );
+    } finally {
+      rmSync(above, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the prose says only what the scope makes it say', () => {
+  it("doctor's header carries the scope only when it is the machine's", () => {
+    apply(userPlan(['claude-code']));
+    const prose = (scope: 'project' | 'user'): string => {
+      let out = '';
+      runDoctor(
+        { json: false, scope },
+        { output: (text) => void (out += text), cwd: dir, home, version: '9.9.9' },
+      );
+      return out;
+    };
+    // Project scope reading a project directory is what this line has always meant,
+    // and every byte of that prose stays what it was.
+    expect(prose('project')).toContain(`doctor — binary 9.9.9, reading ${dir}\n`);
+    expect(prose('project')).not.toContain('scope)');
+    expect(prose('user')).toContain(`doctor — binary 9.9.9, reading ${home} (machine scope)\n`);
+  });
+
+  async function setupProse(options: {
+    readonly harnessIds: readonly string[];
+    readonly scope: 'project' | 'user';
+  }): Promise<string> {
+    let out = '';
+    await runSetup(
+      {
+        harnessIds: options.harnessIds,
+        yes: true,
+        noMcp: false,
+        json: false,
+        scope: options.scope,
+      },
+      { output: (text) => void (out += text), cwd: dir, home },
+    );
+    return out;
+  }
+
+  it('the manual MCP sentence says which manual it is', async () => {
+    // No harness carries a registration this preset knows how to write — the older of
+    // the two manuals, and the sentence this line has always carried.
+    expect(await setupProse({ harnessIds: [], scope: 'project' })).toContain(
+      'MCP registration stays in your hands (no selected harness carries it)',
+    );
+  });
+
+  it('a registration the harness owns is a different manual, and says so', async () => {
+    const prose = await setupProse({ harnessIds: ['claude-code'], scope: 'user' });
+    expect(prose).toContain('MCP registration stays in your hands:');
+    expect(prose, 'claude-code does carry one — it is just not ours to write').not.toContain(
+      'no selected harness carries it',
+    );
+    expect(prose).toContain(SETUP_RECIPE.mcp.registerUser);
+  });
+
+  it('a run that wrote a registration is applied, whatever else it handed over', async () => {
+    let stdout = '';
+    await runSetup(
+      {
+        harnessIds: ['claude-code', 'codex'],
+        yes: true,
+        noMcp: false,
+        json: true,
+        scope: 'user',
+      },
+      { output: (text) => void (stdout += text), cwd: dir, home },
+    );
+    const receipt = JSON.parse(stdout) as SetupReceipt;
+    // Codex's TOML table really was written; calling the whole run `manual` would tell
+    // an agent to go and register by hand what setup already registered.
+    expect(readFileSync(join(home, '.codex', 'config.toml'), 'utf8')).toContain(
+      '[mcp_servers.smelt]',
+    );
+    expect(receipt.mcp.status).toBe('applied');
+    // And the one it could not write is still handed over, per step, in the notes.
+    expect((receipt.notes ?? []).join('\n')).toContain(SETUP_RECIPE.mcp.registerUser);
+  });
+});
+
+describe('a toggle that is off is not a location that is missing', () => {
+  it('guard off skips the guard-only files before it asks where they live', () => {
+    const off = planInstall(dir, choicesFor(['hermes'], { scope: 'user', guard: false }));
+    // Hermes has exactly two artefacts: a guard-only hook file and an instruction
+    // file. With the guard off the first is not installed at any scope, so reporting
+    // it skipped for want of a user-level home would name a file this run was never
+    // going to write.
+    expect(off.skipped.map((one) => one.name)).toEqual(['AGENTS.md']);
+
+    const on = planInstall(dir, choicesFor(['hermes'], { scope: 'user', guard: true }));
+    expect(on.skipped.map((one) => one.name).toSorted()).toEqual([
+      '.hermes/hooks.yaml',
+      'AGENTS.md',
+    ]);
   });
 });

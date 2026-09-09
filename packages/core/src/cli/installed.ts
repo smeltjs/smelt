@@ -6,6 +6,7 @@ import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from './config.ts';
 import type { SmeltConfig } from './config.ts';
 import { jsonHooksContainOurs, parseHookEntries } from '../harness/hook-command.ts';
 import type { HookEntry } from '../harness/hook-command.ts';
+import type { HarnessInstallStep, HarnessProfile } from '../harness/profile.ts';
 import { HARNESS_PROFILES, JSON_HOOK_FILE_NAMES } from '../harness/registry.ts';
 import { instructionArtefact, locateStep } from '../harness/scope.ts';
 import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
@@ -145,25 +146,42 @@ export function readInstalledState(
   }
 
   // ── hook wiring: JSON hook files and guard-only shims that carry our entries ──
+  //
+  // **Two passes, in this order**, and it is not incidental: `hookFiles` is what
+  // `smelt.doctor.v1` carries and what doctor's prose lists, and it has always been
+  // every JSON hook file followed by every guard-only file (the shape of the old
+  // `[...JSON_HOOK_FILES, ...GUARD_ONLY_FILES]` walk). A single profile-by-profile fold
+  // reads the same set but interleaves them — `.hermes/hooks.yaml` ahead of
+  // `.cursor/hooks.json` — which is a receipt field changing shape for a reason that has
+  // nothing to do with what is installed.
   const hookFiles: string[] = [];
   const hooks: InstalledHookFile[] = [];
   const seenHookPaths = new Set<string>();
+  const readHookStep = (
+    profile: HarnessProfile,
+    step: HarnessInstallStep,
+    isJson: boolean,
+  ): void => {
+    const located = locateStep(step, scope, rootsFor(profile.name));
+    if (located.path === undefined || located.name === undefined) return;
+    if (seenHookPaths.has(located.path)) return;
+    seenHookPaths.add(located.path);
+    if (!existsSync(located.path)) return;
+    const text = readFileSync(located.path, 'utf8');
+    if (isJson ? !jsonHooksContainOurs(text) : !text.includes(OURS_TOKEN)) return;
+    hookFiles.push(located.name);
+    if (isJson) {
+      hooks.push({ file: located.name, harness: profile.id, entries: parseHookEntries(text) });
+    }
+  };
   for (const profile of Object.values(HARNESS_PROFILES)) {
     for (const step of profile.install) {
-      const isJson = step.kind === 'json-hooks';
-      const isGuardOnly = step.kind === 'own-file' && step.guardOnly;
-      if (!isJson && !isGuardOnly) continue;
-      const located = locateStep(step, scope, rootsFor(profile.name));
-      if (located.path === undefined || located.name === undefined) continue;
-      if (seenHookPaths.has(located.path)) continue;
-      seenHookPaths.add(located.path);
-      if (!existsSync(located.path)) continue;
-      const text = readFileSync(located.path, 'utf8');
-      if (isJson ? !jsonHooksContainOurs(text) : !text.includes(OURS_TOKEN)) continue;
-      hookFiles.push(located.name);
-      if (isJson) {
-        hooks.push({ file: located.name, harness: profile.id, entries: parseHookEntries(text) });
-      }
+      if (step.kind === 'json-hooks') readHookStep(profile, step, true);
+    }
+  }
+  for (const profile of Object.values(HARNESS_PROFILES)) {
+    for (const step of profile.install) {
+      if (step.kind === 'own-file' && step.guardOnly) readHookStep(profile, step, false);
     }
   }
 
