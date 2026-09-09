@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { allSourceFiles, importSpecifiers, readSource } from './_source.ts';
+import {
+  allSourceFiles,
+  importSpecifiers,
+  readSource,
+  stripStringsAndComments,
+} from './_source.ts';
 import type { GuardMutation } from './_mutations.ts';
 
 /**
@@ -71,19 +76,24 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
 
   it('only the verb imports the wizard', () => {
     const importers = SOURCE.filter((file) => importedModules(file).includes('cli/hooks.ts'));
-    expect(importers.toSorted()).toEqual(['cli/subcommands/hooks.ts']);
+    expect(
+      importers.toSorted(),
+      `cli/hooks.ts is imported by ${importers.join(', ') || 'nothing'}. The wizard is a ` +
+        `leaf: its own verb reaches it and nothing else does, or the seam has been ` +
+        `re-crossed from a direction the case above does not list.`,
+    ).toEqual(['cli/subcommands/hooks.ts']);
   });
 
   it('harness/ imports nothing from cli/ but the config schema', () => {
     for (const file of SOURCE.filter((one) => one.startsWith('harness/'))) {
       const cliImports = importedModules(file).filter((one) => one.startsWith('cli/'));
       expect(
-        cliImports.toSorted(),
+        cliImports.every((one) => one === 'cli/config.ts'),
         `${file} imports ${cliImports.join(', ')} from cli/. A harness fact that needs ` +
           `a verb is a fact in the wrong module — that cycle is why the --harness help ` +
           `list was hand-typed. cli/config.ts is the one exception, and it is the ` +
           `config schema, not a verb.`,
-      ).toEqual(cliImports.length === 0 ? [] : ['cli/config.ts']);
+      ).toBe(true);
     }
   });
 
@@ -98,7 +108,11 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
       { declaration: 'export async function runHooks(', file: 'cli/hooks.ts' },
     ];
     for (const { declaration, file } of owners) {
-      const found = SOURCE.filter((one) => readSource(one).includes(declaration));
+      // Read with strings and comments blanked: a doc comment naming a declaration —
+      // this module's own header does — is prose about it, not a second one.
+      const found = SOURCE.filter((one) =>
+        stripStringsAndComments(readSource(one)).includes(declaration),
+      );
       expect(
         found,
         `"${declaration}" is declared in ${found.join(', ') || 'nothing'}. One copy of ` +

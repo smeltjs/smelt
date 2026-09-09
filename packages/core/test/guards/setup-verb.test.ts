@@ -173,6 +173,38 @@ describe('smelt setup applies the recipe in one command', () => {
     }
   });
 
+  it('names every registration it wrote, not just the first', async () => {
+    const cwd = scratch('mcp-two-harnesses');
+    try {
+      // Two harnesses, two different registrations, both written by this run: codex's
+      // TOML table and opencode's JSON key. `mcp.command` can only say one of them, so
+      // an agent reading it alone was told about codex and concluded opencode had not
+      // been registered — while `opencode.json` on disk said otherwise.
+      const receipt = await runYes(cwd, ['--harness', 'codex', '--harness', 'opencode']);
+      expect(receipt.mcp.status).toBe('applied');
+
+      const commands = receipt.mcp.commands ?? [];
+      expect(commands, 'the receipt names one registration for a run that wrote two').toHaveLength(
+        2,
+      );
+      expect(commands.join('\n')).toContain('.codex/config.toml');
+      expect(commands.join('\n')).toContain('opencode.json');
+      // `command` is `smelt.setup.v1`'s own field and still means the first of them.
+      expect(receipt.mcp.command).toBe(commands[0]);
+
+      // Both really are on disk — the receipt is a claim about what happened.
+      expect(readFileSync(join(cwd, '.codex', 'config.toml'), 'utf8')).toContain(
+        '[mcp_servers.smelt]',
+      );
+      expect(JSON.parse(readFileSync(join(cwd, 'opencode.json'), 'utf8'))).toHaveProperty([
+        'mcp',
+        'smelt',
+      ]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('re-runs a current machine as a byte-neutral no-op', async () => {
     const cwd = scratch('idempotent');
     try {
@@ -566,6 +598,14 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     kind: 'src',
+    id: 'setup-names-only-the-first-registration',
+    file: 'cli/setup.ts',
+    find: '  const unique = [...new Set(commands)];',
+    replace: '  const unique = commands.slice(0, 1);',
+    why: 'the receipt naming one registration for a run that wrote two — an agent reading it concludes the harness it cannot see was never registered, and re-registers by hand what setup already wrote',
+  },
+  {
+    kind: 'src',
     id: 'setup-prints-one-harness-command-for-all',
     file: 'cli/setup.ts',
     find: "  return scope === 'user' ? (manual.manualUser ?? manual.manual) : manual.manual;",
@@ -576,9 +616,8 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'setup-claims-applied-when-manual',
     file: 'cli/setup.ts',
-    find: "    return {\n      mcp: { status: 'applied', command: mcpManual(applied, choices.scope) },\n      fromProfile: false,\n    };",
-    replace:
-      "    return {\n      mcp: { status: 'manual', command: mcpManual(applied, choices.scope) },\n      fromProfile: false,\n    };",
+    find: "      mcp: mcpVerdictCommands(\n        'applied',",
+    replace: "      mcp: mcpVerdictCommands(\n        'manual',",
     why: 'the receipt calling an applied registration manual — the agent reading --json would re-register by hand what setup already wrote, and the receipt would be wrong in the direction that costs work',
   },
 ];

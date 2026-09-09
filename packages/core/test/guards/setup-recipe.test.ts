@@ -165,6 +165,43 @@ const README_SECTIONS: readonly {
   },
 ];
 
+/**
+ * One harness's section of the MCP README: from its heading to the next `###`, or the
+ * end. Sliced, never searched whole — `[mcp_servers.smelt]` is in both the Codex and
+ * the Grok sections, so a whole-file `toContain` is green when either of them loses it,
+ * and green when a harness's own snippet has moved into somebody else's section.
+ */
+function readmeSection(readme: string, heading: string): string {
+  const from = readme.indexOf(`\n${heading}\n`);
+  if (from === -1) return '';
+  const rest = readme.slice(from + heading.length + 2);
+  const to = rest.indexOf('\n### ');
+  return to === -1 ? rest : rest.slice(0, to);
+}
+
+/**
+ * Every config file a manual step names — a token ending in `.json` or `.toml`, with
+ * any `~/` prefix left on the front for the reader and stripped for the match. This is
+ * how a manual is tied to *its own* section: the fragments above are restated by hand
+ * and would stay true if a profile started naming another harness's file, and the
+ * snippet lines below are shared between Codex and Grok verbatim.
+ */
+function filesNamedIn(manual: string): readonly string[] {
+  return [...manual.matchAll(/[\w@.\-/]*\.(?:json|toml)\b/gu)].map((match) =>
+    match[0].replace(/^~\//u, ''),
+  );
+}
+
+/**
+ * The snippet a person pastes: every line after the first, which is smelt's own
+ * instruction sentence ("add this table to …"). A one-line manual is a command, and
+ * the whole of it is the snippet.
+ */
+function snippetLines(manual: string): readonly string[] {
+  const lines = manual.split('\n').filter((line) => line.trim() !== '');
+  return lines.length > 1 ? lines.slice(1) : lines;
+}
+
 describe('an MCP registration is a per-harness fact, not the recipe’s one command', () => {
   it('a harness that registers carries its own manual step, and no other does', () => {
     for (const profile of HARNESSES) {
@@ -201,9 +238,37 @@ describe('an MCP registration is a per-harness fact, not the recipe’s one comm
       'a harness gained (or lost) an MCP registration without the README following',
     ).toEqual(HARNESSES.filter(registersMcp).map((profile) => profile.id));
     for (const section of README_SECTIONS) {
-      expect(readme, `no "${section.heading}" section`).toContain(section.heading);
+      const slice = readmeSection(readme, section.heading);
+      expect(slice, `no "${section.heading}" section, or it is empty`).not.toBe('');
       for (const shows of section.shows) {
-        expect(readme, `the ${section.id} section no longer shows ${shows}`).toContain(shows);
+        expect(slice, `the ${section.id} section no longer shows ${shows}`).toContain(shows);
+      }
+    }
+  });
+
+  it('each manual step is the mechanism its own README section documents', () => {
+    // The project spelling is the one the README documents; the machine spelling is
+    // asserted where it is read, in `test/guards/install-scope.test.ts`'s receipt.
+    const readme = repoFile('packages/mcp/README.md');
+    for (const section of README_SECTIONS) {
+      const profile = HARNESSES.find((one) => one.id === section.id);
+      const manual = profile?.mcp?.manual ?? '';
+      const slice = readmeSection(readme, section.heading);
+      for (const file of filesNamedIn(manual)) {
+        expect(
+          slice,
+          `${section.id}'s manual step names ${file}, which its own README section ` +
+            `does not — either the profile is naming another harness's config file, ` +
+            `or the section it is documented in has moved.`,
+        ).toContain(file);
+      }
+      for (const line of snippetLines(manual)) {
+        expect(
+          slice,
+          `${section.id}'s manual step tells a person to paste "${line}", which is ` +
+            `not in its README section — the snippet and the doc that owns it have ` +
+            `drifted apart.`,
+        ).toContain(line);
       }
     }
   });

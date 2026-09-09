@@ -106,10 +106,15 @@ codebase-design glossary.
   for the MCP server: a profile that registers smelt carries the registration _as a
   person performs it_ (`{manual, manualUser?}`) beside the step that writes it — Claude
   Code's CLI verb, Codex's and Grok's `[mcp_servers.smelt]` table, opencode's `mcp` key
-  — composed from `MCP_RUN_ARGS` so the sentence and the bytes cannot drift, and pinned
-  section-by-section against `packages/mcp/README.md`. `smelt setup` printed the
-  recipe's Claude Code command for _every_ harness before it, which is a command about
-  a file Codex does not read. `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
+  — each the snippet a person pastes, composed from `MCP_RUN_ARGS` so it and the bytes
+  smelt writes cannot drift. The guard reads `packages/mcp/README.md` **one section at a
+  time**: every file a manual names and every line of its snippet must be in that
+  harness's own section, because the TOML table is identical in two of them and a
+  whole-file search stays green while a profile points at somebody else's config.
+  `smelt setup` printed the recipe's Claude Code command for _every_ harness before it,
+  which is a command about a file Codex does not read; and its receipt now carries
+  `mcp.commands`, every registration a run is about, because `mcp.command` can only name
+  one and a run wiring two harnesses had the second read as "not registered". `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
   what every shim shares — the rewrite-input splice, the deny fallback, and the one
   rewrite announcement (also spliced into the generated opencode plugin). ShimAdapter
   stays public as the escape hatch for a harness a table cannot express. The **tier

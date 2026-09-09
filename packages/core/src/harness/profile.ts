@@ -179,10 +179,18 @@ export function harnessLabel(profile: HarnessProfile): string {
  * (`test/guards/setup-recipe.test.ts`).
  */
 export function tomlMcpManual(file: string): HarnessMcpManual {
+  // The table exactly as `packages/mcp/README.md` prints it, and as
+  // `toml-mcp-registration` writes it — three lines of real TOML, not a one-line
+  // paraphrase of one: what a person does here is paste this, and a paraphrase is
+  // something they would have to translate first.
   const table =
-    `[mcp_servers.smelt] command = "${MCP_RUN_ARGS[0] ?? ''}", ` +
+    `[mcp_servers.smelt]\n` +
+    `command = "${MCP_RUN_ARGS[0] ?? ''}"\n` +
     `args = ${JSON.stringify(MCP_RUN_ARGS.slice(1))}`;
-  return { manual: `${file}: ${table}`, manualUser: `~/${file}: ${table}` };
+  return {
+    manual: `add this table to ${file}:\n${table}`,
+    manualUser: `add this table to ~/${file}:\n${table}`,
+  };
 }
 
 /**

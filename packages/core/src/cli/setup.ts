@@ -1,10 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
 import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
-import { detectedHarnesses, planInstall, renderConfigWithHooks } from '../harness/plan.ts';
+import {
+  detectedHarnesses,
+  planInstall,
+  readIfExists,
+  renderConfigWithHooks,
+} from '../harness/plan.ts';
 import type { HooksChoices, ManualStep } from '../harness/plan.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import { presetToggles, withToggleFlags } from './installed.ts';
@@ -124,8 +129,20 @@ export interface SetupReceipt {
   readonly files: readonly SetupFileAction[];
   readonly mcp: {
     readonly status: 'applied' | 'manual' | 'skipped';
-    /** The recipe's registration command — what was written, or what is left to you. */
+    /**
+     * The first of {@link commands}, kept because it is what `smelt.setup.v1` has
+     * always carried. A run wiring two registering harnesses says two things here, and
+     * this field can only say one of them — read {@link commands} where it is present.
+     */
     readonly command?: string;
+    /**
+     * Every registration this verdict is about, one per harness that carries one: what
+     * was written (`applied`), or what is left to you (`manual`). Additive and
+     * optional, so a reader of `smelt.setup.v1` that predates it sees the envelope it
+     * knows — but a reader that only ever read `command` was told about codex and not
+     * about opencode, and concluded opencode had not been registered.
+     */
+    readonly commands?: readonly string[];
   };
   readonly checks: readonly SetupCheck[];
   /**
@@ -163,10 +180,6 @@ const PROBE_SOURCE: string = `${Array.from(
 ).join('')}\nexport function renderTicket(id: string): string {\n  return 'ticket-' + id;\n}\n`;
 
 const PROBE_BUDGET_BYTES = 600;
-
-function readIfExists(path: string): string | undefined {
-  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
-}
 
 type Say = (text: string) => void;
 
@@ -481,13 +494,16 @@ async function confirm(
     );
   }
   const { mcp } = mcpVerdict(choices, plan?.manual ?? [], io);
+  // Every registration, not the first of them: a run wiring two registering harnesses
+  // was about to name one and leave the reader to guess about the other.
+  const listed = mcpCommandList(mcp).join('; ');
   say(
     `  mcp ${
       mcp.status === 'skipped'
         ? '(skipped)'
         : mcp.status === 'applied'
-          ? `(applied beside your existing servers: ${String(mcp.command)})`
-          : `(manual step: ${String(mcp.command)})`
+          ? `(applied beside your existing servers: ${listed})`
+          : `(manual step: ${listed})`
     }\nNothing has been written yet.\n`,
   );
   const confirmed = await confirmLoop(
@@ -674,7 +690,9 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
     say(
       `MCP registration stays in your hands` +
         `${outcome.manualFromProfile ? ' (no selected harness carries it)' : ''}:\n` +
-        `  ${mcp.command}\n` +
+        mcpCommandList(mcp)
+          .map((command) => `  ${command}\n`)
+          .join('') +
         `packages/mcp/README.md has the mechanism for every harness surveyed.\n`,
     );
   }
@@ -683,6 +701,16 @@ function renderOutcome(outcome: ApplyOutcome, say: Say): boolean {
   }
 
   return ok;
+}
+
+/**
+ * Every command a verdict names, for a renderer — {@link SetupReceipt.mcp}'s list where
+ * it has one, its single `command` otherwise. One reading, so the confirm summary and
+ * the outcome prose cannot disagree about how many registrations a run is about.
+ */
+function mcpCommandList(mcp: SetupReceipt['mcp']): readonly string[] {
+  if (mcp.commands !== undefined) return mcp.commands;
+  return mcp.command === undefined ? [] : [mcp.command];
 }
 
 /** finish: apply once, render twice — prose for humans, the receipt for machines. */
@@ -859,29 +887,54 @@ function mcpVerdict(
   // "Written" is asked of the resolver, not of the profile: a step with a documented
   // user-level location that is the harness's own file to rewrite has a path and is
   // still not ours to write.
-  const applied = choices.harnesses.find((profile) =>
+  const applied = choices.harnesses.filter((profile) =>
     profile.install.some((step) => {
       if (!isMcpStep(step)) return false;
       const located = locateStep(step, choices.scope, { ...roots, harness: profile.name });
       return located.path !== undefined && located.manual === undefined;
     }),
   );
-  if (applied !== undefined) {
+  if (applied.length > 0) {
     return {
-      mcp: { status: 'applied', command: mcpManual(applied, choices.scope) },
+      mcp: mcpVerdictCommands(
+        'applied',
+        applied.map((profile) => mcpManual(profile, choices.scope)),
+      ),
       fromProfile: false,
     };
   }
-  const manualMcp = manual.find(isMcpStep);
+  const manualMcp = manual.filter(isMcpStep);
   // Two different manuals: a location that is the harness's own to rewrite (the step
   // carries the command), or no selected harness carrying a registration this preset
   // knows how to write at all — which is the older of the two, and the one whose
   // sentence the prose has always said out loud. The second one names no harness, so
   // it names none: the plain stdio command any MCP client registers, not one harness's
   // CLI verb printed at somebody who is not using that harness.
-  return manualMcp === undefined
-    ? { mcp: { status: 'manual', command: SETUP_RECIPE.mcp.run }, fromProfile: true }
-    : { mcp: { status: 'manual', command: manualMcp.command }, fromProfile: false };
+  return manualMcp.length === 0
+    ? { mcp: mcpVerdictCommands('manual', [SETUP_RECIPE.mcp.run]), fromProfile: true }
+    : {
+        mcp: mcpVerdictCommands(
+          'manual',
+          manualMcp.map((step) => step.command),
+        ),
+        fromProfile: false,
+      };
+}
+
+/**
+ * The verdict as the receipt carries it: every command it is about, and the first of
+ * them again under `command`, which is the field `smelt.setup.v1` has always had and
+ * cannot be allowed to change meaning. Two harnesses that spell the same registration
+ * the same way are one line, not two — the list is what a reader acts on.
+ */
+function mcpVerdictCommands(
+  status: 'applied' | 'manual',
+  commands: readonly string[],
+): SetupReceipt['mcp'] {
+  const unique = [...new Set(commands)];
+  /* v8 ignore next -- unreachable: every caller passes at least one command */
+  if (unique[0] === undefined) return { status };
+  return { status, command: unique[0], commands: unique };
 }
 
 /**

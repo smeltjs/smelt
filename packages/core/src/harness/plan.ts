@@ -383,7 +383,13 @@ function planFile(
   };
 }
 
-function readIfExists(path: string): string | undefined {
+/**
+ * A file's text when it is there, `undefined` when it is not — the one read-or-nothing
+ * the installer's three modules share. It was declared three times (here, the state
+ * reader and the setup flow) with three identical bodies, which is the smallest shape
+ * of the thing this repository refuses everywhere else.
+ */
+export function readIfExists(path: string): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 

@@ -21,6 +21,7 @@ import {
   LIFECYCLE_EVENTS,
   MANAGED_EVENTS,
 } from '../harness/registry.ts';
+import { readIfExists } from '../harness/plan.ts';
 import { instructionArtefact, locateStep } from '../harness/scope.ts';
 import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
@@ -247,11 +248,6 @@ export function readInstalledState(
   }
 
   return { blocks, hookFiles, hooks, mcp: [...mcp.values()], config };
-}
-
-/** A file's text when it is there, `undefined` when it is not. */
-function readIfExists(path: string): string | undefined {
-  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 
 /** A path when it exists, `undefined` when it does not — the config's own presence. */

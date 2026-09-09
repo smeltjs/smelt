@@ -95,9 +95,7 @@ machine:
 
 ```json
 {
-  "mcp": {
-    "smelt": { "type": "local", "command": ["npx", "@smeltjs/mcp"] }
-  }
+  "mcp": { "smelt": { "type": "local", "command": ["npx", "@smeltjs/mcp"] } }
 }
 ```
 

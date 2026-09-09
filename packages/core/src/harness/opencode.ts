@@ -93,6 +93,14 @@ const MCP_ENTRY = { type: 'local', command: [...MCP_RUN_ARGS] } as const;
 const CONFIG_JSON = 'opencode.json';
 const USER_CONFIG_JSON = '.config/opencode/opencode.json';
 
+/**
+ * The entry as a person pastes it, exactly as `packages/mcp/README.md` prints it —
+ * the same value the `mcp-registration` step merges in, under the same key.
+ */
+const MCP_JSON =
+  `"mcp": { "smelt": { "type": "${MCP_ENTRY.type}", ` +
+  `"command": ["${MCP_ENTRY.command.join('", "')}"] } }`;
+
 export const opencode: HarnessProfile = {
   id: 'opencode',
   name: 'opencode',
@@ -111,8 +119,8 @@ export const opencode: HarnessProfile = {
   // The registration, as a person would add it — the same JSON value the step below
   // merges in, under the same key, in the file that scope reads.
   mcp: {
-    manual: `${CONFIG_JSON}: "mcp": { "smelt": ${JSON.stringify(MCP_ENTRY)} }`,
-    manualUser: `~/${USER_CONFIG_JSON}: "mcp": { "smelt": ${JSON.stringify(MCP_ENTRY)} }`,
+    manual: `add this to ${CONFIG_JSON}:\n${MCP_JSON}`,
+    manualUser: `add this to ~/${USER_CONFIG_JSON}:\n${MCP_JSON}`,
   },
   caveats: [
     'MCP tools can bypass opencode plugin hooks (sst/opencode#2319) — the guard sees built-in tools only',
