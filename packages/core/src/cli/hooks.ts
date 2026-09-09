@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
 import {
@@ -62,6 +62,7 @@ import {
 import { editTomlTable } from '../text/toml-edit.ts';
 
 import { SETUP_RECIPE } from '../setup/recipe.ts';
+import { fileIsOurs } from './installed.ts';
 import {
   confirmLoop,
   confirmYesNo,
@@ -353,6 +354,23 @@ interface PlannedFile {
   readonly content: string;
   readonly exists: boolean;
   readonly unchanged: boolean;
+  /**
+   * Whose bytes are in the planned content, and therefore what a non-interactive run
+   * is allowed to do with an existing file (see {@link Consent}).
+   *
+   *  - `'merged'` — the content was computed *from* the existing bytes by a
+   *    byte-faithful edit: `editTopLevelProperty` on a JSON hooks file,
+   *    `upsertMarkerBlock` on an instruction file, `editJsonProperty` /
+   *    `editTomlTable` on an MCP registration. Everything foreign in the file is
+   *    already in the planned content, so writing it destroys nothing.
+   *    `smelt.config.json` counts too: it is smelt's own file, re-rendered from its
+   *    own parsed fields with every key carried through.
+   *  - `'whole'` — smelt writes every byte (the opencode plugin, cline's hook
+   *    wrapper, hermes's YAML, KiloCode's rules file). There is nothing to merge
+   *    into, so an existing file that is not already ours is refused rather than
+   *    replaced.
+   */
+  readonly ownership: 'merged' | 'whole';
   /** chmod after writing (the cline hook must be executable). */
   readonly mode?: number;
 }
@@ -427,10 +445,24 @@ interface InstallPlan {
   readonly manual: readonly ManualStep[];
 }
 
-function planFile(path: string, name: string, content: string, mode?: number): PlannedFile {
+function planFile(
+  path: string,
+  name: string,
+  content: string,
+  ownership: PlannedFile['ownership'],
+  mode?: number,
+): PlannedFile {
   const exists = existsSync(path);
   const unchanged = exists && readFileSync(path, 'utf8') === content;
-  return { name, path, content, exists, unchanged, ...(mode === undefined ? {} : { mode }) };
+  return {
+    name,
+    path,
+    content,
+    exists,
+    unchanged,
+    ownership,
+    ...(mode === undefined ? {} : { mode }),
+  };
 }
 
 function readIfExists(path: string): string | undefined {
@@ -523,6 +555,9 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     content: renderConfigWithHooks(existingConfig, hooksBlock),
     exists: existsSync(configPath),
     unchanged: readIfExists(configPath) === renderConfigWithHooks(existingConfig, hooksBlock),
+    // smelt's own file, re-rendered from its own parsed fields — every key the reader
+    // knows rides through, so writing it over an existing one loses nothing.
+    ownership: 'merged',
   });
 
   const ctx: HarnessInstallContext = {
@@ -555,7 +590,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
       });
       return;
     }
-    files.set(path, planFile(path, name, merged));
+    files.set(path, planFile(path, name, merged, 'merged'));
   };
 
   const planBlockFile = (
@@ -578,7 +613,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
       skipped.push({ name, why: skipWhen.why });
       return;
     }
-    files.set(path, planFile(path, name, upsertMarkerBlock(existing, block, start, end)));
+    files.set(path, planFile(path, name, upsertMarkerBlock(existing, block, start, end), 'merged'));
   };
 
   for (const profile of choices.harnesses) {
@@ -614,7 +649,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
           planBlockFile(path, name, step.block(ctx), step.start, step.end, step.skipWhen);
           break;
         case 'own-file':
-          files.set(path, planFile(path, name, step.content(ctx), step.mode));
+          files.set(path, planFile(path, name, step.content(ctx), 'whole', step.mode));
           break;
         case 'mcp-registration': {
           // Byte-faithful beside whatever servers the user already registered —
@@ -633,7 +668,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
             });
             break;
           }
-          files.set(path, planFile(path, name, merged));
+          files.set(path, planFile(path, name, merged, 'merged'));
           break;
         }
         case 'toml-mcp-registration': {
@@ -650,7 +685,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
             });
             break;
           }
-          files.set(path, planFile(path, name, merged));
+          files.set(path, planFile(path, name, merged, 'merged'));
           break;
         }
       }
@@ -674,7 +709,7 @@ export function planInstall(cwd: string, choices: HooksChoices): InstallPlan {
     } else {
       files.set(
         instructions.path,
-        planFile(instructions.path, instructions.name, profile.instructions(ctx)),
+        planFile(instructions.path, instructions.name, profile.instructions(ctx), 'whole'),
       );
     }
 
@@ -863,6 +898,118 @@ export function planRemove(
   }
 
   return [...removals.values()];
+}
+
+/* ------------------------------------------------------------------------------------
+ * The merge policy — one apply, two ways of consenting to it
+ * ---------------------------------------------------------------------------------- */
+
+/**
+ * How an apply decides whether it may write over a file that already exists.
+ *
+ * There are exactly two answers, and one apply loop behind both — because two apply
+ * loops would drift, and the one that drifted would be the one nobody watches: the
+ * non-interactive path an agent drives blind.
+ *
+ *  - `wizard` — ask the human, per file, and take nothing but a literal `yes`. The
+ *    rule `smelt init` lives under, unchanged.
+ *  - `policy` — no one to ask, so the *plan's own shape* answers: a file whose planned
+ *    content was computed by editing the existing bytes is safe to write (nothing
+ *    foreign is lost), and a file smelt writes whole is refused unless it is already
+ *    ours. That is what `--yes` and `smelt setup` consent by.
+ */
+export type Consent = { readonly kind: 'wizard'; readonly ask: Ask } | { readonly kind: 'policy' };
+
+/** What one apply did to one file — the receipt line and the prose line, as data. */
+export interface AppliedFile {
+  readonly name: string;
+  readonly action: 'written' | 'unchanged' | 'skipped';
+  /** Why it was skipped, or what a write over an existing file changed. */
+  readonly detail?: string;
+}
+
+/** What a policy write over an existing file changed, said the same way everywhere. */
+const MERGED_DETAIL = "merged — every byte outside smelt's own entries is unchanged";
+
+/**
+ * Whether an existing planned file is smelt's to write over without being asked.
+ * The config is smelt's own; every other whole-owned file is ours exactly when it
+ * already carries our entries — the marker token in text, our hook entries in a JSON
+ * hooks file (the guard command carries no token, hence the entry-level predicate).
+ *
+ * Exported because `smelt setup` applies the same policy: one merge policy, or the
+ * two verbs disagree about whose file it is.
+ */
+export function fileIsOursToRepair(file: {
+  readonly name: string;
+  readonly path: string;
+}): boolean {
+  if (basename(file.path) === CONFIG_FILE_NAME) return true;
+  return fileIsOurs(file.name, readFileSync(file.path, 'utf8'));
+}
+
+/**
+ * The policy's answer for one existing file. A merged plan already carries every
+ * foreign byte, so writing it is not an overwrite at all; a whole-owned file has no
+ * merge to perform, and one that is not ours is somebody else's work.
+ */
+function policyMayWrite(file: PlannedFile): boolean {
+  if (file.ownership === 'merged') return true;
+  return fileIsOursToRepair(file);
+}
+
+/** The refusal a policy run gives a whole-owned file that belongs to somebody else. */
+function foreignWholeFileDetail(name: string): string {
+  return (
+    `exists and carries nothing of smelt's — ${name} is written whole, so there is ` +
+    `nothing to merge into; move it aside, or run \`${CLI_NAME} hooks install\` ` +
+    `without --yes to be asked per file`
+  );
+}
+
+/**
+ * The one apply loop. Writes the plan, file by file, consenting the way {@link Consent}
+ * says; returns what it did rather than printing it, so the wizard's prose and setup's
+ * receipt are two renderings of one run.
+ */
+export async function applyPlanFiles(
+  files: readonly PlannedFile[],
+  consent: Consent,
+): Promise<readonly AppliedFile[]> {
+  const applied: AppliedFile[] = [];
+  for (const file of files) {
+    if (file.unchanged) {
+      applied.push({ name: file.name, action: 'unchanged' });
+      continue;
+    }
+    if (file.exists && !(await allowedToWrite(file, consent))) {
+      applied.push({
+        name: file.name,
+        action: 'skipped',
+        detail:
+          consent.kind === 'wizard'
+            ? 'the existing file was not touched'
+            : foreignWholeFileDetail(file.name),
+      });
+      continue;
+    }
+    writePlannedFile(file);
+    applied.push({
+      name: file.name,
+      action: 'written',
+      ...(file.exists ? { detail: MERGED_DETAIL } : {}),
+    });
+  }
+  return applied;
+}
+
+/** The consent question itself, asked or answered by policy. */
+async function allowedToWrite(file: PlannedFile, consent: Consent): Promise<boolean> {
+  if (consent.kind === 'policy') return policyMayWrite(file);
+  // The one hard rule, same as `smelt init`: an existing file is never touched
+  // without an explicit per-file yes — not `y`, not Enter, a literal `yes`.
+  const answer = await consent.ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
+  return answer === 'yes';
 }
 
 /* ------------------------------------------------------------------------------------
@@ -1291,7 +1438,16 @@ export function presetToggles(
   return anyOurs ? { guard, statsOnStop, mapOnStart, lintOnStart } : defaults;
 }
 
-const fileLabel = (file: PlannedFile): string => {
+/** One applied file, as this verb's prose spells it. */
+function sayApplied(applied: AppliedFile): string {
+  if (applied.action === 'unchanged') return `  ${applied.name} — unchanged, not rewritten\n`;
+  if (applied.action === 'skipped') {
+    return `  skipped ${applied.name} — ${applied.detail ?? 'not written'}\n`;
+  }
+  return `  wrote ${applied.name}\n`;
+}
+
+const fileLabel = (file: { readonly exists: boolean; readonly unchanged: boolean }): string => {
   if (file.unchanged) return 'unchanged — nothing to write';
   return file.exists ? 'exists — will ask before overwriting' : 'new';
 };
@@ -1326,22 +1482,8 @@ async function confirmAndInstall(
     return 'done';
   }
 
-  for (const file of plan.files) {
-    if (file.unchanged) {
-      io.output(`  ${file.name} — unchanged, not rewritten\n`);
-      continue;
-    }
-    if (file.exists) {
-      // The one hard rule, same as `smelt init`: an existing file is never touched
-      // without an explicit per-file yes — not `y`, not Enter, a literal `yes`.
-      const answer = await ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
-      if (answer !== 'yes') {
-        io.output(`  skipped ${file.name} — the existing file was not touched\n`);
-        continue;
-      }
-    }
-    writePlannedFile(file);
-    io.output(`  wrote ${file.name}\n`);
+  for (const applied of await applyPlanFiles(plan.files, { kind: 'wizard', ask })) {
+    io.output(sayApplied(applied));
   }
 
   for (const note of plan.notes) io.output(`note: ${note}\n`);

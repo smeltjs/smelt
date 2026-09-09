@@ -166,3 +166,43 @@ export interface CliIo {
    */
   readonly color?: boolean;
 }
+
+/**
+ * The errno codes a write to a stream nobody is reading raises. `EPIPE` is the reader
+ * closing the pipe (`smelt hooks install | head`); `EINVAL` is a descriptor that is
+ * not writable in the mode Node is using — what `yes | smelt hooks install` produced,
+ * where the flooded stdin left the process writing prompts into a stream that had
+ * already been torn down.
+ */
+const CLOSED_SINK_CODES: readonly string[] = ['EPIPE', 'EINVAL', 'ERR_STREAM_DESTROYED'];
+
+/**
+ * An output sink that **refuses** instead of crashing when nobody is on the other end.
+ *
+ * A wizard writes its prompts before it reads an answer, so it is the one verb shape
+ * that writes into a stream a caller may already have closed. Unwrapped, that write
+ * throws past every `catch` in the CLI and the user gets a stack trace and exit 4 —
+ * "unexpected internal error — this is a bug" — for the entirely ordinary act of
+ * piping a wizard into `head`, or of answering it with `yes`. Wrapped, it is one line
+ * and the usage exit, which is what it always was: a wizard driven by something that
+ * is not listening.
+ *
+ * Only the closed-sink codes are answered. Any other write failure is somebody else's
+ * bug and still travels, unswallowed.
+ */
+export function refusingSink(
+  write: (text: string) => void,
+  refusal: (why: string) => Error,
+): (text: string) => void {
+  return (text) => {
+    try {
+      write(text);
+    } catch (error) {
+      const code = (error as { code?: string } | null | undefined)?.code;
+      if (typeof code === 'string' && CLOSED_SINK_CODES.includes(code)) {
+        throw refusal(code);
+      }
+      throw error;
+    }
+  };
+}

@@ -229,19 +229,55 @@ describe('smelt setup applies the recipe in one command', () => {
     }
   });
 
-  it('never overwrites an existing non-config file, even with --yes', async () => {
+  it('merges into an existing file, and refuses the one it would have to write whole', async () => {
     const cwd = scratch('protect');
     try {
-      const theirs = '# My house rules — smelt must not touch this.\n';
-      const { writeFileSync } = await import('node:fs');
+      const theirs = '# My house rules — smelt must not lose a byte of this.\n';
+      const { mkdirSync, writeFileSync } = await import('node:fs');
       writeFileSync(join(cwd, 'CLAUDE.md'), theirs);
+      // A file smelt writes *whole*, sitting there with somebody else's bytes in it.
+      mkdirSync(join(cwd, '.opencode/plugin'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugin/smelt-guard.js');
+      const notOurs = 'export const theirs = true;\n';
+      writeFileSync(plugin, notOurs);
 
-      const receipt = await runYes(cwd, ['--harness', 'claude-code']);
+      const receipt = await runYes(cwd, ['--harness', 'claude-code', '--harness', 'opencode']);
 
-      expect(readFileSync(join(cwd, 'CLAUDE.md'), 'utf8')).toBe(theirs);
-      const skipped = receipt.files.find((file) => file.name === 'CLAUDE.md');
+      // A marker-block file is *merged*: their bytes are all still there, and so is
+      // our block. `--yes` used to skip this file and point at a wizard, which meant
+      // the one command an agent can drive could not finish the install it started.
+      const claudeMd = readFileSync(join(cwd, 'CLAUDE.md'), 'utf8');
+      expect(claudeMd).toContain(theirs.trim());
+      expect(claudeMd).toContain('smelt:hooks');
+      expect(receipt.files.find((file) => file.name === 'CLAUDE.md')?.action).toBe('written');
+
+      // A whole-owned file has nothing to merge into, so it is refused — untouched,
+      // reported skipped, with a reason that names it.
+      expect(readFileSync(plugin, 'utf8')).toBe(notOurs);
+      const skipped = receipt.files.find((file) => file.name.endsWith('smelt-guard.js'));
       expect(skipped?.action).toBe('skipped');
+      expect(skipped?.detail).toContain('smelt-guard.js');
       expect(skipped?.detail).toContain('hooks install');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('repairs a whole-owned file that is already its own', async () => {
+    const cwd = scratch('repair-whole');
+    try {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(join(cwd, '.opencode/plugin'), { recursive: true });
+      const plugin = join(cwd, '.opencode/plugin/smelt-guard.js');
+      // Ours — it carries the ownership token — but stale: an older release's bytes.
+      writeFileSync(plugin, '// smelt:hooks — written by an older release\n');
+
+      const receipt = await runYes(cwd, ['--harness', 'opencode']);
+
+      expect(readFileSync(plugin, 'utf8')).toContain('tool.execute.before');
+      expect(receipt.files.find((file) => file.name.endsWith('smelt-guard.js'))?.action).toBe(
+        'written',
+      );
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -473,7 +509,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-stops-repairing-its-own-blocks',
-    file: 'cli/setup.ts',
+    file: 'cli/hooks.ts',
     find: "  return fileIsOurs(file.name, readFileSync(file.path, 'utf8'));",
     replace: '  return false;',
     why: 'setup treating its own instruction blocks as foreign — doctor would name them behind forever and the repair it names would skip them, the update loop this whole arc exists to close, quietly not closing',
@@ -481,7 +517,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-claims-to-skip-while-touched',
-    file: 'cli/setup.ts',
+    file: 'cli/hooks.ts',
     find: "        action: 'skipped',",
     replace: "        action: 'written',",
     why: 'the receipt claiming a skipped file was written — the receipt is what an agent reads to verify the run, and a receipt that lies is worse than no receipt',

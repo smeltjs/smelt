@@ -1,19 +1,16 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
 import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
-import { detectedHarnesses, planInstall, presetToggles } from './hooks.ts';
-import { fileIsOurs } from './installed.ts';
+import {
+  applyPlanFiles,
+  detectedHarnesses,
+  planInstall,
+  presetToggles,
+  renderConfigWithHooks,
+} from './hooks.ts';
 import { confirmLoop, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
 import type { Ask, Step } from './wizard.ts';
 import type { HooksChoices, ManualStep } from './hooks.ts';
@@ -532,7 +529,21 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
     strategy: existing?.strategy ?? DEFAULT_STRATEGY,
     ...(store === undefined ? {} : { store }),
   };
-  const rendered = renderConfig(next);
+  // The hooks preset's choices are settled *before* the config is written, because
+  // the config is written **once**: with the guard's hooks block when a harness was
+  // named, without it when none was. The installer plans the same file from the same
+  // choices, so its entry for it comes back `unchanged` — and setup drops it from the
+  // apply below rather than reporting one file twice, once as written and again as
+  // repaired, which is what a fresh `--json` run used to say.
+  const hooks =
+    choices.harnesses.length === 0 ? undefined : hooksChoices(choices, io.cwd, io.version, io);
+  const rendered =
+    hooks === undefined
+      ? renderConfig(next)
+      : renderConfigWithHooks(next, {
+          thresholdBytes: hooks.thresholdBytes,
+          enforcement: hooks.enforcement,
+        });
   let configAction: SetupReceipt['config']['action'];
   if (before === undefined) {
     mkdirSync(dirname(configPath), { recursive: true });
@@ -556,44 +567,24 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
   //    config entry rides too — renderConfigWithHooks adds the hooks block the shims
   //    read, so setup and hooks install leave the same file, and a re-run plans
   //    `unchanged` for it. ──
-  const plan =
-    choices.harnesses.length === 0
-      ? undefined
-      : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version, io));
+  const plan = hooks === undefined ? undefined : planInstall(io.cwd, hooks);
   if (plan !== undefined) {
-    for (const file of plan.files) {
-      if (file.unchanged) {
-        files.push({ name: file.name, action: 'unchanged' });
-        continue;
-      }
-      if (!file.exists) {
-        mkdirSync(dirname(file.path), { recursive: true });
-        writeFileSync(file.path, file.content);
-        if (file.mode !== undefined) chmodSync(file.path, file.mode);
-        files.push({ name: file.name, action: 'written' });
-        continue;
-      }
-      if (fileIsOursToRepair(file)) {
-        // Repair, not consent: this file already carries smelt's own entries, and
-        // every byte the plan would change is inside them — a marker-block upsert,
-        // a strip-merge of our hook entries, a nested edit of our server entry.
-        // That is the doctor → setup loop actually closing: a block written by an
-        // older release is brought to this one.
-        writeFileSync(file.path, file.content);
-        if (file.mode !== undefined) chmodSync(file.path, file.mode);
-        files.push({
-          name: file.name,
-          action: basename(file.path) === CONFIG_FILE_NAME ? 'updated' : 'written',
-          detail: "repaired — only smelt's own entries in it changed",
-        });
-        continue;
-      }
-      // The hard rule, inherited: an existing file with nothing of smelt's in it is
-      // never written — not by --yes, not by a wizard answer. Point at the editor.
+    // One merge policy, one apply loop, shared with `smelt hooks install` — see
+    // `Consent` in cli/hooks.ts. Setup has nobody to ask, so it consents by policy:
+    // a file whose planned content was merged out of the existing bytes is written
+    // (nothing of anybody's is lost), and one smelt would write *whole* is refused
+    // unless it is already ours.
+    const applied = await applyPlanFiles(
+      // The config was written above, from the same choices this plan was built
+      // from. Reporting the plan's entry for it too would name one file twice.
+      plan.files.filter((file) => basename(file.path) !== CONFIG_FILE_NAME),
+      { kind: 'policy' },
+    );
+    for (const file of applied) {
       files.push({
         name: file.name,
-        action: 'skipped',
-        detail: 'exists — not overwritten; `smelt hooks install` edits it and asks per file',
+        action: file.action,
+        ...(file.detail === undefined ? {} : { detail: file.detail }),
       });
     }
     notes.push(...plan.notes);
@@ -772,18 +763,6 @@ async function probeStore(storeDir: string, budget: number): Promise<SetupCheck[
 }
 
 // ── small shared pieces ─────────────────────────────────────────────────────────────
-
-/**
- * Whether an existing planned file is smelt's to repair. The config is smelt's own;
- * every other file is ours exactly when it already carries our entries — the marker
- * token in text, or our hook entries in a JSON hooks file (the guard command carries
- * no token, hence the entry-level predicate). A file with nothing of ours in it is
- * somebody else's, and consent — not --yes — is what opens it.
- */
-function fileIsOursToRepair(file: { readonly name: string; readonly path: string }): boolean {
-  if (basename(file.path) === CONFIG_FILE_NAME) return true;
-  return fileIsOurs(file.name, readFileSync(file.path, 'utf8'));
-}
 
 function hooksChoices(
   choices: SetupChoices,
