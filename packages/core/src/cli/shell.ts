@@ -160,11 +160,34 @@ export interface CliIo {
    */
   readonly initInput?: AnswerStream;
   /**
-   * True when stdout is an interactive, colour-honouring terminal and `NO_COLOR` is
-   * unset — the lava renderer's only switch. Absent or false, every wizard's bytes
-   * are exactly what they have always been; `bin.ts` computes it once.
+   * True when stdout may carry ANSI: an interactive, colour-honouring terminal (or a
+   * `FORCE_COLOR` somebody set on purpose), with `NO_COLOR` and `--no-color` unset.
+   * Absent or false, every wizard's bytes are exactly what they have always been;
+   * `bin.ts` computes it once, through `lava.ts`'s `colorAllowed`.
    */
   readonly color?: boolean;
+  /**
+   * The same question for **stderr**, answered separately because the two streams go
+   * to different places: `smelt big.log --budget 4000 > small.log` is the documented
+   * way to run smelt, and it leaves the report on a terminal while stdout is a file.
+   * A palette keyed to stdout would print that report — the half a person actually
+   * reads — plain. Absent means {@link CliIo.color}.
+   */
+  readonly colorErr?: boolean;
+  /**
+   * True when a **person** is at both ends: stdout is a terminal and stdin is not a
+   * pipe. The front door's only switch — bare `smelt` prints the logo and the three
+   * commands a newcomer needs, while `cat log | smelt` goes on reading stdin exactly
+   * as it always has. Absent means "not interactive", which is what every test and
+   * every agent invocation is.
+   */
+  readonly tty?: boolean;
+  /**
+   * Whether the terminal's locale said it can render more than ASCII — the glyph set
+   * `✓ ✗ ⚠` and the block-drawing bar fall back to `+ x !` and `#` where it did not.
+   * Absent means yes, which is what smelt has always printed.
+   */
+  readonly unicode?: boolean;
   /**
    * The process environment — passed in rather than read off `process`, so a verb that
    * has to look at one is still a pure function over an injected pair.

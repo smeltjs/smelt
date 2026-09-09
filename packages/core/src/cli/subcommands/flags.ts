@@ -73,6 +73,14 @@ export const CLI_FLAGS = {
   strict: { type: 'boolean' },
   json: { type: 'boolean' },
   reconstruct: { type: 'boolean' },
+  /**
+   * Plain bytes, however pretty the terminal — the flag form of `NO_COLOR`, for the
+   * one case an environment variable cannot answer: a person who wants this *one*
+   * invocation unpainted. Global, because it is answered before any verb: it decides
+   * how the refusal for a mistyped command line is printed, and a flag a verb could
+   * refuse could not do that.
+   */
+  'no-color': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
 } as const;
@@ -85,7 +93,7 @@ export type FlagName = keyof typeof CLI_FLAGS;
  * them: `smelt map --help` prints the help, exactly as it always has. Every other flag
  * belongs to at least one verb — `test/guards/subcommand-registry.test.ts` pins that.
  */
-export const GLOBAL_FLAGS = ['help', 'version'] as const satisfies readonly FlagName[];
+export const GLOBAL_FLAGS = ['no-color', 'help', 'version'] as const satisfies readonly FlagName[];
 
 /** A flag a verb can own — everything but the two global ones. */
 export type VerbFlag = Exclude<FlagName, (typeof GLOBAL_FLAGS)[number]>;
@@ -343,6 +351,13 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
     body: () => [
       'Read a --json envelope and print the original text, byte for',
       'byte. This is Law 3 you can run from a shell.',
+    ],
+  },
+  'no-color': {
+    label: '--no-color',
+    body: () => [
+      'Plain bytes, however pretty the terminal. Same effect as',
+      'setting NO_COLOR; --json output is never coloured either way.',
     ],
   },
   help: { label: '-h, --help', body: () => ['This text.'] },

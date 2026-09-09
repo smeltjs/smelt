@@ -1,6 +1,7 @@
 import { CliUsageError } from '../../errors.ts';
 import { DirectoryElisionStore } from '../../store-dir.ts';
 import type { PruneReport } from '../../store-dir.ts';
+import { stdoutPalette } from '../lava.ts';
 import { formatPruneReport } from '../report.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -215,12 +216,15 @@ export const storeCommand: Subcommand<StoreInvocation, ResolvedStorePruneRun> = 
     }
 
     io.stdout(
-      formatPruneReport({
-        report,
-        storePath: resolved.store.storePath,
-        olderThan: resolved.olderThan,
-        keepRetrieved: resolved.keepRetrieved,
-      }),
+      formatPruneReport(
+        {
+          report,
+          storePath: resolved.store.storePath,
+          olderThan: resolved.olderThan,
+          keepRetrieved: resolved.keepRetrieved,
+        },
+        stdoutPalette(io),
+      ),
     );
     return EXIT.ok;
   },

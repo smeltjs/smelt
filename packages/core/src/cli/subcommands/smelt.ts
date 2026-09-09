@@ -12,6 +12,7 @@ import { MemoryElisionStore } from '../../store.ts';
 import type { DetectedLanguage, ElisionStore, SmeltResult } from '../../types.ts';
 import { CONFIG_FILE_NAME, configuredStore } from '../config.ts';
 import type { ConfiguredStore, LoadedConfig, SmeltConfigRerank } from '../config.ts';
+import { stderrPalette } from '../lava.ts';
 import { formatReport } from '../report.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
@@ -337,7 +338,10 @@ async function runSmelt(run: ResolvedRun, io: CliIo): Promise<number> {
   } else {
     io.stdout(outcome.result.text);
   }
-  io.stderr(formatReport(outcome));
+  // The report goes to stderr, so it is painted by the stderr switch: `smelt big.log
+  // --budget 4000 > small.log` leaves the payload in a file and this report on a
+  // terminal, and that is the half a person reads.
+  io.stderr(formatReport(outcome, stderrPalette(io)));
 
   return outcome.result.outputBytes > run.budgetBytes ? EXIT.overBudget : EXIT.ok;
 }
@@ -383,9 +387,11 @@ function runReconstruct(text: string, io: CliIo): number {
   }
 
   io.stdout(original);
+  const lava = stderrPalette(io);
   io.stderr(
-    `${CLI_NAME}  reconstructed ${String(result.inputBytes)} B from ` +
-      `${String(result.elisions.length)} elisions — byte for byte\n`,
+    `${lava.paint('brand', CLI_NAME)}  reconstructed ` +
+      `${lava.paint('number', String(result.inputBytes))} B from ` +
+      `${String(result.elisions.length)} elisions — ${lava.paint('good', 'byte for byte')}\n`,
   );
   return EXIT.ok;
 }

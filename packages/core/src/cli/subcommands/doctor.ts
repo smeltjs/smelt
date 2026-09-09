@@ -2,7 +2,7 @@ import process from 'node:process';
 
 import { CliUsageError } from '../../errors.ts';
 import { runDoctor } from '../doctor.ts';
-import { colorize } from '../lava.ts';
+import { PLAIN, stdoutPalette } from '../lava.ts';
 import { CLI_NAME } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 
@@ -71,7 +71,12 @@ export const doctorCommand: Subcommand<DoctorInvocation, DoctorInvocation> = {
     return runDoctor(
       { json: resolved.json, ...(resolved.scope === undefined ? {} : { scope: resolved.scope }) },
       {
-        output: (text) => io.stdout(colorize(text, io.color === true && !resolved.json)),
+        output: (text) => io.stdout(text),
+        // Doctor paints its own report through the palette rather than through the
+        // wizards' line-shaped sink: its lines carry status marks and aligned
+        // columns, which is a rendering decision, not a guess about a sentence.
+        // `--json` gets the plain palette — an envelope is bytes for a machine.
+        lava: resolved.json ? PLAIN : stdoutPalette(io),
         cwd: io.cwd ?? process.cwd(),
         ...(io.home === undefined ? {} : { home: io.home }),
         version: io.version,

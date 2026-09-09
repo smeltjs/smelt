@@ -18,6 +18,8 @@ import {
 } from './config.ts';
 import type { SmeltConfig } from './config.ts';
 import { readInstalledState } from './installed.ts';
+import { PLAIN } from './lava.ts';
+import type { Glyph, Palette } from './lava.ts';
 import { formatStoreSize } from './report.ts';
 import type {
   InstalledBlock,
@@ -57,6 +59,13 @@ import { CLI_NAME, EXIT } from './shell.ts';
 
 export interface DoctorIo {
   readonly output: (text: string) => void;
+  /**
+   * How the report is painted. Absent means plain — which is what `--json` gets, what
+   * a pipe gets, and what every guard that reads these lines gets. Doctor is not a
+   * wizard, so its colour comes from the palette rather than from the line-shaped
+   * `colorize` sink the wizard verbs wrap their output in.
+   */
+  readonly lava?: Palette;
   /** Where installed state is read: config discovery, instruction files, hook files. */
   readonly cwd: string;
   /** The home directory a user-scope reading looks in. Defaults to the real one. */
@@ -190,8 +199,18 @@ export interface DoctorReceipt {
 }
 
 export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
+  const lava = io.lava ?? PLAIN;
   const say = (text: string): void => {
     if (!options.json) io.output(text);
+  };
+  /**
+   * One finding line: two spaces, a status mark, the sentence. Every line of the body
+   * goes through it, so the whole report is one column of marks a reader can scan —
+   * and the sentence after the mark is byte for byte the sentence this report has
+   * always printed, which is what the guards assert.
+   */
+  const line = (glyph: Glyph, text: string): void => {
+    say(`  ${lava.glyph(glyph)} ${text}\n`);
   };
   const orphans: string[] = [];
   const repair: string[] = [];
@@ -315,67 +334,83 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   // directory is what this line has always meant, and every byte of that prose stays
   // what it was.
   say(
-    `${CLI_NAME} doctor — binary ${io.version}, reading ${root}` +
+    `${lava.paint('brand', `${CLI_NAME} doctor`)} — binary ${lava.paint('number', io.version)}, ` +
+      `reading ${lava.paint('path', root)}` +
       `${scope === 'user' ? ' (machine scope)' : ''}\n`,
   );
   if (!installed) {
     say(`Nothing of smelt's is installed here. \`${CLI_NAME} setup\` would change that.\n`);
   } else {
+    say('\n');
     if (config.present) {
-      say(
-        `  ${CONFIG_FILE_NAME}: ${
+      line(
+        config.malformed === true || config.store.dirExists === false ? 'bad' : 'ok',
+        `${CONFIG_FILE_NAME}: ${
           config.malformed === true
             ? 'MALFORMED'
             : `schema ${String(config.schemaVersion)}, budget ${
                 config.budgetBytes === undefined ? 'unset' : String(config.budgetBytes)
               }, store ${describeStore(config)}`
-        }\n`,
+        }`,
       );
     } else {
-      say(`  ${CONFIG_FILE_NAME}: absent\n`);
+      line('warn', `${CONFIG_FILE_NAME}: absent`);
     }
     for (const block of blocks) {
-      say(
-        `  ${block.file}: written by ${
+      line(
+        BLOCK_GLYPH[block.status],
+        `${block.file}: written by ${
           block.installedBy ?? 'a pre-stamping release (unversioned)'
-        } [${block.status}] — ${block.harnesses.join(', ')}\n`,
+        } [${block.status}] — ${block.harnesses.join(', ')}`,
       );
     }
     for (const name of state.hookFiles) {
-      say(`  ${name}: ${describeWiring(hooks.find((file) => file.file === name))}\n`);
+      const file = hooks.find((one) => one.file === name);
+      line(
+        file === undefined ? 'ok' : PROBE_GLYPH[hookFileStatus(file)],
+        `${name}: ${describeWiring(file)}`,
+      );
     }
     for (const one of state.mcp) {
-      if (one.registered) say(`  ${one.file}: ${one.server} registered\n`);
+      if (one.registered) line('ok', `${one.file}: ${one.server} registered`);
       // A registration the harness owns is a step a person runs, so an absent one is
       // reported with the command rather than silently. It does not cost `current`:
       // smelt never wrote it and cannot know it was wanted.
       else if (one.manual !== undefined) {
-        say(`  ${one.file}: ${one.server} not registered — run: ${one.manual}\n`);
+        line('warn', `${one.file}: ${one.server} not registered — run: ${one.manual}`);
       }
     }
     if (rerank !== undefined) {
-      say(
-        `  rerank: ${rerank.adapter}` +
+      line(
+        rerank.keySet === false || rerank.moduleExists === false ? 'bad' : 'ok',
+        `rerank: ${rerank.adapter}` +
           (rerank.keyEnv === undefined
             ? ''
-            : ` — ${rerank.keyEnv} ${rerank.keySet === true ? 'set' : 'missing'}`) +
-          `\n`,
+            : ` — ${rerank.keyEnv} ${rerank.keySet === true ? 'set' : 'missing'}`),
       );
     }
-    for (const orphan of orphans) say(`  ORPHAN: ${orphan}\n`);
+    for (const orphan of orphans) line('bad', `ORPHAN: ${orphan}`);
+    // The repair block, set apart: it is the only part of this report that asks the
+    // reader to *do* something, and it was previously one indent away from the
+    // findings it repairs.
     if (behindBlocks.length > 0) {
       say(
-        `\nBehind: the running binary is ${io.version}; re-run setup to bring the ` +
-          `installed state to it:\n` +
-          [...new Set(repair)].map((command) => `  ${command}\n`).join(''),
+        `\n  ${lava.heading('Behind')}: the running binary is ${io.version}; re-run setup ` +
+          `to bring the installed state to it:\n` +
+          [...new Set(repair)].map((command) => `    ${lava.paint('brand', command)}\n`).join(''),
       );
     } else if (orphans.length > 0 || brokenHooks.length > 0) {
-      say(`\nRepair:\n${[...new Set(repair)].map((command) => `  ${command}\n`).join('')}`);
+      say(
+        `\n  ${lava.heading('Repair')}:\n` +
+          [...new Set(repair)].map((command) => `    ${lava.paint('brand', command)}\n`).join(''),
+      );
     }
+    say('\n');
     say(
       current
-        ? `Current: everything on disk agrees with binary ${io.version}.\n`
-        : `Not current — see above. Doctor never writes; ${CLI_NAME} setup is the repair.\n`,
+        ? `${lava.glyph('ok')} Current: everything on disk agrees with binary ${io.version}.\n`
+        : `${lava.glyph('bad')} Not current — see above. Doctor never writes; ` +
+            `${CLI_NAME} setup is the repair.\n`,
     );
   }
 
@@ -399,6 +434,23 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
   }
   return current || !installed ? EXIT.ok : EXIT.refused;
 }
+
+/**
+ * The mark a block's verdict wears. A `Record` over the three verdicts, so a fourth
+ * one is a compile error here rather than a line that quietly prints no mark.
+ */
+const BLOCK_GLYPH: Readonly<Record<DoctorBlock['status'], Glyph>> = {
+  current: 'ok',
+  behind: 'warn',
+  unversioned: 'info',
+};
+
+/** The same, for what running a wired hook command actually did. */
+const PROBE_GLYPH: Readonly<Record<HookProbe['status'], Glyph>> = {
+  fires: 'ok',
+  inert: 'bad',
+  missing: 'bad',
+};
 
 /**
  * The `--scope` a repair command has to carry to repair *this* reading. Project scope

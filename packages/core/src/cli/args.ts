@@ -54,11 +54,27 @@ export function parseSmeltArgs(argv: readonly string[]): CliInvocation {
   const { values, positionals } = parsed;
 
   // Answered before any verb, so `smelt map --help` prints the help rather than being
-  // refused for a flag `map` does not own. No verb may claim these two.
+  // refused for a flag `map` does not own. No verb may claim these — `--no-color` is
+  // the third, and it is read straight off argv by {@link refusesColor}, because it
+  // has to be known before a *refusal* is printed, which is before there is an
+  // invocation to carry it.
   if (values.help === true) return { mode: 'help', focus: [], json: false };
   if (values.version === true) return { mode: 'version', focus: [], json: false };
 
   const command = subcommandFor(positionals);
   refuseForeignFlags(command, values);
   return command.parse(values, positionals);
+}
+
+/**
+ * Whether this command line asked for plain bytes.
+ *
+ * Read from argv rather than from the parsed values because `runCli` needs the answer
+ * *before* parsing: a mistyped command line throws out of `parseSmeltArgs`, and the
+ * refusal it prints is itself a thing `--no-color` promises not to paint. The flag is
+ * still in `CLI_FLAGS` and still in `GLOBAL_FLAGS`, so the parser accepts it, the help
+ * documents it, and no verb may claim it.
+ */
+export function refusesColor(argv: readonly string[]): boolean {
+  return argv.includes('--no-color');
 }

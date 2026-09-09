@@ -1,3 +1,10 @@
+███████╗███╗   ███╗███████╗██╗     ████████╗
+██╔════╝████╗ ████║██╔════╝██║     ╚══██╔══╝
+███████╗██╔████╔██║█████╗  ██║        ██║
+╚════██║██║╚██╔╝██║██╔══╝  ██║        ██║
+███████║██║ ╚═╝ ██║███████╗███████╗   ██║
+╚══════╝╚═╝     ╚═╝╚══════╝╚══════╝   ╚═╝
+
 smelt — shrink text for a model, without lying about what was removed.
 
 USAGE
@@ -49,12 +56,15 @@ RETRIEVE & STATS
   rate measures. An unknown hash and damaged bytes are distinct refusals (exit 3):
   "never elided" and "the store was corrupted" call for different responses.
 
-  smelt stats prints the same store's counters, one `name value` per line —
-  elisionsStored, bytesStored, retrieveCalls, uniqueRetrieved, expansionRate,
-  allElisionsRetrieved — then the ledger, one rule.<id>.stored and
-  rule.<id>.retrieved per rule that cut anything: which rule's cuts get asked
-  for back. Reading them is NOT counted as a retrieval. --json emits the
-  RetrieveStats and the ledger verbatim in their own versioned envelope.
+  smelt stats reports on the same store: where it is and what it holds on
+  disk, the expansion rate with a bar, the counters — elisionsStored,
+  bytesStored, retrieveCalls, uniqueRetrieved, misses, expansionRate,
+  allElisionsRetrieved — and then the ledger as a table, one row per rule that
+  cut anything (stored, retrieved, rate), heaviest first: which rule's cuts get
+  asked for back. Reading them is NOT counted as a retrieval. --json emits the
+  RetrieveStats and the ledger verbatim in their own versioned envelope, and is
+  the surface to parse — the text one is for a person, and it is never coloured
+  into a pipe.
 
   Both need somewhere for elisions to outlive the run that made them: a
   smelt.config.json with a directory store (`smelt init` writes one). With a
@@ -246,6 +256,8 @@ OPTIONS
                        the measured levels and every finding with its rule id.
   --reconstruct        Read a --json envelope and print the original text, byte for
                        byte. This is Law 3 you can run from a shell.
+  --no-color           Plain bytes, however pretty the terminal. Same effect as
+                       setting NO_COLOR; --json output is never coloured either way.
   -h, --help           This text.
   --version            The package version.
 

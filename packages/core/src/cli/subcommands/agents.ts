@@ -4,7 +4,7 @@ import { lintAgents, overBudgetBytes } from '../../agents/lint.ts';
 import type { AgentsLintReport } from '../../agents/lint.ts';
 import { CliUsageError } from '../../errors.ts';
 import { readTree } from '../../ops/inputs.ts';
-import { colorize } from '../lava.ts';
+import { colorize, stdoutPalette } from '../lava.ts';
 import { runAgentsSplit } from '../agents.ts';
 import { CONFIG_FILE_NAME } from '../config.ts';
 import type { LoadedConfig } from '../config.ts';
@@ -217,7 +217,9 @@ function runLint(run: ResolvedAgentsRun, io: CliIo): number {
     const envelope: CliAgentsJsonEnvelope = { format: CLI_AGENTS_JSON_FORMAT, report };
     io.stdout(`${JSON.stringify(envelope, null, 2)}\n`);
   } else {
-    io.stdout(formatAgentsReport(report, { source: run.dir, strict: run.strict }));
+    io.stdout(
+      formatAgentsReport(report, { source: run.dir, strict: run.strict }, stdoutPalette(io)),
+    );
   }
 
   if (overBudgetBytes(report) !== undefined) return EXIT.overBudget;

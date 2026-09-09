@@ -4,9 +4,11 @@ import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
 import type { ResolvedFocus } from '../ops/verbs.ts';
 import type { RepoMap } from '../repomap/map.ts';
 import type { PruneReport } from '../store-dir.ts';
-import type { RerankAttribution, SmeltResult } from '../types.ts';
+import type { RerankAttribution, RetrieveStats, RuleLedgerEntry, SmeltResult } from '../types.ts';
 
 import { CONFIG_FILE_NAME } from './config.ts';
+import { PLAIN } from './lava.ts';
+import type { Palette } from './lava.ts';
 import { CLI_NAME } from './shell.ts';
 
 export interface ReportInput {
@@ -39,39 +41,48 @@ const EXPLANATION_WIDTH = 46;
  * library it is reporting on, and the report is the thing a human believes.
  * `test/cli.test.ts` asserts the printed numbers equal the result's fields.
  */
-export function formatReport({
-  result,
-  source,
-  budgetBytes,
-  inputText,
-  focus,
-  producerKnob = '--producer',
-}: ReportInput): string {
+export function formatReport(
+  { result, source, budgetBytes, inputText, focus, producerKnob = '--producer' }: ReportInput,
+  lava: Palette = PLAIN,
+): string {
   const lines: string[] = [];
 
-  lines.push([CLI_NAME, source, result.language, result.planner].join('  '));
   lines.push(
-    `in ${group(result.inputBytes)} B → out ${group(result.outputBytes)} B   ` +
-      `(${delta(result.inputBytes, result.outputBytes)}, ${count(result.elisions.length, 'elision')})`,
+    [
+      lava.paint('brand', CLI_NAME),
+      lava.paint('path', source),
+      lava.paint('dim', result.language),
+      lava.paint('rule', result.planner),
+    ].join('  '),
+  );
+  lines.push(
+    `in ${lava.paint('number', `${group(result.inputBytes)} B`)} → ` +
+      `out ${lava.paint('number', `${group(result.outputBytes)} B`)}   ` +
+      `(${lava.paint('number', delta(result.inputBytes, result.outputBytes))}, ` +
+      `${count(result.elisions.length, 'elision')})`,
   );
   if (focus !== undefined && focus.terms.length > 0) {
     lines.push(
-      `focus  ${focus.terms.join(', ')}` +
+      `focus  ${lava.paint('strong', focus.terms.join(', '))}` +
         (focus.source === 'producer' ? `   (from ${producerKnob})` : ''),
     );
   }
 
   if (result.measured !== undefined) {
     const { input, output, unit, measure } = result.measured;
-    lines.push(`in ${group(input)} → out ${group(output)} ${unit} (${measure})`);
+    lines.push(
+      `in ${lava.paint('number', group(input))} → ` +
+        `out ${lava.paint('number', group(output))} ${unit} (${measure})`,
+    );
   }
 
-  if (result.rerank !== undefined) lines.push(rerankLine(result.rerank));
+  if (result.rerank !== undefined) lines.push(rerankLine(result.rerank, lava));
 
   if (result.outputBytes > budgetBytes) {
     lines.push('');
     lines.push(
-      `OVER BUDGET  ${group(result.outputBytes)} B against a ${group(budgetBytes)} B budget ` +
+      lava.paint('bad', 'OVER BUDGET') +
+        `  ${group(result.outputBytes)} B against a ${group(budgetBytes)} B budget ` +
         `— over by ${group(result.outputBytes - budgetBytes)} B.`,
     );
     lines.push('             The plan is reported as it came back. smelt did not cut the regions');
@@ -114,13 +125,20 @@ export function formatReport({
 
   lines.push('');
   lines.push(
-    `  ${'rule'.padEnd(ruleWidth)}  ${'lines'.padStart(linesWidth)}  ` +
-      `${'bytes'.padStart(bytesWidth)}  ${'hash'.padEnd(hashWidth)}  explanation`,
+    lava.paint(
+      'dim',
+      `  ${'rule'.padEnd(ruleWidth)}  ${'lines'.padStart(linesWidth)}  ` +
+        `${'bytes'.padStart(bytesWidth)}  ${'hash'.padEnd(hashWidth)}  explanation`,
+    ),
   );
   for (const row of rows) {
+    // Padded first, painted second: an escape sequence has zero width, so a column
+    // padded after painting is a column that does not line up.
     lines.push(
-      `  ${row.rule.padEnd(ruleWidth)}  ${row.lines.padStart(linesWidth)}  ` +
-        `${row.bytes.padStart(bytesWidth)}  ${row.hash.padEnd(hashWidth)}  ${row.explanation}`,
+      `  ${lava.paint('rule', row.rule.padEnd(ruleWidth))}  ` +
+        `${lava.paint('number', row.lines.padStart(linesWidth))}  ` +
+        `${lava.paint('number', row.bytes.padStart(bytesWidth))}  ` +
+        `${lava.paint('hash', row.hash.padEnd(hashWidth))}  ${row.explanation}`,
     );
     // The outline — what is behind this marker, by name — on its own wrapped lines
     // beneath the row. Never clipped: it is the index a reader (or a model deciding
@@ -154,10 +172,16 @@ const OUTLINE_LEADER = '↳ names:';
  * Built from {@link RerankAttribution} rather than from anything this module counts:
  * the report keeps no tally of its own, here as everywhere else in this file.
  */
-function rerankLine(rerank: RerankAttribution): string {
+function rerankLine(rerank: RerankAttribution, lava: Palette): string {
   const adapter = rerank.model === undefined ? rerank.adapter : `${rerank.adapter}/${rerank.model}`;
   const counts = `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept)`;
-  return `rerank  ${adapter}  ${counts}${RERANK_SKIPPED[rerank.skipped ?? 'ran']}`;
+  const skipped = RERANK_SKIPPED[rerank.skipped ?? 'ran'];
+  return (
+    `rerank  ${lava.paint('rule', adapter)}  ${counts}` +
+    // The clause is the interesting half of the line when it is there: the stage was
+    // configured, and did not run.
+    `${lava.paint('warn', skipped)}`
+  );
 }
 
 /**
@@ -195,23 +219,34 @@ export interface MapReportInput {
  * `test/guards/repo-map.test.ts` asserts the printed figure equals the actual byte
  * length of what landed on stdout, and a mutation proves the assertion can go red.
  */
-export function formatMapReport({ map, source, budgetSource }: MapReportInput): string {
+export function formatMapReport(
+  { map, source, budgetSource }: MapReportInput,
+  lava: Palette = PLAIN,
+): string {
   const lines: string[] = [];
 
-  lines.push([`${CLI_NAME} map`, source, map.id].join('  '));
   lines.push(
-    `files scanned ${group(map.filesScanned)}` +
-      (map.binarySkipped === 0 ? '' : ` (${count(map.binarySkipped, 'binary file')} skipped)`) +
-      `   symbols ranked ${group(map.definitionsTotal)}`,
+    [
+      `${lava.paint('brand', CLI_NAME)} map`,
+      lava.paint('path', source),
+      lava.paint('hash', map.id),
+    ].join('  '),
   );
   lines.push(
-    `included ${group(map.entries.length)} of ${group(map.definitionsTotal)} symbols` +
+    `files scanned ${lava.paint('number', group(map.filesScanned))}` +
+      (map.binarySkipped === 0 ? '' : ` (${count(map.binarySkipped, 'binary file')} skipped)`) +
+      `   symbols ranked ${lava.paint('number', group(map.definitionsTotal))}`,
+  );
+  lines.push(
+    `included ${lava.paint('number', group(map.entries.length))} of ` +
+      `${group(map.definitionsTotal)} symbols` +
       (map.pathOnlyTotal === 0
         ? ''
         : ` + ${group(map.pathOnly.length)} of ${group(map.pathOnlyTotal)} path-only files`),
   );
   lines.push(
-    `bytes used ${group(map.outputBytes)} of ${group(map.budgetBytes)} budget (${budgetSource}) ` +
+    `bytes used ${lava.paint('number', group(map.outputBytes))} of ` +
+      `${group(map.budgetBytes)} budget (${budgetSource}) ` +
       `— the map fits itself to the budget by construction, so there is no over-budget exit`,
   );
 
@@ -222,7 +257,7 @@ export function formatMapReport({ map, source, budgetSource }: MapReportInput): 
     );
   }
   for (const warning of map.warnings) {
-    lines.push(`warning  ${warning.rule}: ${warning.explanation}`);
+    lines.push(lava.paint('warn', `warning  ${warning.rule}: ${warning.explanation}`));
   }
 
   return `${lines.join('\n')}\n`;
@@ -253,8 +288,11 @@ export interface AgentsReportInput {
 export function formatAgentsReport(
   report: AgentsLintReport,
   { source, strict }: AgentsReportInput,
+  lava: Palette = PLAIN,
 ): string {
-  const lines: string[] = [`${CLI_NAME} agents lint  ${source}`];
+  const lines: string[] = [
+    `${lava.paint('brand', `${CLI_NAME} agents lint`)}  ${lava.paint('path', source)}`,
+  ];
 
   if (report.levels.length === 0) {
     lines.push('');
@@ -317,8 +355,8 @@ export function formatAgentsReport(
     );
   } else {
     lines.push(
-      `  OVER BUDGET  ${group(report.totalBytes)} B against your ${group(report.budgetBytes)} B ` +
-        `budget — over by ${group(over)} B.`,
+      `  ${lava.paint('bad', 'OVER BUDGET')}  ${group(report.totalBytes)} B against your ` +
+        `${group(report.budgetBytes)} B budget — over by ${group(over)} B.`,
     );
     lines.push(`               The budget is yours, from ${CONFIG_FILE_NAME}, and it caps the`);
     lines.push('               whole tree rather than one request — the stricter of the two, so');
@@ -346,7 +384,9 @@ export function formatAgentsReport(
 
   lines.push('');
   for (const row of rows) {
-    lines.push(`  ${row.rule.padEnd(ruleWidth)}  ${row.place}`);
+    lines.push(
+      `  ${lava.paint('rule', row.rule.padEnd(ruleWidth))}  ${lava.paint('path', row.place)}`,
+    );
     // The explanation gets its own wrapped lines rather than a fourth column. It is
     // the *reason*, which is the part a reader actually has to read — clipped to a
     // terminal column it becomes an ellipsis, and Law 2 promises an explanation, not
@@ -455,6 +495,116 @@ export function formatStoreSize(blobs: number, bytes: number): string {
   return `${count(blobs, 'blob')}, ${formatBytes(bytes)}`;
 }
 
+/** What {@link formatStatsReport} renders: the counters, the ledger, and the store. */
+export interface StatsReportInput {
+  readonly stats: RetrieveStats;
+  readonly ledger: readonly RuleLedgerEntry[];
+  /** The store directory this reading came from, as resolved. */
+  readonly storePath: string;
+  /**
+   * The directory's own size, read off disk — `undefined` when it holds no `blobs/`
+   * yet. Two numbers rather than a sentence, for the same reason the doctor receipt
+   * carries them that way.
+   */
+  readonly size?: { readonly blobs: number; readonly bytes: number };
+}
+
+/** How wide the expansion bar is drawn. The palette caps any bar at `BAR_WIDTH`. */
+const EXPANSION_BAR = 24;
+
+/**
+ * The `smelt stats` report — the store, looked at.
+ *
+ * Four blocks, in the order a reader needs them: **where** these counters came from,
+ * **the one number that means something** (the expansion rate, with a bar, so a glance
+ * is enough), **the counters themselves**, and **the ledger** — which rule's cuts get
+ * asked for back, the feedback loop the ledger exists for.
+ *
+ * Every number here is read straight off the {@link RetrieveStats} and the ledger the
+ * store returned, exactly like every other renderer in this file. The rate is the
+ * store's own `expansionRate` and not `uniqueRetrieved / elisionsStored` recomputed
+ * here: a report that re-derives a number is a report that can disagree with the store
+ * it describes. The per-rule `rate` column is the one derivation, and it is stated as
+ * what it is — a ratio of the two integers printed beside it.
+ *
+ * There is no "corrupt" or "evicted" row, because there is no such counter: a prune
+ * moves `bytesStored` and nothing else, and a corrupt blob is a refusal at retrieve
+ * time rather than a tally. A row smelt cannot measure is a row smelt does not print.
+ */
+export function formatStatsReport(
+  { stats, ledger, storePath, size }: StatsReportInput,
+  lava: Palette = PLAIN,
+): string {
+  const lines: string[] = [
+    `${lava.paint('brand', `${CLI_NAME} stats`)}  ${lava.paint('path', storePath)}`,
+    size === undefined
+      ? lava.paint('dim', 'directory store')
+      : `${lava.paint('number', formatStoreSize(size.blobs, size.bytes))} ` +
+        `${lava.paint('dim', 'on disk')}`,
+  ];
+
+  if (stats.elisionsStored === 0) {
+    lines.push('');
+    lines.push('  nothing stored yet — no run has elided anything into this store.');
+    lines.push(`  ${CLI_NAME} <file> --budget 4000 fills it, and this page reports on it.`);
+    return `${lines.join('\n')}\n`;
+  }
+
+  const asked = `${group(stats.uniqueRetrieved)} of ${group(stats.elisionsStored)} elisions asked for back`;
+  lines.push('');
+  lines.push(
+    `  ${lava.paint('dim', 'expansion')}  ${lava.bar(stats.expansionRate, EXPANSION_BAR)}  ` +
+      `${lava.paint('number', lava.percent(stats.expansionRate))}   ${lava.paint('dim', asked)}`,
+  );
+  lines.push('');
+  lines.push(
+    lava.kv([
+      { name: 'elisionsStored', value: group(stats.elisionsStored), role: 'number' },
+      { name: 'bytesStored', value: group(stats.bytesStored), role: 'number' },
+      { name: 'retrieveCalls', value: group(stats.retrieveCalls), role: 'number' },
+      { name: 'uniqueRetrieved', value: group(stats.uniqueRetrieved), role: 'number' },
+      // A miss is a call for a hash the store does not hold: a bug, not over-pruning.
+      { name: 'misses', value: group(stats.misses), role: stats.misses === 0 ? 'number' : 'bad' },
+      { name: 'expansionRate', value: String(stats.expansionRate), role: 'number' },
+      {
+        // The one degenerate outcome smelt names. `true` means every blob it hid was
+        // asked back — the elision achieved nothing — so the row is painted as the
+        // finding it is.
+        name: 'allElisionsRetrieved',
+        value: String(stats.allElisionsRetrieved),
+        role: stats.allElisionsRetrieved ? 'bad' : 'plain',
+      },
+    ]),
+  );
+
+  if (ledger.length > 0) {
+    lines.push('');
+    lines.push(
+      lava.table({
+        columns: [
+          { header: 'rule', role: 'rule' },
+          { header: 'stored', align: 'right', role: 'number' },
+          { header: 'retrieved', align: 'right', role: 'number' },
+          { header: 'rate', align: 'right', role: 'number' },
+        ],
+        // Heaviest rule first: the rule that cut the most is the rule whose retrieval
+        // rate costs the most, and it is the row a reader is looking for. Ties fall
+        // back to the rule id, so two reads of one store render identically.
+        rows: ledger
+          .toSorted((a, b) => b.stored - a.stored || a.rule.localeCompare(b.rule))
+          .map((entry) => [
+            entry.rule,
+            group(entry.stored),
+            group(entry.retrieved),
+            lava.percent(entry.stored === 0 ? 0 : entry.retrieved / entry.stored),
+          ]),
+      }),
+    );
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
 /**
  * Bytes for a human: exact under a kibibyte, one decimal above it. Deliberately not a
  * measurement — every byte count smelt *claims* is an integer in a receipt, and this
@@ -490,22 +640,23 @@ export interface PruneReportInput {
  * user who runs it should leave knowing exactly what a later `retrieve` of one of these
  * hashes will say.
  */
-export function formatPruneReport({
-  report,
-  storePath,
-  olderThan,
-  keepRetrieved,
-}: PruneReportInput): string {
+export function formatPruneReport(
+  { report, storePath, olderThan, keepRetrieved }: PruneReportInput,
+  lava: Palette = PLAIN,
+): string {
   const lines: string[] = [];
   lines.push(
-    `${CLI_NAME} store prune${report.dryRun ? ' --dry-run' : ''}  ${storePath}  ` +
+    `${lava.paint('brand', `${CLI_NAME} store prune`)}${report.dryRun ? ' --dry-run' : ''}  ` +
+      `${lava.paint('path', storePath)}  ` +
       `older than ${olderThan}${keepRetrieved ? ', keeping retrieved' : ''}`,
   );
   lines.push(
     `scanned ${count(report.scanned, 'blob')}  ` +
-      `${report.dryRun ? 'would evict' : 'evicted'} ${group(report.evicted.length)}  ` +
-      `kept ${group(report.kept)}  ` +
-      `${report.dryRun ? 'would free' : 'freed'} ${formatBytes(report.bytesFreed)}`,
+      `${report.dryRun ? 'would evict' : 'evicted'} ` +
+      `${lava.paint('number', group(report.evicted.length))}  ` +
+      `kept ${lava.paint('number', group(report.kept))}  ` +
+      `${report.dryRun ? 'would free' : 'freed'} ` +
+      `${lava.paint('number', formatBytes(report.bytesFreed))}`,
   );
 
   if (report.evicted.length === 0) {
@@ -523,14 +674,21 @@ export function formatPruneReport({
 
   lines.push('');
   for (const blob of report.evicted) {
-    lines.push(`  ${blob.hash}  ${formatBytes(blob.bytes).padStart(9)}  ${blob.putAt}`);
+    lines.push(
+      `  ${lava.paint('hash', blob.hash)}  ` +
+        `${lava.paint('number', formatBytes(blob.bytes).padStart(9))}  ` +
+        `${lava.paint('dim', blob.putAt)}`,
+    );
   }
   lines.push('');
   lines.push(
     report.dryRun
       ? '  Nothing was deleted. Run the same command without --dry-run to evict these.'
-      : '  These bytes are gone. A retrieve of one of these hashes now answers\n' +
-          '  EvictedHashError, naming the date — never "it was never elided".',
+      : lava.paint(
+          'warn',
+          '  These bytes are gone. A retrieve of one of these hashes now answers\n' +
+            '  EvictedHashError, naming the date — never "it was never elided".',
+        ),
   );
   return `${lines.join('\n')}\n`;
 }

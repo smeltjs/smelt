@@ -220,8 +220,11 @@ describe('the built binary, as a real process', () => {
 
     const stats = await runBin(['stats'], undefined, shellDir);
     expect(stats.code).toBe(EXIT.ok);
-    expect(stats.stdout).toContain('retrieveCalls 1');
-    expect(stats.stdout).toContain('uniqueRetrieved 1');
+    // The report is aligned into columns, so the counters are matched by name and
+    // value rather than by a fixed single space — and a pipe gets no ANSI at all.
+    expect(stats.stdout).toMatch(/^ {2}retrieveCalls {2,}1$/mu);
+    expect(stats.stdout).toMatch(/^ {2}uniqueRetrieved {2,}1$/mu);
+    expect(stats.stdout).not.toContain('\u001b[');
   }, 15_000);
 
   it('runs the init wizard on a pipe that stays open, and still exits', async () => {

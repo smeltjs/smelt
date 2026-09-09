@@ -3,6 +3,7 @@ import { readFileSync, readSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import process from 'node:process';
 
+import { colorAllowed, supportsUnicode } from './lava.ts';
 import { closedSinkCode, EXIT, runCli } from './run.ts';
 
 /**
@@ -180,10 +181,19 @@ try {
     cwd: process.cwd(),
     // Read only by name, and only for a name a config file supplied — see CliIo.env.
     env: process.env,
-    // The lava renderer's switch: a real interactive terminal that has not been
-    // told to keep its bytes plain. Piped output, agents and NO_COLOR all mean
-    // exactly the bytes the wizards have always written.
-    color: process.stdout.isTTY === true && process.env['NO_COLOR'] === undefined,
+    // The lava palette's switches, computed once here because this is the only file
+    // that may look at the real streams. Piped output, agents and NO_COLOR all mean
+    // exactly the bytes smelt has always written; FORCE_COLOR is how a person asks
+    // for paint through a pipe. The two streams are asked separately: `smelt big.log
+    // --budget 4000 > small.log` puts the payload in a file and leaves the report on
+    // a terminal, and that report is the half a person reads.
+    color: colorAllowed(process.env, process.stdout.isTTY === true),
+    colorErr: colorAllowed(process.env, process.stderr.isTTY === true),
+    // A person at both ends — the front door's only switch. `isatty(0)` is the same
+    // plain syscall readStdin uses, so nothing here flips fd 0 into non-blocking mode.
+    tty: process.stdout.isTTY === true && isatty(0),
+    // What the locale said this terminal can draw. See `supportsUnicode`.
+    unicode: supportsUnicode(process.env),
     // The wizard verbs (`init`, `hooks`, `agents split`, `setup`) read answers line by
     // line, so they get the stream, not readStdin's one-shot slurp of fd 0. A
     // *getter*, because touching `process.stdin` at all flips fd 0 into non-blocking
