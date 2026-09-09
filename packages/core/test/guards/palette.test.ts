@@ -84,8 +84,11 @@ async function loud(
   return { code, stdout, stderr };
 }
 
-/** The escape byte every one of these assertions is about. */
-const ESC = '[';
+/** The escape sequence prefix every one of these assertions is about. */
+const ESC = '\u001b[';
+
+/** The same, as a pattern: strip the paint back off and see what is underneath. */
+const PAINT = /\u001b\[[0-9;]*m/gu;
 
 describe('off is the identity', () => {
   it('renders every role, glyph and primitive as plain text with colour off', () => {
@@ -115,7 +118,7 @@ describe('off is the identity', () => {
       .table(spec)
       .split('\n')
       // Strip the paint back off: what is left must be the plain table, byte for byte.
-      .map((line) => line.replaceAll(/\[[0-9;]*m/gu, ''));
+      .map((line) => line.replaceAll(PAINT, ''));
     expect(painted).toEqual(plain);
   });
 
@@ -237,7 +240,7 @@ describe('the switches are obeyed', () => {
     const { code, stdout } = await loud([], cwd);
     expect(code).toBe(EXIT.ok);
     expect(stdout).toContain(ESC);
-    expect(stdout.replaceAll(/\[[0-9;]*m/gu, '')).toBe(frontDoor());
+    expect(stdout.replaceAll(PAINT, '')).toBe(frontDoor());
   });
 });
 
@@ -271,10 +274,16 @@ describe('Law 4 reaches the formatter', () => {
 export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
+    // The shape the leak actually had before the palette existed: doctor's sink was
+    // `colorize(text, io.color === true && !resolved.json)`, and the whole receipt
+    // travels through that one sink. Drop the `--json` exception from the sink and the
+    // envelope is painted. (Handing `runDoctor` a painting palette under `--json` is
+    // *not* the mutation to write: the receipt never goes through `say`, so nothing
+    // happens and the guard is right not to notice.)
     id: 'palette-colour-leaks-into-json',
     file: 'cli/subcommands/doctor.ts',
-    find: '        lava: resolved.json ? PLAIN : stdoutPalette(io),',
-    replace: '        lava: stdoutPalette(io),',
+    find: '        output: (text) => io.stdout(text),',
+    replace: "        output: (text) => io.stdout(stdoutPalette(io).paint('dim', text)),",
     why: 'a machine surface carrying paint — an agent parsing `smelt doctor --json` would have to parse around escape sequences, which is the one thing an envelope promises it never has to do',
   },
   {
