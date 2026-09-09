@@ -166,17 +166,23 @@ const README_SECTIONS: readonly {
 ];
 
 /**
- * One harness's section of the MCP README: from its heading to the next `###`, or the
- * end. Sliced, never searched whole — `[mcp_servers.smelt]` is in both the Codex and
- * the Grok sections, so a whole-file `toContain` is green when either of them loses it,
- * and green when a harness's own snippet has moved into somebody else's section.
+ * One harness's section of the MCP README: from its heading to the next heading that
+ * closes it — the next `###`, **or** the next `##`, whichever comes first. Sliced,
+ * never searched whole: `[mcp_servers.smelt]` is in both the Codex and the Grok
+ * sections, so a whole-file `toContain` stays green when either of them loses it, and
+ * green when a harness's snippet has moved into somebody else's section.
+ *
+ * The `##` half is not hypothetical. opencode is the last `###` under "Wiring it into
+ * a harness", so a slice that stopped only at the next `###` ran to the end of the
+ * file and quietly checked the whole document again — the exact defect this function
+ * exists to fix, surviving in the one section where it is hardest to notice.
  */
 function readmeSection(readme: string, heading: string): string {
   const from = readme.indexOf(`\n${heading}\n`);
   if (from === -1) return '';
   const rest = readme.slice(from + heading.length + 2);
-  const to = rest.indexOf('\n### ');
-  return to === -1 ? rest : rest.slice(0, to);
+  const ends = [rest.indexOf('\n### '), rest.indexOf('\n## ')].filter((at) => at !== -1);
+  return ends.length === 0 ? rest : rest.slice(0, Math.min(...ends));
 }
 
 /**
@@ -244,6 +250,24 @@ describe('an MCP registration is a per-harness fact, not the recipe’s one comm
         expect(slice, `the ${section.id} section no longer shows ${shows}`).toContain(shows);
       }
     }
+  });
+
+  it('a section ends where the next heading starts, including the next `##`', () => {
+    // opencode is the last `###` in "Wiring it into a harness", so its slice is the
+    // one that runs to the end of the file when only `###` closes a section — and a
+    // slice that is the whole document makes every assertion above vacuous.
+    const readme = repoFile('packages/mcp/README.md');
+    const opencode = readmeSection(readme, '### opencode');
+    expect(opencode, 'the opencode section is empty').not.toBe('');
+    expect(
+      opencode,
+      "the opencode slice runs past its own section into the README's later `##` " +
+        'headings, so every fragment asserted against it is really being asserted ' +
+        'against the whole document',
+    ).not.toContain('One store with the CLI');
+    // And the section really is the last `###`: if a later one is added, the case
+    // above stops testing what it says it tests.
+    expect(readme.slice(readme.indexOf('### opencode'))).not.toContain('\n### ');
   });
 
   it('each manual step is the mechanism its own README section documents', () => {

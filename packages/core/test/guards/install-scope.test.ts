@@ -123,6 +123,14 @@ describe('a machine-wide install lands where the harness reads', () => {
     expect(receipt.mcp.status).toBe('manual');
     expect(receipt.mcp.command).toBe(SETUP_RECIPE.mcp.registerUser);
     expect(receipt.mcp.command).toContain('--scope user');
+
+    // The manual path builds its list the same way the applied one does: every manual
+    // MCP step this run handed back, with `command` the first of them. Exactly one
+    // profile documents a user-scope registration file it owns, so one is all this
+    // combination can produce — and a list of one is still a list, which is what makes
+    // `commands` the field a reader can act on without asking how many there are.
+    expect(receipt.mcp.commands).toEqual([SETUP_RECIPE.mcp.registerUser]);
+    expect(receipt.mcp.command).toBe((receipt.mcp.commands ?? [])[0]);
   });
 
   it('a project install is unchanged: the project files, and nothing in home', async () => {
@@ -132,6 +140,10 @@ describe('a machine-wide install lands where the harness reads', () => {
     expect(existsSync(join(dir, 'CLAUDE.md'))).toBe(true);
     expect(existsSync(join(dir, '.mcp.json'))).toBe(true);
     expect(receipt.mcp.status).toBe('applied');
+    // A one-harness run still carries `commands`, holding the one thing `command`
+    // holds. Deliberate: a reader that always reads the list never has to branch on
+    // how many harnesses a run happened to name.
+    expect(receipt.mcp.commands).toEqual([SETUP_RECIPE.mcp.register]);
     expect(readdirSync(home)).toEqual([]);
   });
 });
