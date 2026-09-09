@@ -100,6 +100,14 @@ jobs:
           cd packages/mcp
           pnpm pack --out "$RUNNER_TEMP/smeltjs-mcp.tgz"
 
+      # And the opt-in adapter, for the same reason: it is published from this
+      # repository, so a consumer installs bytes this job has never driven unless it
+      # packs them too.
+      - name: pack the rerank-voyage tarball
+        run: |
+          cd packages/rerank-voyage
+          pnpm pack --out "$RUNNER_TEMP/smeltjs-rerank-voyage.tgz"
+
       - name: the tarball carries its licence and grammars
         run: |
           tar -tzf "$RUNNER_TEMP/smeltjs-core.tgz" > "$RUNNER_TEMP/tarball-files.txt"
@@ -116,14 +124,46 @@ jobs:
           grep -qx 'package/dist/bin.js' "$RUNNER_TEMP/mcp-tarball-files.txt" || {
             echo 'FAIL: the mcp bin is not in the tarball'; exit 1; }
 
+      # The adapter's manifest is where the two defects that only exist at pack time
+      # live: a workspace range left un-substituted (the @smeltjs/mcp@0.1.0 defect,
+      # in a peerDependency where npm reports it as an unsatisfiable range rather
+      # than a missing package), and a peer range that does not admit the core this
+      # release publishes.
+      - name: the rerank-voyage tarball carries its licence and a resolvable peer range
+        run: |
+          tar -tzf "$RUNNER_TEMP/smeltjs-rerank-voyage.tgz" > "$RUNNER_TEMP/rerank-tarball-files.txt"
+          grep -qx 'package/LICENSE' "$RUNNER_TEMP/rerank-tarball-files.txt" || {
+            echo 'FAIL: LICENSE is not in the rerank-voyage tarball'; exit 1; }
+          grep -qx 'package/dist/index.js' "$RUNNER_TEMP/rerank-tarball-files.txt" || {
+            echo 'FAIL: the rerank-voyage entrypoint is not in the tarball'; exit 1; }
+          tar -xzOf "$RUNNER_TEMP/smeltjs-rerank-voyage.tgz" package/package.json \
+            > "$RUNNER_TEMP/rerank-manifest.json"
+          CORE_VERSION="$(node -p "require('$GITHUB_WORKSPACE/packages/core/package.json').version")"
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const manifest = JSON.parse(readFileSync(process.argv[1], "utf8"));
+            const range = manifest.peerDependencies?.["@smeltjs/core"];
+            if (typeof range !== "string") {
+              console.error("FAIL: the packed manifest declares no @smeltjs/core peer range");
+              process.exit(1);
+            }
+            if (range.includes("workspace:")) {
+              console.error(`FAIL: the packed peer range is un-substituted: ${range}`);
+              process.exit(1);
+            }
+            console.log(`rerank-voyage peers on @smeltjs/core ${range}; this core is ${process.argv[2]}`);
+          ' "$RUNNER_TEMP/rerank-manifest.json" "$CORE_VERSION"
+
       - name: install the tarballs into a scratch project
         run: |
           mkdir -p "$RUNNER_TEMP/consumer"
           cd "$RUNNER_TEMP/consumer"
           npm init -y > /dev/null
-          # Both at once: the mcp tarball's @smeltjs/core dependency resolves to the
-          # local core tarball, not the registry — the pair under test is this commit's.
-          npm install "$RUNNER_TEMP/smeltjs-core.tgz" "$RUNNER_TEMP/smeltjs-mcp.tgz"
+          # All three at once: the mcp tarball's @smeltjs/core dependency and the
+          # adapter's @smeltjs/core peer both resolve to the local core tarball, not
+          # the registry — the set under test is this commit's. npm fails the install
+          # outright if the peer range does not admit it.
+          npm install "$RUNNER_TEMP/smeltjs-core.tgz" "$RUNNER_TEMP/smeltjs-mcp.tgz" "$RUNNER_TEMP/smeltjs-rerank-voyage.tgz"
 
       - name: the installed bin runs — version, a real smelt, and a slow pipe
         run: |
@@ -158,6 +198,25 @@ jobs:
           console.log('require(esm) ok');
           EOF
           node require-check.cjs
+
+      # The adapter, from the installed bytes: it exports the factory, and building a
+      # stage makes no call — the network is reached only when `rerank` is invoked,
+      # which is the whole of Law 1's opt-in.
+      - name: the installed rerank adapter loads and builds a stage without calling out
+        run: |
+          cd "$RUNNER_TEMP/consumer"
+          cat > rerank-check.mjs <<'EOF'
+          import assert from 'node:assert';
+          const { createVoyageRerankStage, VOYAGE_RERANK_URL } = await import('@smeltjs/rerank-voyage');
+          assert.strictEqual(typeof createVoyageRerankStage, 'function');
+          assert.ok(VOYAGE_RERANK_URL.startsWith('https://'));
+          const stage = createVoyageRerankStage({ apiKey: 'not-a-key', model: 'rerank-2.5', topK: 8 });
+          assert.strictEqual(stage.id, 'voyage');
+          assert.strictEqual(stage.model, 'rerank-2.5');
+          assert.strictEqual(typeof stage.rerank, 'function');
+          console.log(`rerank adapter ok: ${stage.id} ${stage.model}`);
+          EOF
+          node rerank-check.mjs
 
       # The installed mcp server, driven the way a harness drives it: spawn the bin,
       # initialize over stdio, list the tools, and require a protocol-clean stdout.

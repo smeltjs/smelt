@@ -262,23 +262,58 @@ Before pushing the tag:
 - [ ] `node packages/core/dist/cli/bin.js --version` prints the version in the
       manifest, and that binary smelts a real file. The workflow cannot judge "runs
       well"; you can.
-- [ ] The version in both manifests is deliberate. `0.0.0` is the placeholder; the
-      first real publish picks a number and lives with it.
+- [ ] The version in all three manifests is deliberate — `packages/core`,
+      `packages/mcp` and `packages/rerank-voyage`, each versioned on its own. `0.0.0`
+      is the placeholder; the first real publish picks a number and lives with it.
+- [ ] Every package this tag publishes has its trusted publisher registered already
+      (step 1 below) — and a package publishing for the **first** time has had its
+      first version published by hand, because npm has no Settings page to register on
+      until the name exists. A missing registration is not caught before the run: that
+      package's job fails while the others publish, and the fix is to register and
+      re-fire the tag.
+- [ ] `@smeltjs/rerank-voyage`'s `peerDependencies` range admits the core version this
+      tag publishes. The adapter is compiled against the core's declarations, so a
+      release that adds a name it uses — `RerankStage.model` is the one that forced
+      `>=0.7.0 <1` — must raise the floor with it.
 
 Then: **push the tag.** `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow
-(`.github/workflows/publish.yml`) verifies, builds, packs, publishes core then mcp from
-the packed tarballs, computes the tarball sha256 it just served, and renders
-`packaging/homebrew/smelt.rb` from those two facts. The MCP `workspace:^` publish guard
-runs inside the pipeline — explicit, because publishing a packed tarball skips
-lifecycle scripts, and 0.1.0 is the reason the guard exists.
+(`.github/workflows/publish.yml`) verifies, builds, packs, publishes core and then mcp
+and rerank-voyage from the packed tarballs, computes the core tarball's sha256 it just
+served, and renders `packaging/homebrew/smelt.rb` from those two facts. The
+`workspace:^` publish guard runs inside the pipeline for each dependent package —
+explicit, because publishing a packed tarball skips lifecycle scripts, and
+`@smeltjs/mcp@0.1.0` is the reason the guard exists. A version already on npm is
+skipped rather than failed, so re-firing a tag finishes a half-completed release.
 
 One-time owner setup, and the tap:
 
 1. Register each package's **trusted publisher** on npmjs.com (npmjs.com → the
    package → Settings → Trusted publishers → Add): repository owner `smeltjs`,
    repository name `smelt`, workflow filename `publish.yml`, environment `release` —
-   once for `@smeltjs/core` and once for `@smeltjs/mcp`. No npm token is stored
-   anywhere; the registry authenticates the publish job by its OIDC identity.
+   once for `@smeltjs/core`, once for `@smeltjs/mcp`, and once for
+   `@smeltjs/rerank-voyage`. No npm token is stored anywhere; the registry
+   authenticates the publish job by its OIDC identity.
+
+   **Do this before the tag that publishes a package**, not after. Each package
+   publishes from its own job, so an unregistered package fails only its own job — the
+   others still reach npm — but the tag has to be re-fired once the registration
+   exists.
+
+   **A first publish is the exception, and it is a real one.** npm's trusted-publisher
+   configuration lives on a package's own Settings page (docs.npmjs.com/trusted-publishers:
+   "managed via the package settings on npmjs.com"), and a name nobody has published has
+   no such page. So the very first version of a new package — `@smeltjs/rerank-voyage@0.1.0`
+   is the case at hand — cannot be published by this workflow. Publish that one version
+   from a maintainer's machine with a granular publish token scoped to that package
+   alone (`npm publish --access public --provenance` on the packed tarball, from the
+   tagged commit), then register the trusted publisher on the Settings page that now
+   exists, then revoke the token. Every release after it goes through the workflow like
+   the others, and the job's "already on npm — skipping" branch means the tag can be
+   fired before or after without publishing anything twice. If npm has since added a
+   pre-registration for an unpublished name, prefer that and skip the token entirely.
+   The configuration is not validated when saved — a wrong value surfaces only as a
+   failed publish.
+
 2. Create the tap repository `smeltjs/tap`, and seed it from the workflow's
    `homebrew-formula` artifact (or render locally:
    `node scripts/render-formula.mjs <version> <sha256>` — the same pair the workflow
@@ -287,7 +322,7 @@ One-time owner setup, and the tap:
    ```sh
    brew tap-new smeltjs/tap
    cp packaging/homebrew/smelt.rb "$(brew --repository)/Library/Taps/smeltjs/homebrew-tap/Formula/smelt.rb"
-   cd "$(brew --repository)/Library/Taps/smeltjs/homebrew-tap" && git add . && git commit -m "smelt 0.4.0" && git push
+   cd "$(brew --repository)/Library/Taps/smeltjs/homebrew-tap" && git add . && git commit -m "smelt 0.7.0" && git push
    ```
 
 3. From then on: `brew install smeltjs/tap/smelt`, and a release is

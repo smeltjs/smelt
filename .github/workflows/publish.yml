@@ -7,13 +7,24 @@ name: publish
 #
 # What publishes is the packed tarball, not the directory: the sha256 the Homebrew
 # formula records is computed from the very bytes npm serves, so the formula can never
-# vouch for a rebuild that differs. The MCP package's prepublishOnly guard (the
-# workspace:^ substitution that shipped broken in 0.1.0) runs explicitly before the
-# pack, because publishing a tarball does not run lifecycle scripts.
+# vouch for a rebuild that differs. Each dependent package's prepublishOnly guard (the
+# workspace:^ substitution that shipped broken in @smeltjs/mcp@0.1.0) runs explicitly
+# before its pack, because publishing a tarball does not run lifecycle scripts.
+#
+# Three packages publish here, each versioned by its own manifest rather than by the
+# tag: @smeltjs/core, then @smeltjs/mcp and @smeltjs/rerank-voyage — the opt-in Voyage
+# adapter, whose peerDependency on the core must resolve to a version npm already
+# serves, which is why it needs publish-core the way mcp does.
 #
 # Owner one-time setup: register each package's trusted publisher on npmjs.com
 # (repository smeltjs/smelt, workflow publish.yml, environment release — see
-# CONTRIBUTING), and seed a smeltjs/tap repository from the formula artifact.
+# CONTRIBUTING), once per package — @smeltjs/core, @smeltjs/mcp and
+# @smeltjs/rerank-voyage — and seed a smeltjs/tap repository from the formula artifact.
+# A package with no trusted publisher registered fails its own job while the others
+# still publish, so a missing registration costs one package, not the release. A name
+# npm has never seen has no settings page to register on, so a package's *first*
+# version is published by hand and every version after it comes through here —
+# CONTRIBUTING § Publishing spells that out.
 # No npm token exists anywhere: publishing authenticates by OIDC.
 
 on:
@@ -184,6 +195,56 @@ jobs:
           test -f "$TARBALL" || { echo "packed no $TARBALL"; exit 1; }
           if npm view "@smeltjs/mcp@$VERSION" version >/dev/null 2>&1; then
             echo "@smeltjs/mcp@$VERSION is already on npm — skipping"
+            exit 0
+          fi
+          npm publish "$TARBALL" --access public --provenance
+
+  publish-rerank-voyage:
+    name: publish @smeltjs/rerank-voyage
+    # The adapter is opt-in and separately installed, but its peerDependency names the
+    # core by a published range (`>=0.7.0 <1`), so it may not reach npm before the core
+    # it asks for does — the same ordering mcp needs, for the same reason.
+    needs: publish-core
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      # Node 24 ships npm >= 11.5.1, the first that authenticates by OIDC.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same guard mcp carries, for the same reason: this package names the core
+      # through the workspace protocol in its devDependencies, and a pack that left a
+      # workspace range in a published manifest is exactly the 0.1.0 defect. Publishing
+      # a packed tarball runs no lifecycle script, so the guard runs here.
+      - name: run the workspace:^ publish guard
+        run: pnpm --filter @smeltjs/rerank-voyage run prepublishOnly
+
+      - name: build, pack, publish
+        run: |
+          # The manifest's version — the adapter versions independently of the tag and
+          # of both other packages.
+          VERSION="$(node -p "require('./packages/rerank-voyage/package.json').version")"
+          TARBALLS="$RUNNER_TEMP/tarballs"
+          mkdir -p "$TARBALLS"
+          pnpm --filter "@smeltjs/rerank-voyage..." run build
+          pnpm --filter @smeltjs/rerank-voyage pack --pack-destination "$TARBALLS"
+          TARBALL="$TARBALLS/smeltjs-rerank-voyage-$VERSION.tgz"
+          test -f "$TARBALL" || { echo "packed no $TARBALL"; exit 1; }
+          if npm view "@smeltjs/rerank-voyage@$VERSION" version >/dev/null 2>&1; then
+            echo "@smeltjs/rerank-voyage@$VERSION is already on npm — skipping"
             exit 0
           fi
           npm publish "$TARBALL" --access public --provenance
