@@ -251,13 +251,23 @@ smelt setup
 harnesses it detects, the MCP registration for Claude Code, opencode, Codex and Grok
 (JSON or TOML, whichever the harness reads), and a real
 smelt → retrieve round trip to prove the loop. Interactive from a terminal — Enter
-accepts every default. Existing files are never overwritten: they are skipped with a
-note, and `smelt hooks install` (below) edits them, asking per file.
+accepts every default. An existing file is **merged**, never overwritten: your bytes
+stay exactly where they are and smelt's own entries are the only ones it touches. The
+one file it will not write is one it would have to write whole (the opencode plugin,
+Cline's hook wrapper) when the file there is somebody else's — that is reported
+skipped, with the reason.
 
 For an agent, the whole interface is flags, and the receipt is the output:
 
 ```sh
 npx @smeltjs/core setup --yes --harness claude-code --json
+```
+
+The four preset toggles are flags too, each `on|off`, on `setup` and on
+`hooks install` alike. A toggle you do not name keeps whatever is already installed:
+
+```sh
+smelt setup --yes --harness claude-code --map on --lint on --json
 ```
 
 Or hand the agent the skill, which teaches all of it in the agent's own vocabulary:
@@ -379,11 +389,20 @@ smelt hooks install --harness claude-code
 smelt hooks remove             # takes it all back out
 ```
 
+Or without a terminal at all — the same install, answered up front:
+
+```sh
+smelt hooks install --yes --harness claude-code --map on --lint off
+smelt hooks remove  --yes --harness claude-code
+```
+
 Three hooks, individually toggleable, written into the harness's own config with the
-same discipline as `smelt init` — every file listed before a final confirm, no
-existing file ever overwritten without a per-file yes, re-runs edit toggles, and a
-merge into an existing settings file leaves every byte outside smelt's own entries
-untouched. The install also points `smelt.config.json` at a directory store (unless
+same discipline as `smelt init` — every file listed before a final confirm, nothing
+overwritten without a per-file yes, re-runs edit toggles, and a merge into an existing
+settings file leaves every byte outside smelt's own entries untouched. Under `--yes`
+there is nobody to ask, so the plan's own shape answers instead: a file with a
+byte-faithful merge behind it is written (nothing of yours can be lost), and a file
+smelt would write whole is left alone unless it is already smelt's. The install also points `smelt.config.json` at a directory store (unless
 the config already chose one), so the `smelt retrieve` the guard teaches actually
 works across processes:
 

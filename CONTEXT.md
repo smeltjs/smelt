@@ -427,11 +427,26 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0003 carry the reasonin
   it. Prose is never the source.
 - **Setup** (`smelt setup`): the one-command, idempotent application of the recipe for
   chosen harnesses, at an **InstallScope** — interactive when a TTY is present,
-  flag-driven when an agent runs it, and the only repair path for installed state. From
-  the home directory it detects a machine-wide install, says so, and lets you flip it;
-  everywhere else it is the project's. The `init` wizard remains the
-  deliberate sibling, not the repair path. _Avoid_: installer, `smelt init` (that is the
-  careful wizard).
+  fully scriptable when an agent runs it, and the only repair path for installed state.
+  Scriptable is load-bearing, not a convenience: the repair path an agent cannot drive
+  is a repair path that does not happen. `--yes` answers every question, and the four
+  toggles (`--guard`, `--stats`, `--map`, `--lint`, each `on|off`) answer the preset's;
+  `smelt hooks install` takes the same four and the same `--yes`. From the home
+  directory it detects a machine-wide install, says so, and lets you flip it; everywhere
+  else it is the project's. The `init` wizard remains the deliberate sibling, not the
+  repair path. _Avoid_: installer, `smelt init` (that is the careful wizard).
+- **MergePolicy** (`Consent` in `cli/hooks.ts`): the one answer to "may this run write
+  over a file that already exists", behind both install verbs. There are two ways to
+  consent and one apply loop, because two loops drift and the one that drifts is the
+  non-interactive path nobody watches. A **wizard** consent asks per file and takes
+  nothing but a literal `yes`. A **policy** consent — what `--yes` and `smelt setup`
+  use — reads the plan's own shape: a file whose planned bytes were computed _from_ the
+  existing bytes (a JSON hooks merge, a marker-block upsert, a registration edit) is
+  written, because every foreign byte is already in it; a file smelt writes _whole_ is
+  refused unless it is already smelt's, and the refusal names it. Recorded on
+  `PlannedFile.ownership` (`'merged' | 'whole'`), so the question is answered by data
+  the planner produced rather than by a list of filenames. _Avoid_: "overwrite" for the
+  merged case — nothing of anybody else's is overwritten.
 - **InstalledState**: what smelt has written for one **InstallScope** — hook entries
   (found by their ownership marker), the config, the MCP registration, the binary
   version. Every path it reads is resolved by `locateStep`, the same resolver the
