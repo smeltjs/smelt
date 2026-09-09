@@ -37,6 +37,12 @@ import type { GuardMutation } from './_mutations.ts';
  *     `import` throws rather than answering — and a swallowed exception turns that into
  *     an `npm install` for a package the reader already has, which they run, and which
  *     changes nothing.
+ *  6. **A search that stopped says that it stopped.** An unreachable copy beside the
+ *     config ends the search, because a copy there is the answer about the adapter this
+ *     config points at. That precedence rule is invisible from the outside: the machine
+ *     may hold a perfectly good copy in smelt's own install, and a refusal that does not
+ *     say why it went unused reads as smelt being broken. So the refusal names the rule
+ *     and the fix it opens — remove that copy and the search goes on.
  *
  * No install and no network: an "installed" package below is a directory holding a
  * `package.json` and one file, which is all a resolver ever wanted from one.
@@ -201,6 +207,30 @@ describe('an opt-in adapter is looked for where the consumer could have installe
     expect(blocked.why).toContain(configDir);
   });
 
+  it('says the search stopped at the config’s copy, why, and what that opens', () => {
+    // The precedence rule, from the reader's side. This machine has a working adapter in
+    // smelt's own install and smelt will not use it — which is correct, and unreadable
+    // unless the refusal says so. A refusal that named only the broken copy would send a
+    // reader hunting a bug in a rule that is working as designed.
+    installEsmOnly(configDir, PACKAGE);
+    install(ownDir, PACKAGE);
+
+    const blocked = resolveAdapter(PACKAGE, configPath(), { ownRequire });
+
+    expect(blocked.found).toBe(false);
+    if (blocked.found) return;
+    expect(blocked.at).toBe('config');
+    for (const said of ['NOT tried', 'takes precedence', blocked.ownDir, 'remove it']) {
+      expect(
+        blocked.why,
+        'the refusal does not say that smelt stopped at the copy beside the config, why ' +
+          'it stopped, or that removing that copy lets the search go on. A precedence ' +
+          'rule the reader cannot see is indistinguishable from smelt being broken — ' +
+          'this machine has a loadable copy in smelt’s own install and will not use it.',
+      ).toContain(said);
+    }
+  });
+
   it('hands back a file: URL, never the package name', () => {
     // The Law 1 half. `import()` of a bare specifier is an edge the zero-network walk
     // follows and a bundler resolves — and it would resolve from smelt's own location,
@@ -259,6 +289,13 @@ export const MUTATIONS: GuardMutation[] = [
     find: "if (code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_PACKAGE_IMPORT_NOT_DEFINED') {",
     replace: "if (code === 'ERR_NOTHING_EVER_THROWS_THIS') {",
     why: 'the resolver swallowing “installed, and not reachable under require conditions” into “not installed” — the reader is handed an npm install for a package they already have, runs it, and is told the same thing again',
+  },
+  {
+    id: 'adapter-unreachable-refusal-hides-the-precedence-rule',
+    file: 'rerank/resolve.ts',
+    find: '`(${OWN_PACKAGE_DIR}) was NOT tried: a copy beside ${CONFIG_FILE_NAME} takes ` +',
+    replace: '`is not the copy smelt would have used anyway, ` +',
+    why: 'the refusal dropping the clause that says smelt stopped here and never tried its own install — the search is doing exactly what the precedence rule says, and a reader whose machine holds a loadable copy in smelt’s own install is left reading a refusal that looks like smelt failing to find what it has',
   },
   {
     id: 'adapter-install-command-forgets-the-prefix',

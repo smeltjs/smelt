@@ -1,10 +1,10 @@
 {
   "guards": 45,
-  "mutations": 236,
+  "mutations": 237,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
-      "count": 6
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",

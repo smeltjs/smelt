@@ -875,8 +875,9 @@ the one you configured with no explanation beside it. The same facts ride in the
 envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
 and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
 set and where the adapter resolved from (`adapter from config dir`, `adapter from smelt's
-own install`, `adapter not installed:` with the command, or `adapter installed but not
-loadable`) — presence only, never the value. It reads the `module` kind by the same rule
+own install`, `adapter not installed:` with the command, or `adapter installed beside
+smelt.config.json but not loadable`, which also says smelt's own install was not tried and
+why) — presence only, never the value. It reads the `module` kind by the same rule
 the loader uses, so a config naming a package rather than a file is not reported as a
 missing file.
 

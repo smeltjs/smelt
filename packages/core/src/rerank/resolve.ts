@@ -43,7 +43,10 @@ import { CONFIG_FILE_NAME } from '../config.ts';
  * `exports` map must reach its entry under **`default`** or **`require`**. A package that
  * exports only an `import` condition is *installed and unreachable* — a different answer
  * from *not installed*, and it gets a different refusal, because installing it again
- * fixes nothing. A **dual** package resolves to its `require` entry — the build a
+ * fixes nothing. An unreachable copy **beside the config stops the search** — the
+ * config's directory is asked first and a copy there is the answer about the adapter
+ * this config points at — and the refusal says so, along with the fix that opens:
+ * remove that copy and the search goes on to smelt's own install. A **dual** package resolves to its `require` entry — the build a
  * CommonJS consumer would have been given, not the one an ESM consumer would; an adapter
  * whose two builds differ in behaviour has to say so in its own README. The adapter this
  * repository publishes states `default`, which is what every adapter should state.
@@ -90,6 +93,12 @@ export interface UnresolvedAdapter {
   readonly configDir: string;
   /** Smelt's own package directory: the second place tried. */
   readonly ownDir: string;
+  /**
+   * For `'unreachable'`: which of the two directories holds the copy that cannot be
+   * loaded, because the two have different fixes and only one of them can be "remove it
+   * and the search goes on". Absent for `'missing'`, where neither held one.
+   */
+  readonly at?: AdapterOrigin;
   /**
    * The command that puts the adapter where {@link configDir} can see it. Present for
    * `'missing'` only — offering it for `'unreachable'` would send a reader to install a
@@ -140,33 +149,52 @@ export function resolveAdapter(
   io: AdapterResolverIo = {},
 ): AdapterResolution {
   const configDir = dirname(resolvePath(configPath));
-  const unreachable = (dir: string, detail: string): UnresolvedAdapter => ({
+
+  /**
+   * The two unreachable refusals, which differ in more than a path.
+   *
+   * A copy beside the config **stops the search**, because that is the precedence rule:
+   * the config's directory is asked first, and a copy found there is the answer about
+   * the adapter this config points at. Loading a different copy from smelt's own install
+   * instead would run a package the consumer did not point at and say nothing about the
+   * one they did. But a rule the reader cannot see is indistinguishable from a bug, so
+   * the refusal states it — and states the fix it opens, which the other case does not
+   * have: removing that copy lets the search go on.
+   */
+  const unreachable = (at: AdapterOrigin, detail: string): UnresolvedAdapter => ({
     found: false,
     reason: 'unreachable',
+    at,
     configDir,
     ownDir: OWN_PACKAGE_DIR,
     why:
-      `${name} is installed at ${dir} but is not reachable under Node's \`require\` ` +
-      `conditions, so smelt cannot load it and installing it again would change ` +
-      `nothing. An adapter's "exports" map must reach its entry under \`default\` or ` +
-      `\`require\`; this one reaches it under neither. (${detail})`,
+      at === 'config'
+        ? `${name} is installed at ${configDir} but is not reachable under Node's ` +
+          `\`require\` conditions, so smelt cannot load it. smelt's own install ` +
+          `(${OWN_PACKAGE_DIR}) was NOT tried: a copy beside ${CONFIG_FILE_NAME} takes ` +
+          `precedence, and loading a different one instead would run a package this ` +
+          `config never pointed at. Installing it again would change nothing. Either give ` +
+          `that copy's "exports" map a \`default\` or \`require\` condition, or remove it ` +
+          `from ${configDir} and smelt will go on to its own install. (${detail})`
+        : `${name} is installed at ${OWN_PACKAGE_DIR} — smelt's own install, reached ` +
+          `because ${CONFIG_FILE_NAME}'s own directory (${configDir}) holds no copy — but ` +
+          `is not reachable under Node's \`require\` conditions, so smelt cannot load it ` +
+          `and installing it again would change nothing. Either give that copy's "exports" ` +
+          `map a \`default\` or \`require\` condition, or put a reachable one beside the ` +
+          `config, which is asked first. (${detail})`,
   });
 
   const beside = probe(createRequire(resolvePath(configPath)), name);
   if (beside.kind === 'found') {
     return { found: true, url: pathToFileURL(beside.path).href, from: 'config' };
   }
-  // Stopping here rather than trying smelt's own install next: the consumer put this
-  // package beside their config, and "you have it, and it cannot be loaded this way" is
-  // the answer about *their* install. Falling through to a working copy elsewhere would
-  // load a package they did not point at and say nothing about the one they did.
-  if (beside.kind === 'unreachable') return unreachable(configDir, beside.detail);
+  if (beside.kind === 'unreachable') return unreachable('config', beside.detail);
 
   const own = probe(io.ownRequire ?? ownRequireDefault, name);
   if (own.kind === 'found') {
     return { found: true, url: pathToFileURL(own.path).href, from: 'core' };
   }
-  if (own.kind === 'unreachable') return unreachable(OWN_PACKAGE_DIR, own.detail);
+  if (own.kind === 'unreachable') return unreachable('core', own.detail);
 
   const install = installCommand(name, configDir);
   return {

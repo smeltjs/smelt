@@ -48,7 +48,10 @@ smelt asks where an adapter is with `createRequire(...).resolve()`, so **an adap
 `exports` map must reach its entry under a `default` or a `require` condition** — this
 package states `default`, and any adapter written against the same seam should. A package
 that exports only an `import` condition is _installed and unreachable_, which smelt
-reports as exactly that rather than telling you to install it again. A dual package
+reports as exactly that rather than telling you to install it again — and if that copy is
+the one beside your config, smelt stops there rather than falling through to its own
+install, because a copy beside the config takes precedence. The refusal says so, and says
+that removing it lets the search go on. A dual package
 resolves to its `require` entry, so an adapter whose two builds differ in behaviour has
 to say so here.
 

@@ -485,10 +485,14 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   It is asked by `smelt doctor` too, which is why it refuses without throwing: a report
   line, not an exception. **The condition set is part of the adapter contract**: the
   question goes through `createRequire`, so an adapter's `exports` map must answer under
-  `default` or `require`; one that answers only `import` is _installed and unreachable_
-  — a second, distinct refusal, and it offers no install command because installing it
-  again changes nothing. **On trust**: reading the config directory's `node_modules` is
-  not a new trust. A `smelt.config.json` already chooses code smelt imports — that is
+  `default` or `require`; one that answers only `import` is _installed and unreachable_ —
+  a second, distinct refusal, and it offers no install command because installing it
+  again changes nothing. An unreachable copy **beside the config stops the search**,
+  since a copy there is the answer about the adapter this config points at — and because
+  that rule is invisible from a machine that also holds a good copy in smelt's own
+  install, the refusal says smelt's own install was not tried and that removing the
+  broken copy lets the search go on. **On trust**: reading the config directory's
+  `node_modules` is not a new trust. A `smelt.config.json` already chooses code smelt imports — that is
   the whole of the `module` kind — so a file that can name a path to import can name a
   package beside itself; and the reach this widens (a global `smelt` finding an adapter
   in a repository somebody cloned) is bounded by the gate it always had: nothing is

@@ -188,6 +188,12 @@ export interface DoctorRerank {
    * Absent when it resolved, and absent for a `module` kind that named a file.
    */
   readonly adapterProblem?: 'missing' | 'unreachable';
+  /**
+   * With `adapterProblem: 'unreachable'`: which directory holds the copy that cannot be
+   * loaded. `'config'` also means smelt's own install was never tried — a copy beside
+   * the config takes precedence — which is why the two are reported differently.
+   */
+  readonly adapterAt?: 'config' | 'core';
   /** The command that installs the adapter. Present only with `adapterProblem: 'missing'`. */
   readonly install?: string;
 }
@@ -342,8 +348,9 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
         // "exports" map. A command that reinstalls it would be a command that changes
         // nothing, printed under a heading that says it repairs.
         orphans.push(
-          `rerank is configured (${rerank.adapter}) but its ${UNREACHABLE_LINE} — every ` +
-            `run that would rerank refuses instead`,
+          `rerank is configured (${rerank.adapter}) but its ` +
+            `${unreachableLine(rerank.adapterAt)} — every run that would rerank refuses ` +
+            `instead`,
         );
       }
       if (rerank?.keySet === false) {
@@ -574,7 +581,7 @@ function readRerank(
 function readModule(
   path: string,
   configPath: string,
-): Pick<DoctorRerank, 'moduleExists' | 'adapterFrom' | 'adapterProblem' | 'install'> {
+): Pick<DoctorRerank, 'moduleExists' | 'adapterFrom' | 'adapterProblem' | 'adapterAt' | 'install'> {
   const file = isAbsolute(path) ? path : resolve(dirname(configPath), path);
   if (existsSync(file)) return { moduleExists: true };
   if (!isBareSpecifier(path)) return { moduleExists: false };
@@ -592,11 +599,12 @@ function readModule(
 function readAdapter(
   name: string,
   configPath: string,
-): Pick<DoctorRerank, 'adapterFrom' | 'adapterProblem' | 'install'> {
+): Pick<DoctorRerank, 'adapterFrom' | 'adapterProblem' | 'adapterAt' | 'install'> {
   const adapter = resolveAdapter(name, configPath);
   if (adapter.found) return { adapterFrom: adapter.from };
   return {
     adapterProblem: adapter.reason,
+    ...(adapter.at === undefined ? {} : { adapterAt: adapter.at }),
     ...(adapter.install === undefined ? {} : { install: adapter.install }),
   };
 }
@@ -614,7 +622,7 @@ function adapterWhere(rerank: DoctorRerank): string {
   if (rerank.adapterProblem === 'missing') {
     return ` — adapter not installed: ${rerank.install ?? ''}`;
   }
-  if (rerank.adapterProblem === 'unreachable') return ` — ${UNREACHABLE_LINE}`;
+  if (rerank.adapterProblem === 'unreachable') return ` — ${unreachableLine(rerank.adapterAt)}`;
   return '';
 }
 
@@ -624,10 +632,24 @@ function adapterWhere(rerank: DoctorRerank): string {
  * The package is there. `npm install` would put the same bytes in the same place and
  * doctor would say this again, so the repair is in the adapter's own `exports` map —
  * naming a command here would be naming one the reader has already run.
+ *
+ * The two places read differently on purpose. A copy beside the config **stops the
+ * search**: the config's directory is asked first, so smelt's own install is never
+ * consulted, and a reader who cannot see that rule is looking at a machine that has a
+ * working copy somewhere and a doctor that will not say why it is unused. So the rule is
+ * stated, along with the fix it opens — remove that copy and the search goes on.
  */
-const UNREACHABLE_LINE =
-  'adapter installed but not loadable: its "exports" map answers under neither ' +
-  '`default` nor `require`';
+function unreachableLine(at: DoctorRerank['adapterAt']): string {
+  return at === 'core'
+    ? `adapter installed in smelt's own install but not loadable: its "exports" map ` +
+        `answers under neither \`default\` nor \`require\`, and ${CONFIG_FILE_NAME}'s own ` +
+        `directory holds no copy. Give that copy a \`default\` or \`require\` condition, ` +
+        `or put a reachable one beside the config, which is asked first`
+    : `adapter installed beside ${CONFIG_FILE_NAME} but not loadable: its "exports" map ` +
+        `answers under neither \`default\` nor \`require\`. smelt's own install was NOT ` +
+        `tried — a copy beside the config takes precedence. Give that copy a \`default\` ` +
+        `or \`require\` condition, or remove it and the search goes on to smelt's own install`;
+}
 
 /** The verdict over one block: whole-owned files carry no stamp to compare. */
 function blockStatus(block: InstalledBlock, binaryVersion: string): DoctorBlock['status'] {

@@ -166,11 +166,19 @@ describe('resolveAdapter: the config file’s directory first, smelt’s own ins
     expect(blocked.found).toBe(false);
     if (blocked.found) return;
     expect(blocked.reason).toBe('unreachable');
+    expect(blocked.at).toBe('config');
     expect(blocked.install, 'an install command for a package that is installed').toBeUndefined();
     expect(blocked.why).toContain(configDir);
     expect(blocked.why).toContain('installed at');
     expect(blocked.why).toContain('require');
     expect(blocked.why).not.toContain('npm install');
+    // And it says the search STOPPED here and why — a precedence rule the reader cannot
+    // see is indistinguishable from a bug on a machine that has a working copy elsewhere.
+    expect(blocked.why).toContain('NOT tried');
+    expect(blocked.why).toContain(blocked.ownDir);
+    expect(blocked.why).toContain('takes precedence');
+    // Both fixes, including the one only this case has.
+    expect(blocked.why).toContain('remove it');
   });
 
   it('says which of the two directories holds the unreachable copy', () => {
@@ -193,7 +201,12 @@ describe('resolveAdapter: the config file’s directory first, smelt’s own ins
     expect(blocked.found).toBe(false);
     if (blocked.found) return;
     expect(blocked.reason).toBe('unreachable');
+    expect(blocked.at).toBe('core');
     expect(blocked.why).toContain(blocked.ownDir);
+    // The other half of the precedence rule: this one was reached *because* the config's
+    // directory had none, so "remove it and the search goes on" is not on offer here.
+    expect(blocked.why).toContain('holds no copy');
+    expect(blocked.why).not.toContain('NOT tried');
   });
 
   it('names smelt’s own install by its package directory, never by a module file', () => {

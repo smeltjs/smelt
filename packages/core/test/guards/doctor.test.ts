@@ -259,7 +259,7 @@ describe('smelt doctor reads installed state back', () => {
       // Which of the two shows up is a fact about the machine, and pnpm gives this
       // process a `NODE_PATH` into the workspace store, so the not-installed half is
       // pinned in the spawned-binary case below where a consumer's environment applies.
-      const resolutionFields = new Set(['adapterFrom', 'adapterProblem', 'install']);
+      const resolutionFields = new Set(['adapterFrom', 'adapterProblem', 'adapterAt', 'install']);
       const fields = Object.keys(receiptMissing.rerank ?? {}).toSorted();
       expect(fields.filter((key) => !resolutionFields.has(key))).toEqual([
         'adapter',
@@ -734,6 +734,30 @@ describe('the installed binary answers doctor', () => {
       expect(asMissingPackage.repair).toContain(
         `npm install --prefix "${cwd}" not-a-package-anywhere`,
       );
+
+      // And an installed copy beside the config that answers under neither `default`
+      // nor `require`: reported as installed-and-unloadable, with no repair command —
+      // there is none — and saying that smelt's own install was never consulted.
+      const blocked = join(cwd, 'node_modules', 'blocked-reranker');
+      mkdirSync(blocked, { recursive: true });
+      writeFileSync(
+        join(blocked, 'package.json'),
+        `${JSON.stringify({
+          name: 'blocked-reranker',
+          version: '1.0.0',
+          type: 'module',
+          exports: { '.': { import: './i.js' } },
+        })}\n`,
+      );
+      writeFileSync(join(blocked, 'i.js'), `export default { id: 'x', rerank: async () => [] };\n`);
+      write('blocked-reranker');
+      const asUnreachable = read();
+      expect(asUnreachable.rerank?.adapterProblem).toBe('unreachable');
+      expect(asUnreachable.rerank?.adapterAt).toBe('config');
+      expect(asUnreachable.rerank?.install).toBeUndefined();
+      expect(asUnreachable.orphans.join('\n')).toContain('NOT tried');
+      expect(asUnreachable.orphans.join('\n')).toContain('takes precedence');
+      expect(asUnreachable.repair.join('\n')).not.toContain('blocked-reranker');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

@@ -35,20 +35,25 @@ the runner rather than by hand.
   adapter contract is now written down: an adapter's `exports` map must answer under
   `default` or `require`, and one that answers only `import` is refused as **installed and
   unreachable** — a distinct refusal with no install command, because installing it again
-  would change nothing. `test/guards/adapter-resolver.test.ts` holds the order, the
-  fallback, the one-message refusal, the `file:` URL and that distinction, with six
-  mutations. The install command quotes its directory, so it survives a path with a space
+  would change nothing. An unreachable copy beside the config **stops the search**, since a
+  copy there is the answer about the adapter the config points at; that precedence rule is
+  invisible on a machine that also holds a good copy in smelt's own install, so the refusal
+  says smelt's own install was not tried, why, and that removing the broken copy lets the
+  search go on. `test/guards/adapter-resolver.test.ts` holds the order, the
+  fallback, the one-message refusal, the `file:` URL, that distinction and the stated
+  precedence rule, with seven mutations. The install command quotes its directory, so it survives a path with a space
   in it.
 - **`smelt doctor` says where the adapter is, and reads the `module` kind by the loader's
   rule.** The rerank line now carries `adapter from config dir`,
   `adapter from smelt's own install`, `adapter not installed:` with the install command for
-  your config's directory, or `adapter installed but not loadable` — asked through the same
+  your config's directory, or `adapter installed beside smelt.config.json but not loadable`
+  (which names the precedence rule that stopped the search) — asked through the same
   resolver a run uses, and resolving only: nothing is imported to answer it.
   `{"kind":"module","path":"my-reranker"}` is a config every run loads and doctor reported
   as a missing file, orphan and exit 3, because it asked `existsSync` where the loader asks
   for a file **or** a package; it now asks the loader's question, absolute paths included.
-  `smelt.doctor.v1` gains `rerank.adapterFrom`, `rerank.adapterProblem` and
-  `rerank.install`, all optional; no existing field changed spelling or meaning, and the
+  `smelt.doctor.v1` gains `rerank.adapterFrom`, `rerank.adapterProblem`,
+  `rerank.adapterAt` and `rerank.install`, all optional; no existing field changed spelling or meaning, and the
   key's _value_ still never appears. A configured opt-in whose adapter is in neither place
   is an orphan with that command as its repair — the same treatment an unset key already
   had, for the same reason: every run that would rerank refuses instead. An installed but
