@@ -12,6 +12,7 @@ import { applyRerank } from '../src/rerank/protect.ts';
 import { createSmelter } from '../src/smelter.ts';
 import { markerPricing } from '../src/apply.ts';
 import { planLexical } from '../src/plan/lexical.ts';
+import { predictOutputBytes, savingBytes } from '../src/plan/budget.ts';
 import type { ElisionPlan, RerankCandidate, RerankStage, RerankedCandidate } from '../src/types.ts';
 
 /**
@@ -44,9 +45,38 @@ function spares(ids: readonly string[], model?: string) {
   return { stage, seen };
 }
 
+/** A stage that returns exactly these candidate ids, best first. */
+function ranks(ids: readonly string[]): RerankStage {
+  return {
+    id: 'ranker',
+    rerank: (candidates: readonly RerankCandidate[]) =>
+      Promise.resolve(
+        ids.map((id, position) => ({
+          ...candidates.find((candidate) => candidate.id === id)!,
+          score: 1 - position / 1000,
+        })),
+      ),
+  };
+}
+
 const TEXT = Array.from({ length: 60 }, (_unused, i) => `line ${String(i)} filler filler`).join(
   '\n',
 );
+
+/** The pricing every test here plans and spares with — one seam, as a run has one. */
+const PRICING = markerPricing('unknown');
+
+/**
+ * The slot, with the two facts the smelter carries across the seam. The default budget
+ * is larger than the whole input, so a test that is not about the budget rung reads
+ * exactly as it did before the rung existed and cannot be bound by it.
+ */
+function slot(
+  request: Omit<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'pricing'> &
+    Partial<Pick<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'pricing'>>,
+): ReturnType<typeof applyRerank> {
+  return applyRerank({ budgetBytes: 1_000_000, pricing: PRICING, ...request });
+}
 
 /** A real lexical plan over `TEXT`, so the candidates are the ones a run would see. */
 function realPlan(budgetBytes = 300): ElisionPlan {
@@ -55,7 +85,7 @@ function realPlan(budgetBytes = 300): ElisionPlan {
     language: 'unknown',
     budgetBytes,
     focus: ['line 30'],
-    pricing: markerPricing('unknown'),
+    pricing: PRICING,
   });
 }
 
@@ -65,7 +95,7 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
     expect(plan.elisions.length).toBeGreaterThan(0);
     const { stage, seen } = spares([]);
 
-    await applyRerank({ stage, plan, text: TEXT, query: 'line 30' });
+    await slot({ stage, plan, text: TEXT, query: 'line 30' });
 
     expect(seen.candidates?.map((candidate) => candidate.id)).toEqual(
       plan.elisions.map((_elision, index) => String(index)),
@@ -85,13 +115,17 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
     const plan = realPlan();
     const { stage } = spares(['0']);
 
-    const outcome = await applyRerank({ stage, plan, text: TEXT, query: 'q' });
+    const outcome = await slot({ stage, plan, text: TEXT, query: 'q' });
 
     expect(outcome.plan.elisions).toEqual(plan.elisions.slice(1));
     expect(outcome.attribution).toEqual({
       adapter: 'test-ranker',
       candidates: plan.elisions.length,
+      returned: 1,
       kept: 1,
+      sparedBytes: savingBytes(plan.elisions[0]!, PRICING),
+      // The stage asked for one of many: its own cut-off ended the walk, not the budget.
+      stopped: 'cap',
     });
   });
 
@@ -105,9 +139,10 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
       rerank: (candidates) =>
         Promise.resolve(candidates.map((candidate, i) => ({ ...candidate, score: i }))),
     };
-    const outcome = await applyRerank({ stage: greedy, plan, text: TEXT, query: 'q' });
+    const outcome = await slot({ stage: greedy, plan, text: TEXT, query: 'q' });
     expect(outcome.plan.elisions).toEqual([]);
     expect(outcome.attribution.kept).toBe(plan.elisions.length);
+    expect(outcome.attribution.stopped).toBe('exhausted');
     for (const elision of outcome.plan.elisions) expect(plan.elisions).toContain(elision);
   });
 
@@ -125,9 +160,11 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
         return Promise.resolve([]);
       },
     };
-    const outcome = await applyRerank({ stage, plan, text: TEXT, query: '   ' });
+    const outcome = await slot({ stage, plan, text: TEXT, query: '   ' });
     expect(called).toBe(false);
     expect(outcome.plan).toBe(plan);
+    // Nothing ran, so nothing that only a run can measure is reported: no `returned`,
+    // no `sparedBytes`, no `stopped`. A zero here would be a count nobody took.
     expect(outcome.attribution).toEqual({
       adapter: 'never',
       candidates: plan.elisions.length,
@@ -140,7 +177,7 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
   it('does not call the stage when the planner proposed nothing, and names that reason', () => {
     const empty: ElisionPlan = { planner: 'lexical/v1', language: 'unknown', elisions: [] };
     const { stage, seen } = spares([]);
-    return applyRerank({ stage, plan: empty, text: TEXT, query: 'q' }).then((outcome) => {
+    return slot({ stage, plan: empty, text: TEXT, query: 'q' }).then((outcome) => {
       expect(seen.candidates).toBeUndefined();
       expect(outcome.attribution.candidates).toBe(0);
       expect(outcome.attribution.skipped).toBe('no-candidates');
@@ -149,7 +186,7 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
 
   it('reports no `skipped` at all when the stage actually ran', () => {
     const { stage } = spares(['0']);
-    return applyRerank({ stage, plan: realPlan(), text: TEXT, query: 'q' }).then((outcome) => {
+    return slot({ stage, plan: realPlan(), text: TEXT, query: 'q' }).then((outcome) => {
       expect(outcome.attribution.skipped).toBeUndefined();
     });
   });
@@ -164,7 +201,7 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
       id: 'voyage',
       rerank: () => Promise.reject(upstream),
     };
-    const thrown = await applyRerank({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' })
+    const thrown = await slot({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' })
       .then(() => undefined)
       .catch((cause: unknown) => cause);
     expect(thrown).toBeInstanceOf(RerankStageError);
@@ -181,13 +218,13 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
       },
     };
     await expect(
-      applyRerank({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' }),
+      slot({ stage: failing, plan: realPlan(), text: TEXT, query: 'q' }),
     ).rejects.toBeInstanceOf(RerankStageError);
   });
 
   it('carries the stage’s model into the attribution when it names one', async () => {
     const { stage } = spares([], 'rerank-2.5');
-    const outcome = await applyRerank({ stage, plan: realPlan(), text: TEXT, query: 'q' });
+    const outcome = await slot({ stage, plan: realPlan(), text: TEXT, query: 'q' });
     expect(outcome.attribution.model).toBe('rerank-2.5');
   });
 
@@ -196,9 +233,9 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
       id: 'rogue',
       rerank: () => Promise.resolve([{ id: 'nope', text: '', score: 1 }]),
     };
-    await expect(
-      applyRerank({ stage: rogue, plan: realPlan(), text: TEXT, query: 'q' }),
-    ).rejects.toThrow(RerankStageError);
+    await expect(slot({ stage: rogue, plan: realPlan(), text: TEXT, query: 'q' })).rejects.toThrow(
+      RerankStageError,
+    );
   });
 
   it('refuses the same id twice — "how many were kept" must be readable', async () => {
@@ -211,41 +248,242 @@ describe('the slot: what a stage is offered, and what it may do with it', () => 
         ]),
     };
     await expect(
-      applyRerank({ stage: doubled, plan: realPlan(), text: TEXT, query: 'q' }),
+      slot({ stage: doubled, plan: realPlan(), text: TEXT, query: 'q' }),
     ).rejects.toThrow(/twice/);
+  });
+});
+
+/**
+ * THE BUDGET RUNG — the slot reads the number the caller typed.
+ *
+ * The stage returns a ranking of regions it wants back; this walk decides how many of
+ * them the run can afford. `topK` stays the cap the user named, and the budget stays the
+ * ceiling the user named — the slot invents neither. The three ways the walk can end are
+ * each asserted below, because "3 of 8 kept" is only readable when the reason is beside
+ * it.
+ *
+ * `realPlan()` is two elisions worth 521 B and 509 B off a 1,309 B input, predicting a
+ * 279 B output. Every budget in this block is chosen against those measured numbers, so
+ * a change in the fixture is a red test rather than a silently vacuous one.
+ */
+describe('the budget rung: the slot spares only as far as the budget reaches', () => {
+  const PREDICTED = 279;
+  const FIRST_SAVING = 521;
+
+  it('the fixture is the one these budgets are chosen against', () => {
+    const plan = realPlan();
+    const inputBytes = Buffer.byteLength(TEXT, 'utf8');
+    expect(plan.elisions.length).toBe(2);
+    expect(plan.elisions.map((elision) => savingBytes(elision, PRICING))).toEqual([521, 509]);
+    expect(predictOutputBytes(inputBytes, plan.elisions, PRICING)).toBe(PREDICTED);
+    expect(inputBytes).toBe(1309);
+  });
+
+  it('stops the moment the next region would not fit, and names the budget as the reason', async () => {
+    // 279 + 521 lands exactly on 800; the second region would take it to 1,309.
+    const plan = realPlan();
+    const outcome = await slot({
+      stage: ranks(['0', '1']),
+      plan,
+      text: TEXT,
+      query: 'q',
+      budgetBytes: PREDICTED + FIRST_SAVING,
+    });
+    expect(outcome.attribution).toEqual({
+      adapter: 'ranker',
+      candidates: 2,
+      returned: 2,
+      kept: 1,
+      sparedBytes: FIRST_SAVING,
+      stopped: 'budget',
+    });
+    expect(outcome.plan.elisions).toEqual([plan.elisions[1]]);
+    expect(
+      predictOutputBytes(Buffer.byteLength(TEXT, 'utf8'), outcome.plan.elisions, PRICING),
+    ).toBe(PREDICTED + FIRST_SAVING);
+  });
+
+  it('spares nothing at all when the best region alone breaks the budget', async () => {
+    // The ruling, asserted: a plan that fits beats a plan that does not. The stage
+    // cannot cut, so the only lever left is not sparing — and it is pulled all the way.
+    const plan = realPlan();
+    const outcome = await slot({
+      stage: ranks(['0', '1']),
+      plan,
+      text: TEXT,
+      query: 'q',
+      budgetBytes: PREDICTED + FIRST_SAVING - 1,
+    });
+    expect(outcome.attribution.kept).toBe(0);
+    expect(outcome.attribution.sparedBytes).toBe(0);
+    expect(outcome.attribution.stopped).toBe('budget');
+    expect(outcome.plan.elisions).toEqual(plan.elisions);
+  });
+
+  it('walks the stage’s ranking, not the order it happened to list them in', async () => {
+    // Listed 0 then 1, scored the other way round. Only the second region fits this
+    // budget; a slot that walked the list as given would spare nothing at all.
+    const outOfOrder: RerankStage = {
+      id: 'out-of-order',
+      rerank: (candidates: readonly RerankCandidate[]) =>
+        Promise.resolve([
+          { ...candidates[0]!, score: 0.1 },
+          { ...candidates[1]!, score: 0.9 },
+        ]),
+    };
+    const plan = realPlan();
+    const outcome = await slot({
+      stage: outOfOrder,
+      plan,
+      text: TEXT,
+      query: 'q',
+      budgetBytes: 790,
+    });
+    expect(outcome.attribution.kept).toBe(1);
+    expect(outcome.plan.elisions).toEqual([plan.elisions[0]]);
+  });
+
+  it('breaks a tie by the order the candidates were sent, so the walk is deterministic', async () => {
+    // Equal scores, listed second-first. The tie goes to the earlier candidate, so a
+    // budget with room for exactly one spares region 0 — every time, on every machine.
+    const tied: RerankStage = {
+      id: 'tied',
+      rerank: (candidates: readonly RerankCandidate[]) =>
+        Promise.resolve([
+          { ...candidates[1]!, score: 0.5 },
+          { ...candidates[0]!, score: 0.5 },
+        ]),
+    };
+    const plan = realPlan();
+    const outcome = await slot({
+      stage: tied,
+      plan,
+      text: TEXT,
+      query: 'q',
+      budgetBytes: PREDICTED + FIRST_SAVING,
+    });
+    expect(outcome.plan.elisions).toEqual([plan.elisions[1]]);
+    expect(outcome.attribution.kept).toBe(1);
+  });
+
+  it('says `cap` when the stage’s own cut-off ended the walk, not the budget', async () => {
+    // K is the user's number and smelt honours it as a cap: one of two came back, both
+    // would have fitted, and the run kept exactly what was asked for.
+    const outcome = await slot({ stage: ranks(['1']), plan: realPlan(), text: TEXT, query: 'q' });
+    expect(outcome.attribution.returned).toBe(1);
+    expect(outcome.attribution.kept).toBe(1);
+    expect(outcome.attribution.stopped).toBe('cap');
+  });
+
+  it('says `exhausted` when every candidate offered came back and every one fitted', async () => {
+    const outcome = await slot({
+      stage: ranks(['0', '1']),
+      plan: realPlan(),
+      text: TEXT,
+      query: 'q',
+    });
+    expect(outcome.attribution.kept).toBe(2);
+    expect(outcome.attribution.returned).toBe(2);
+    expect(outcome.attribution.stopped).toBe('exhausted');
+  });
+
+  it('counts the spared bytes through the same pricing the planner used', async () => {
+    const plan = realPlan();
+    const outcome = await slot({ stage: ranks(['1', '0']), plan, text: TEXT, query: 'q' });
+    expect(outcome.attribution.sparedBytes).toBe(
+      savingBytes(plan.elisions[0]!, PRICING) + savingBytes(plan.elisions[1]!, PRICING),
+    );
+    // Not a second tally: it is exactly the distance the output moved.
+    const inputBytes = Buffer.byteLength(TEXT, 'utf8');
+    expect(
+      predictOutputBytes(inputBytes, outcome.plan.elisions, PRICING) -
+        predictOutputBytes(inputBytes, plan.elisions, PRICING),
+    ).toBe(outcome.attribution.sparedBytes);
+  });
+
+  it('never pushes a plan that fitted past the budget — over many rankings and budgets', async () => {
+    // The property, end to end and offline: an arbitrary stage answer, an arbitrary
+    // budget, and the real `smelt()` path. The prediction the rung spares against is
+    // exact rather than an estimate — the placeholder hash it prices with is the real
+    // hash's length — so the assertion is `<=` and not `<= budget + slack`.
+    const focus = ['line 10', 'line 30', 'line 50'];
+    let seed = 0x5eed;
+    const next = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let round = 0; round < 120; round += 1) {
+      const budgetBytes = 400 + Math.floor(next() * 900);
+      const stage: RerankStage = {
+        id: 'arbitrary',
+        rerank: (candidates: readonly RerankCandidate[]) =>
+          Promise.resolve(
+            candidates
+              .filter(() => next() > 0.3)
+              .map((candidate) => ({ ...candidate, score: next() })),
+          ),
+      };
+      const plain = await createSmelter({ strategy: 'lexical' }).smelt(TEXT, {
+        budgetBytes,
+        focus,
+      });
+      const reranked = await createSmelter({ strategy: 'lexical', rerank: stage }).smelt(TEXT, {
+        budgetBytes,
+        focus,
+      });
+      // A stage can only spare, so it can never beat the planner...
+      expect(reranked.outputBytes, `round ${String(round)}`).toBeGreaterThanOrEqual(
+        plain.outputBytes,
+      );
+      // ...and it never spares past the ceiling, so a plan that fitted still fits.
+      if (plain.outputBytes <= budgetBytes) {
+        expect(reranked.outputBytes, `round ${String(round)}`).toBeLessThanOrEqual(budgetBytes);
+      }
+      const attribution = reranked.rerank!;
+      if (attribution.skipped === undefined) {
+        expect(attribution.kept).toBeLessThanOrEqual(attribution.returned!);
+        expect(attribution.stopped).toBeDefined();
+      }
+    }
   });
 });
 
 describe('a smelter with a stage wired in', () => {
   it('reports the attribution on the result, and leaves it absent without a stage', async () => {
+    // 900 B, with room for one of the two regions to come back — so the attribution
+    // under test is the ordinary one, not a budget refusal wearing its clothes.
+    const budgetBytes = 900;
     const plain = await createSmelter({ strategy: 'lexical' }).smelt(TEXT, {
-      budgetBytes: 300,
+      budgetBytes,
       focus: ['line 30'],
     });
     expect(plain.rerank).toBeUndefined();
 
     const { stage } = spares(['0'], 'v1');
     const reranked = await createSmelter({ strategy: 'lexical', rerank: stage }).smelt(TEXT, {
-      budgetBytes: 300,
+      budgetBytes,
       focus: ['line 30'],
     });
     expect(reranked.rerank).toEqual({
       adapter: 'test-ranker',
       model: 'v1',
       candidates: plain.elisions.length,
+      returned: 1,
       kept: 1,
+      sparedBytes: reranked.outputBytes - plain.outputBytes,
+      stopped: 'cap',
     });
     // One fewer cut, and the spared bytes are back in the output.
     expect(reranked.elisions.length).toBe(plain.elisions.length - 1);
     expect(reranked.outputBytes).toBeGreaterThan(plain.outputBytes);
   });
 
-  it('can turn an in-budget run into an over-budget one, and the report says so', async () => {
-    // The documented consequence of spare-only, pinned: a reranker cannot cut, so the
-    // bytes it saves can push the output past the budget. That is reported in the same
-    // words a too-large focus window earns — smelt does not re-cut the regions a stage
-    // asked to keep in order to make a number look right.
-    const budgetBytes = 700;
+  it('cannot turn an in-budget run into an over-budget one, and the report says where it stopped', async () => {
+    // The old consequence of spare-only, now bounded: a stage that asks for everything
+    // gets as much of it as the budget affords and no more. Nothing was cut to make the
+    // number look right — the regions the budget refused were never spared in the first
+    // place, and the line says which wall the walk hit.
+    const budgetBytes = 900;
     const plain = await createSmelter({ strategy: 'lexical' }).smelt(TEXT, {
       budgetBytes,
       focus: ['line 30'],
@@ -260,11 +498,15 @@ describe('a smelter with a stage wired in', () => {
       TEXT,
       { budgetBytes, focus: ['line 30'] },
     );
-    expect(reranked.outputBytes).toBeGreaterThan(budgetBytes);
-    expect(reranked.elisions).toEqual([]);
-    expect(formatReport({ result: reranked, source: 'x', budgetBytes, inputText: TEXT })).toContain(
-      'OVER BUDGET',
-    );
+    expect(reranked.outputBytes).toBeLessThanOrEqual(budgetBytes);
+    expect(reranked.rerank?.stopped).toBe('budget');
+    expect(reranked.rerank?.returned).toBe(plain.elisions.length);
+    expect(reranked.rerank?.kept).toBe(1);
+    expect(reranked.rerank?.kept).toBeLessThan(plain.elisions.length);
+    expect(reranked.outputBytes).toBeGreaterThan(plain.outputBytes);
+    const report = formatReport({ result: reranked, source: 'x', budgetBytes, inputText: TEXT });
+    expect(report).not.toContain('OVER BUDGET');
+    expect(report).toContain('stopped at the budget');
   });
 
   it('stays byte-for-byte reversible over the smaller plan (Law 3 is untouched)', async () => {
@@ -276,15 +518,16 @@ describe('a smelter with a stage wired in', () => {
 });
 
 /**
- * THE SAME LAW, FROM THE OUTSIDE — a reranker named in a config file can change a
- * run's exit code.
+ * THE SAME RULING, FROM THE OUTSIDE — a reranker named in a config file honours the
+ * budget the command line typed.
  *
- * `applyRerank`'s spare-only rule is pinned above at the seam; this is the consequence
- * a person meets. A reranker is the one config key that can make smelt talk to another
- * machine, and it is also the one that can make a run that fitted stop fitting: the
- * regions a stage asks to keep are kept, and smelt does not re-cut them to make a
- * number look right. Exit 1 is how a script finds out, so it is asserted through the
- * CLI rather than inferred from `outputBytes`.
+ * `applyRerank`'s budget rung is pinned above at the seam; this is the consequence a
+ * person meets. A reranker is the one config key that can make smelt talk to another
+ * machine, and before the rung it was also the one that could make a run that fitted
+ * stop fitting. Now `--budget` outranks the stage: the spares stop at the ceiling, the
+ * run still exits 0, and the report names both the stage and the wall it hit. Exit 0 is
+ * how a script finds out, so it is asserted through the CLI rather than inferred from
+ * `outputBytes`.
  */
 describe('a configured reranker through the CLI', () => {
   let dir: string;
@@ -295,7 +538,9 @@ describe('a configured reranker through the CLI', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const BUDGET = 700;
+  // Room for one of the two regions the planner proposes to come back, and not both —
+  // so the run below exercises the rung rather than either of its edges.
+  const BUDGET = 900;
 
   async function smelt(): Promise<{ code: number; stdout: string; stderr: string }> {
     let stdout = '';
@@ -318,7 +563,7 @@ describe('a configured reranker through the CLI', () => {
     );
   }
 
-  it('turns an in-budget run into exit 1, and the report says which stage did it', async () => {
+  it('keeps the run inside --budget, and the report says which stage stopped where', async () => {
     config();
     const plain = await smelt();
     expect(plain.code, plain.stderr).toBe(EXIT.ok);
@@ -336,12 +581,15 @@ describe('a configured reranker through the CLI', () => {
     config({ kind: 'module', path: './keep-everything.mjs' });
 
     const reranked = await smelt();
-    expect(reranked.code, reranked.stderr).toBe(EXIT.overBudget);
-    expect(reranked.stderr).toContain('OVER BUDGET');
-    // Attributed, not anonymous: the path the config named is what the report prints.
+    expect(reranked.code, reranked.stderr).toBe(EXIT.ok);
+    expect(reranked.stderr).not.toContain('OVER BUDGET');
+    expect(Buffer.byteLength(reranked.stdout, 'utf8')).toBeLessThanOrEqual(BUDGET + 1);
+    // Attributed, not anonymous: the path the config named is what the report prints,
+    // beside the reason the sparing stopped where it did.
     expect(reranked.stderr).toContain('module/./keep-everything.mjs');
-    // And nothing was cut to make the number look right — the text is the whole input.
-    expect(reranked.stdout).toBe(`${TEXT}\n`);
+    expect(reranked.stderr).toContain('stopped at the budget');
+    // More survived than a run with no reranker at all — the stage did do something.
+    expect(reranked.stdout.length).toBeGreaterThan(plain.stdout.length);
   });
 });
 

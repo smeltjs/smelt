@@ -162,9 +162,14 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
       const planned = await planner.plan(input);
       // The rerank slot, and the only place it exists: between the decision and the
       // cut. A configured stage is asked which of `planned.elisions` the task actually
-      // needs and those are spared — it can never add one (`rerank/protect.ts` carries
-      // the reasoning). With no stage configured nothing is called, nothing is awaited,
-      // and `result.rerank` is absent rather than an invented "none".
+      // needs and those are spared, best first and only as far as `budgetBytes` reaches
+      // — it can never add one, and it can never spend past the ceiling the caller
+      // typed (`rerank/protect.ts` carries the reasoning). The budget and the pricing
+      // cross the seam from here because this is where they were resolved: the slot
+      // prices a spared marker's disappearance with the exact seam the plan was made
+      // with, so the two cannot disagree about what a marker costs. With no stage
+      // configured nothing is called, nothing is awaited, and `result.rerank` is absent
+      // rather than an invented "none".
       const reranked =
         config.rerank === undefined
           ? undefined
@@ -173,6 +178,8 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
               plan: planned,
               text,
               query: (options.focus ?? []).join(' '),
+              budgetBytes,
+              pricing: input.pricing,
             });
       const plan = reranked?.plan ?? planned;
       // The marker follows the *result's* language: it lands behind the language's

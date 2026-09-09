@@ -228,14 +228,20 @@ describe('the rerank opt-in', () => {
          },
        };\n`,
     );
+    // Roomy on purpose: the budget rung is pinned in `rerank.test.ts`, and what this
+    // test is about is the whole path reaching the report at all. A budget too tight to
+    // afford the one region the stage asks for would assert that path through a run
+    // where the stage's answer was refused, which is a different thing to prove.
     writeConfig(dir, {
       smeltConfig: 1,
-      defaultBudgetBytes: 800,
+      defaultBudgetBytes: 8000,
       rerank: { kind: 'module', path: './stage.mjs' },
     });
     const { code, stderr } = await run(['--focus', 'handleRequest'], dir, corpus());
     expect([EXIT.ok, EXIT.overBudget]).toContain(code);
-    expect(stderr).toMatch(/rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept\)/);
+    expect(stderr).toMatch(
+      /rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept, [\d,]+ B back\)/,
+    );
   });
 
   it('puts the same attribution inside the --json envelope, additively', async () => {
@@ -245,7 +251,7 @@ describe('the rerank opt-in', () => {
     );
     writeConfig(dir, {
       smeltConfig: 1,
-      defaultBudgetBytes: 800,
+      defaultBudgetBytes: 8000,
       rerank: { kind: 'module', path: './stage.mjs' },
     });
     const { stdout } = await run(['--focus', 'handleRequest', '--json'], dir, corpus());
@@ -253,7 +259,12 @@ describe('the rerank opt-in', () => {
     expect(envelope.result.rerank).toEqual({
       adapter: 'module/./stage.mjs',
       candidates: expect.any(Number) as number,
+      returned: 1,
       kept: 1,
+      sparedBytes: expect.any(Number) as number,
+      // The stage's own `.slice(0, 1)` ended the walk, and the receipt says so — the
+      // envelope carries the reason, not just the counts.
+      stopped: 'cap',
     });
   });
 

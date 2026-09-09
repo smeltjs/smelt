@@ -162,25 +162,33 @@ const OUTLINE_LEADER = '↳ names:';
  * A configured reranker means regions of this input left the machine, and Law 2 says a
  * reader must be able to see what happened to their bytes without reading the config.
  * So the line names the adapter (and its model, when the stage names one) and states
- * the two numbers that were actually measured: how many regions were offered to it, and
- * how many of them it saved from the cut.
+ * the numbers that were actually measured: how many regions were offered to it, how
+ * many survived the cut, and what those put back into the output.
+ *
+ * The `B back` clause appears exactly when the stage ran, which is exactly when there
+ * are bytes to report — the same rule the attribution itself follows.
  *
  * `0 candidates` gets its own clause rather than being hidden, because "the stage was
  * configured and had nothing to do" and "the stage never ran" look identical from a
- * line that only prints numbers — and one of them is a misconfiguration.
+ * line that only prints numbers — and one of them is a misconfiguration. The budget
+ * stop gets one for the same reason one level along: a `topK` of 8 that yielded 3 is
+ * unreadable without the sentence that says smelt refused the other five, and which
+ * ceiling it refused them against.
  *
  * Built from {@link RerankAttribution} rather than from anything this module counts:
  * the report keeps no tally of its own, here as everywhere else in this file.
  */
 function rerankLine(rerank: RerankAttribution, lava: Palette): string {
   const adapter = rerank.model === undefined ? rerank.adapter : `${rerank.adapter}/${rerank.model}`;
-  const counts = `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept)`;
+  const back = rerank.sparedBytes === undefined ? '' : `, ${group(rerank.sparedBytes)} B back`;
+  const counts = `(${count(rerank.candidates, 'candidate')}, ${group(rerank.kept)} kept${back})`;
   const skipped = RERANK_SKIPPED[rerank.skipped ?? 'ran'];
+  const stopped = rerank.stopped === undefined ? '' : RERANK_STOPPED[rerank.stopped](rerank);
   return (
     `rerank  ${lava.paint('rule', adapter)}  ${counts}` +
     // The clause is the interesting half of the line when it is there: the stage was
-    // configured, and did not run.
-    `${lava.paint('warn', skipped)}`
+    // configured, and did not run — or it ran, and the budget cut its answer short.
+    `${lava.paint('warn', skipped)}${lava.paint('warn', stopped)}`
   );
 }
 
@@ -195,6 +203,25 @@ const RERANK_SKIPPED: Readonly<Record<'ran' | 'no-candidates' | 'no-query', stri
   ran: '',
   'no-candidates': '   not run: the planner proposed nothing to cut',
   'no-query': '   not run: this run named no focus terms to rank against',
+};
+
+/**
+ * Where the sparing stopped, when the stage ran — the other total table on this line.
+ *
+ * Only the budget stop prints. `cap` and `exhausted` are the outcomes where `kept` is
+ * already the whole answer the stage gave, so a clause would restate the counts beside
+ * it on every single run; `budget` is the one where the printed `kept` is smaller than
+ * what was asked for, and a number that small with no reason beside it is the thing
+ * Law 2 exists to forbid. They are entries rather than an `if` so a fourth stop reason
+ * is a compile error here, exactly as a third `skipped` reason is above.
+ */
+const RERANK_STOPPED: Readonly<
+  Record<NonNullable<RerankAttribution['stopped']>, (rerank: RerankAttribution) => string>
+> = {
+  budget: (rerank) =>
+    `   stopped at the budget: the stage offered ${group(rerank.returned ?? rerank.kept)}`,
+  cap: () => '',
+  exhausted: () => '',
 };
 
 /** What `smelt map` prints to stderr. */
