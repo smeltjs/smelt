@@ -76,11 +76,30 @@ export type { CliAgentsJsonEnvelope, ResolvedAgentsRun } from './subcommands/age
  * `smelt.config.json` themselves with their own tolerance, and loading it eagerly here
  * would make a wizard you run to *fix* a malformed config refuse to start.
  */
+/**
+ * The same io with its colour switched off — and **not** `{ ...io, color: false }`.
+ *
+ * A spread reads every own property, and `bin.ts` deliberately hands `initInput` over
+ * as a *getter*: merely touching `process.stdin` flips fd 0 into non-blocking mode and
+ * breaks the one-shot `readFileSync(0)` every non-wizard verb reads its input with.
+ * Spreading would evaluate that getter on the way past, so `smelt --no-color --budget
+ * 4000 < big.log` would start failing with `EAGAIN` on a slow producer — a pipe bug
+ * caused by a colour flag. Deriving through the prototype leaves every property,
+ * getters included, exactly as lazy as it was, and keeps working if `CliIo` gains a
+ * field tomorrow.
+ */
+function plainIo(io: CliIo): CliIo {
+  return Object.create(io, {
+    color: { value: false, enumerable: true },
+    colorErr: { value: false, enumerable: true },
+  }) as CliIo;
+}
+
 export async function runCli(argv: readonly string[], rawIo: CliIo): Promise<number> {
   // `--no-color` is answered before anything else, because it changes how the very
   // refusal for a mistyped command line is printed. Every palette below is built off
   // this one io, so a verb cannot re-derive colour and disagree with the flag.
-  const io: CliIo = refusesColor(argv) ? { ...rawIo, color: false, colorErr: false } : rawIo;
+  const io: CliIo = refusesColor(argv) ? plainIo(rawIo) : rawIo;
   try {
     // Bare `smelt` at a terminal is a person who has not read anything yet: the front
     // door, not a refusal about stdin. A pipe (`cat log | smelt`) is not that person

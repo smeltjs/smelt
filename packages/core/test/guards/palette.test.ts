@@ -185,6 +185,34 @@ describe('the switches are obeyed', () => {
     expect((await loud(['stats', 'extra'], cwd)).stderr).toContain(ESC);
   });
 
+  it('does not touch the wizard input stream on its way past — a colour flag is not a pipe bug', async () => {
+    // `bin.ts` hands `initInput` over as a getter, because merely touching
+    // `process.stdin` flips fd 0 into non-blocking mode and breaks the one-shot read
+    // every other verb uses. `--no-color` derives a plainer io on the way in, and a
+    // *spread* would evaluate that getter — turning a colour flag into `EAGAIN` on a
+    // slow pipe.
+    const cwd = projectRoot();
+    let touched = false;
+    let stdout = '';
+    const code = await runCli(['stats', '--no-color'], {
+      stdout: (text) => void (stdout += text),
+      stderr: () => {},
+      stdin: () => '',
+      version: '9.9.9-test',
+      cwd,
+      color: true,
+      get initInput() {
+        touched = true;
+        return (async function* () {
+          yield '';
+        })();
+      },
+    });
+    expect(code).toBe(EXIT.ok);
+    expect(stdout).not.toContain(ESC);
+    expect(touched, 'the CLI read initInput for a verb that never asks a question').toBe(false);
+  });
+
   it('a stream that is not a terminal is plain, and the front door does not appear in it', async () => {
     const cwd = projectRoot();
     let stdout = '';
@@ -280,6 +308,18 @@ export const MUTATIONS: GuardMutation[] = [
     find: "    if (!on || text === '') return text;",
     replace: "    if (text === '') return text;",
     why: 'the palette painting bytes nobody asked to paint — the identity property every other guard in this repository leans on',
+  },
+  {
+    kind: 'src',
+    id: 'palette-no-color-drains-the-wizard-stream',
+    file: 'cli/run.ts',
+    find:
+      '  return Object.create(io, {\n' +
+      '    color: { value: false, enumerable: true },\n' +
+      '    colorErr: { value: false, enumerable: true },\n' +
+      '  }) as CliIo;',
+    replace: '  return { ...io, color: false, colorErr: false };',
+    why: 'the obvious spelling of "the same io, unpainted" — which reads every own property on the way past, evaluating the lazy `initInput` getter that exists precisely so fd 0 is not touched, and turns a colour flag into an EAGAIN on a slow pipe',
   },
   {
     kind: 'src',
