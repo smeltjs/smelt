@@ -220,6 +220,14 @@ describe('the terminal is asked how much colour it has', () => {
     expect(colorDepth({ TERM: 'xterm-256color' }, true)).toBe(256);
     // A terminal that has said it cannot is not a terminal that can.
     expect(colorDepth({ TERM: 'dumb' }, true)).toBe('none');
+    // But `COLORTERM` is asked first, and it is the *newer, more specific* statement:
+    // `TERM=dumb` beside it is what a wrapper (an editor terminal, a CI runner, an
+    // Emacs shell) leaves behind when it inherits an environment it did not clear,
+    // while `COLORTERM=truecolor` is only ever set by something that means it. A rung
+    // order that let the stale variable win would print no colour on a machine whose
+    // emulator had just said it has 24 bits of it.
+    expect(colorDepth({ COLORTERM: 'truecolor', TERM: 'dumb' }, true)).toBe('truecolor');
+    expect(colorAllowed({ COLORTERM: 'truecolor', TERM: 'dumb' }, true)).toBe(true);
     // And the floor: sixteen colours at a terminal, nothing in a pipe.
     expect(colorDepth({ TERM: 'xterm' }, true)).toBe(16);
     expect(colorDepth({}, true)).toBe(16);

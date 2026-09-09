@@ -183,10 +183,14 @@ export function supportsUnicode(env: Readonly<Record<string, string | undefined>
  *     colours, `2` two hundred and fifty-six, `3` truecolor; any other non-empty value
  *     means "colour, and do not guess high" — sixteen.
  *  3. **`COLORTERM`** `truecolor` or `24bit`: the only positive statement a terminal
- *     makes about 24-bit support, and the one every truecolor emulator sets.
+ *     makes about 24-bit support, and the one every truecolor emulator sets. It is
+ *     asked **before** `TERM`, and that ordering is deliberate: `COLORTERM=truecolor`
+ *     beside `TERM=dumb` resolves to truecolor, because `TERM=dumb` is what a wrapper
+ *     leaves behind in an environment it inherited and did not clear, while `COLORTERM`
+ *     is only ever set by something that means it.
  *  4. **`TERM` containing `256color`**: the same statement, one rung down.
  *  5. **`TERM=dumb`**: `'none'`, even at a terminal. It is a terminal that has said it
- *     cannot.
+ *     cannot — unless it has also said, in the newer variable, that it can (rung 3).
  *  6. Otherwise: sixteen colours at a terminal, nothing anywhere else. Sixteen is the
  *     floor every ANSI terminal has had since 1979 — the safe assumption, and the one
  *     this module used to skip straight past on its way to `38;2`.

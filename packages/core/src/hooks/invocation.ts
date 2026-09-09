@@ -231,9 +231,21 @@ export function stableScriptPath(realPath: string, fs: InvocationFs = NODE_FS): 
  */
 export const SMELT_COMMAND_NAME = 'smelt';
 
+/**
+ * Which machine this is, as data rather than as a global read.
+ *
+ * `NodeJS.Platform` in all but name, stated structurally so this module keeps importing
+ * nothing but node builtins — and injectable, which is the point: the Windows branch
+ * below is two lines of real behaviour that no run of this suite on any developer's
+ * machine or in CI would ever execute, and an untested branch in the module that
+ * decides what gets written into somebody's config file is the wrong branch to leave
+ * unwatched.
+ */
+export type InvocationPlatform = string;
+
 /** `smelt.cmd`/`smelt.exe` on Windows, `smelt` everywhere else. */
-function executableNames(): readonly string[] {
-  return process.platform === 'win32'
+function executableNames(platform: InvocationPlatform): readonly string[] {
+  return platform === 'win32'
     ? [`${SMELT_COMMAND_NAME}.cmd`, `${SMELT_COMMAND_NAME}.exe`]
     : [SMELT_COMMAND_NAME];
 }
@@ -244,22 +256,26 @@ function executableNames(): readonly string[] {
  * One stat per PATH directory, no spawn: this runs on the guard's hot path, and
  * `which smelt` would cost a process to learn a filesystem fact. A non-Windows
  * candidate must carry an execute bit — a `smelt` that nobody may run is not on PATH
- * in the only sense a written command cares about.
+ * in the only sense a written command cares about. On Windows there is no execute bit
+ * to read (`stat.mode`'s permission bits are the read-only flag and nothing else), so
+ * the check is skipped rather than answered wrongly: every candidate there would fail
+ * it, and `smelt` would be reported as not on PATH on every Windows machine.
  */
 export function smeltOnPath(
   env: InvocationEnv = process.env,
   fs: InvocationFs = NODE_FS,
+  platform: InvocationPlatform = process.platform,
 ): string | undefined {
   const search = env['PATH'] ?? env['Path'] ?? env['path'];
   if (search === undefined || search === '') return undefined;
   for (const dir of search.split(delimiter)) {
     if (dir === '') continue;
-    for (const name of executableNames()) {
+    for (const name of executableNames(platform)) {
       const candidate = join(dir, name);
       try {
         const stat = fs.statSync(candidate);
         if (!stat.isFile()) continue;
-        if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
+        if (platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
         return candidate;
       } catch {
         // not in this directory — the ordinary case, and the reason this is a stat
@@ -350,6 +366,8 @@ export interface SmeltInvocationOptions {
   readonly fs?: InvocationFs;
   /** The package `dist` directory to derive script paths from. */
   readonly distDir?: string;
+  /** Which machine this is. Defaults to the running one; a test names the other. */
+  readonly platform?: InvocationPlatform;
 }
 
 /**
@@ -369,7 +387,7 @@ export function smeltInvocation(options: SmeltInvocationOptions = {}): SmeltInvo
   const fs = options.fs ?? NODE_FS;
   const distDir = options.distDir ?? packageDistDir();
   const bin = join(distDir, 'cli', 'bin.js');
-  const onPath = smeltOnPath(options.env ?? process.env, fs);
+  const onPath = smeltOnPath(options.env ?? process.env, fs, options.platform ?? process.platform);
   if (onPath !== undefined) {
     // Which smelt is it? A `smelt` on PATH normally links straight into this very
     // package (npm's bin shim, Homebrew's `bin/smelt`), and then there is nothing to

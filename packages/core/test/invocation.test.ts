@@ -104,6 +104,51 @@ describe('smeltOnPath', () => {
     expect(smeltOnPath({ PATH: '/a:/b' }, fakeFs({}))).toBeUndefined();
     expect(smeltOnPath({}, fakeFs({}, { '/a/smelt': EXECUTABLE }))).toBeUndefined();
   });
+
+  /**
+   * The Windows branch, which no run of this suite would otherwise ever execute — so
+   * the platform is injected rather than read off `process`, the same way every other
+   * machine fact this module needs is.
+   *
+   * Two behaviours, and both are wrong in the direction that reports a working install
+   * as broken: the file is `smelt.cmd` or `smelt.exe` (a bare `smelt` is the *name a
+   * shell resolves*, never a file on disk), and there is no execute bit to read there —
+   * `stat.mode`'s permission bits on Windows carry the read-only flag and nothing else,
+   * so a mode check would reject every candidate and report `smelt` as absent from
+   * every Windows machine that has it.
+   *
+   * The directories are spelled posix-style because the *separator* is still the
+   * running platform's: `path.join` and `path.delimiter` come from the node this is
+   * executing on, which is right on a real Windows run and not something injecting a
+   * platform string changes. What the injection switches is exactly the two facts
+   * above, and those are what these cases are about.
+   */
+  it('finds smelt.cmd and smelt.exe on win32, and asks for no execute bit there', () => {
+    const READ_ONLY_FLAG_ONLY = 0o666; // what a real file on Windows stats as
+    const cmd = fakeFs({}, { '/bin/smelt.cmd': READ_ONLY_FLAG_ONLY });
+    expect(smeltOnPath({ PATH: '/bin' }, cmd, 'win32')).toBe('/bin/smelt.cmd');
+    // `.cmd` first, `.exe` where there is no `.cmd`.
+    const exe = fakeFs({}, { '/bin/smelt.exe': READ_ONLY_FLAG_ONLY });
+    expect(smeltOnPath({ PATH: '/bin' }, exe, 'win32')).toBe('/bin/smelt.exe');
+    // And the bare name is not a file there — the same tree finds nothing on win32.
+    const bare = fakeFs({}, { '/bin/smelt': EXECUTABLE });
+    expect(smeltOnPath({ PATH: '/bin' }, bare, 'win32')).toBeUndefined();
+    // While on posix the execute bit is still what separates a smelt from a text file.
+    expect(smeltOnPath({ PATH: '/a' }, fakeFs({}, { '/a/smelt': 0o644 }), 'linux')).toBeUndefined();
+  });
+
+  it('the invocation ranking asks the same question, on the platform it was given', () => {
+    // The whole value, not just the finder: `kind: 'path'` is the top rung, and on
+    // Windows it is reached only through the two executable names.
+    const fs = fakeFs({}, { '/bin/smelt.cmd': 0o666 });
+    const machine = { env: { PATH: '/bin' }, fs, distDir: '/pkg/dist' } as const;
+    const invocation = smeltInvocation({ ...machine, platform: 'win32' });
+    expect(invocation.kind).toBe('path');
+    expect(invocation.command).toBe('smelt');
+    expect(invocation.bin).toBe('/bin/smelt.cmd');
+    // The same machine read as posix finds no `smelt` file at all, and falls to node.
+    expect(smeltInvocation({ ...machine, platform: 'linux' }).kind).toBe('node');
+  });
 });
 
 describe('isSameFile — identity through a real symlink', () => {
