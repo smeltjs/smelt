@@ -615,7 +615,11 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   still two (the marker block and the SkillPack, ADR-0002), and the index only points at
   them. `llms-full.txt` inlines every document the index names, for a reader that can spend
   the tokens on one fetch instead of twelve. Both are rendered by
-  `scripts/generate-llms-txt.mjs` from one document list and the built packages' own facts,
-  and both are written twice — the repository root and `site/public/`, byte-identically —
-  because two hand-kept copies of a link list is precisely how a link list goes stale.
+  `scripts/generate-llms-txt.mjs` from one document list and the built packages' own facts.
+  The index is written twice — the repository root and `site/public/`, byte-identically,
+  because an agent reading the repo should not have to fetch it, and because two hand-kept
+  copies of a link list is precisely how a link list goes stale. The companion is written
+  **once**, under `site/public/`: it is the whole documentation set inlined, the index
+  already links its served URL, and a second committed copy would put a large regenerated
+  blob in the diff of every docs change for nobody's benefit.
   _Avoid_: "docs index" (the README's Documentation table is that) and "manifest".

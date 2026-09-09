@@ -21,13 +21,17 @@ the runner rather than by hand.
   and link lists of every document — with `llms-full.txt` beside it inlining each of those
   documents for a reader that would rather spend the tokens than the round trips. Neither
   is hand-written. `scripts/generate-llms-txt.mjs` renders both from one document list and
-  the built packages' own facts (the ADRs discovered rather than listed), writes each to
-  the repository root and to `site/public/` byte-identically, and
-  `test/guards/llms-txt.test.ts` regenerates all four, compares the two copies of each
-  directly, and resolves every link in the index back to a file that exists — because
-  regenerating an index reproduces a dead link exactly. `pnpm generate:llms-txt` writes
-  them; a hand edit is a red `pnpm verify`. Law 4 holds in the index as it does everywhere
-  else: it states no measured figure and links `packages/core/bench/RESULTS.md` instead.
+  the built packages' own facts (the ADRs discovered rather than listed). The index is
+  committed twice — the repository root and `site/public/`, byte-identically — so an agent
+  reading the repo needs no fetch; the companion is committed once, under `site/public/`,
+  because a second copy of the whole documentation set would be a large regenerated blob in
+  the diff of every docs change, and the index already links its served URL.
+  `test/guards/llms-txt.test.ts` regenerates every committed copy, compares the index's two
+  directly, refuses a companion at the repository root, and resolves every link in the index
+  back to a file that exists — because regenerating an index reproduces a dead link exactly.
+  `pnpm generate:llms-txt` writes them; a hand edit is a red `pnpm verify`. Law 4 holds in
+  the index as it does everywhere else: it states no measured figure and links
+  `packages/core/bench/RESULTS.md` instead.
 - **The SkillPack now teaches the 0.7.0 surface.** Four sections joined it, still rendered
   from the package rather than retyped: setting up (`smelt setup --yes` with `--scope
 user`, the repeatable `--harness` over the ids the registry carries, and the four

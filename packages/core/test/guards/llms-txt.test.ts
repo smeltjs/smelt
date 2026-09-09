@@ -17,14 +17,16 @@ import { guardRoot, packageRoot, repoRoot } from './_source.ts';
  * agree byte for byte, and every link in it names a file that is actually here.
  *
  * `llms.txt` (llmstxt.org) is the first thing an agent fetches about this project, and
- * `llms-full.txt` is every document that index names, inlined. Both are written twice —
- * at the repository root, where an agent reading the repo finds them, and under
- * `site/public/`, where the built site serves them — which is four committed files that
- * a hand edit could put into three different states. So none of them is hand-written:
- * `scripts/generate-llms-txt.mjs` renders all four from one document list and the built
- * packages' own facts, and this guard holds them to it:
+ * `llms-full.txt` is every document that index names, inlined. The index is committed
+ * twice — at the repository root, where an agent reading the repo finds it without a
+ * fetch, and under `site/public/`, where the built site serves it; the companion is
+ * committed once, under `site/public/`, because a second copy of the whole documentation
+ * set would put a large regenerated blob in the diff of every docs change for no reader.
+ * That is three committed files a hand edit could put into three different states, so
+ * none of them is hand-written: `scripts/generate-llms-txt.mjs` renders them from one
+ * document list and the built packages' own facts, and this guard holds them to it:
  *
- *   1. regenerate and byte-compare **each** of the four — the same discipline
+ *   1. regenerate and byte-compare **each** committed copy — the same discipline
  *      `test/guards/skill-pack.test.ts` puts the SkillPack under;
  *   2. the root copy and the site copy are byte-identical to each other, checked
  *      directly rather than inferred, because "both equal the generator" is the claim
@@ -50,8 +52,7 @@ import { guardRoot, packageRoot, repoRoot } from './_source.ts';
 const GENERATOR = join(repoRoot(), 'scripts/generate-llms-txt.mjs');
 const INDEX = 'llms.txt';
 const SITE_INDEX = 'site/public/llms.txt';
-const FULL = 'llms-full.txt';
-const SITE_FULL = 'site/public/llms-full.txt';
+const FULL = 'site/public/llms-full.txt';
 
 /** The three URL shapes the index may use, and what each maps to in the repository. */
 const RAW_BASE = 'https://raw.githubusercontent.com/smeltjs/smelt/main/';
@@ -126,30 +127,30 @@ describe('llms.txt is the generator’s output, and every link in it is real', (
     for (const file of [INDEX, SITE_INDEX]) {
       expect(
         committed(file),
-        `${file} is not the generator’s output — run \`pnpm generate:llms-txt\` and commit all four files, never edit them by hand`,
+        `${file} is not the generator’s output — run \`pnpm generate:llms-txt\` and commit what it writes, never edit it by hand`,
       ).toBe(index);
     }
   });
 
-  it('regenerating leaves both copies of the full text byte-identical', () => {
-    const full = generated('--print-full');
-    for (const file of [FULL, SITE_FULL]) {
-      expect(
-        committed(file),
-        `${file} is not the generator’s output — run \`pnpm generate:llms-txt\` and commit all four files`,
-      ).toBe(full);
-    }
+  it('regenerating leaves the served full text byte-identical', () => {
+    expect(
+      committed(FULL),
+      `${FULL} is not the generator’s output — run \`pnpm generate:llms-txt\` and commit what it writes`,
+    ).toBe(generated('--print-full'));
   });
 
-  it('the root copy and the site copy never diverge', () => {
+  it('the root copy of the index and the site copy never diverge', () => {
     expect(
       committed(SITE_INDEX),
       `${INDEX} and ${SITE_INDEX} disagree — one was regenerated and the other was not, and an agent fetching the site would read a different project from one reading the repo`,
     ).toBe(committed(INDEX));
+  });
+
+  it('leaves no second copy of the full text at the repository root', () => {
     expect(
-      committed(SITE_FULL),
-      `${FULL} and ${SITE_FULL} disagree — one was regenerated and the other was not`,
-    ).toBe(committed(FULL));
+      existsSync(join(repoRoot(), 'llms-full.txt')),
+      'llms-full.txt exists at the repository root. The companion is served from site/public/, not vendored twice: two copies of the whole documentation set is a large regenerated blob in the diff of every docs change, for a reader the index already sends to the site URL. Delete it — the renderer no longer writes there.',
+    ).toBe(false);
   });
 
   it('every link resolves to a path that exists in this repository', () => {
@@ -264,7 +265,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'artifact',
     id: 'llms-full-drops-a-document',
-    file: 'llms-full.txt',
+    file: 'site/public/llms-full.txt',
     find: '# docs/adr/0002-skill-pack-complements-marker-blocks.md',
     replace: '# docs/adr/0002-skill-pack-complements-marker-blocks.md.old',
     why: 'a document the index names losing its block header in the companion — the index would promise one-shot context that no longer contains what it lists',

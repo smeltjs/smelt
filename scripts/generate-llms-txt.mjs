@@ -6,13 +6,15 @@
  * companion `llms-full.txt`, which inlines every document the index names so an agent
  * that can spend the tokens fetches one URL instead of twelve.
  *
- * **One renderer, two outputs, four files.** The index and the full text walk the same
- * {@link DOCUMENTS} list, so a document cannot be named in one and missing from the
- * other; each output is then written to two byte-identical places — the repository
- * root, where an agent reading the repo finds it, and `site/public/`, where the built
- * site serves it. Two copies are a drift risk, which is exactly why nothing here is
- * hand-written and `test/guards/llms-txt.test.ts` regenerates and byte-compares all
- * four.
+ * **One renderer, two outputs.** The index and the full text walk the same document
+ * list, so a document cannot be named in one and missing from the other. The index is
+ * then written to two byte-identical places — the repository root, where an agent
+ * reading the repo finds it without a fetch, and `site/public/`, where the built site
+ * serves it; the companion is written to `site/public/` alone, because a second
+ * committed copy of the whole documentation set would land a large regenerated blob in
+ * the diff of every docs change for no reader. Two copies of anything are a drift risk,
+ * which is exactly why nothing here is hand-written and
+ * `test/guards/llms-txt.test.ts` regenerates and byte-compares every committed copy.
  *
  * The facts come from the **built** packages, never retyped: `@smeltjs/core` for the
  * SetupRecipe's install commands, its recommended budget and its store default, and
@@ -40,8 +42,16 @@ const MCP_ENTRY = join(REPO_ROOT, 'packages', 'mcp', 'dist', 'index.js');
 
 /** Where the index lands. Both copies are the renderer's output, byte for byte. */
 export const INDEX_PATHS = ['llms.txt', 'site/public/llms.txt'];
-/** Where the inlined companion lands. Same rule. */
-export const FULL_PATHS = ['llms-full.txt', 'site/public/llms-full.txt'];
+/**
+ * Where the inlined companion lands — the site only, deliberately.
+ *
+ * The index is small and belongs in both places: an agent reading the repository finds
+ * it without a fetch. The companion is the whole documentation set inlined, and a second
+ * committed copy of it would put a large regenerated blob into the diff of every docs
+ * change, twice, for no reader — the index links the site URL for it, and anyone who
+ * wants it locally runs `pnpm generate:llms-txt`.
+ */
+export const FULL_PATHS = ['site/public/llms-full.txt'];
 
 /**
  * The three URL shapes the index is allowed to link, and nothing else.
