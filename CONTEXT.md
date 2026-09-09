@@ -457,9 +457,10 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   schema (`src/config.ts`) owns **both** directions — `parseConfig` reads,
   `renderConfig` writes, one key order. It sits at the package root, not under `cli/`:
   the file is a CLI concern (the programmatic API never reads it), but the schema is
-  read by `harness/`, `ops/` and `rerank/` too, and a module three layers depend on that
-  lives inside one of them is how `harness/` came to have a `cli/` import at all. What goes into a config stays each verb's
-  **policy**: the `init` wizard always writes the strategy and store it asked about,
+  read by `harness/`, `ops/` and `rerank/` too, and a module three layers depend on
+  cannot live inside one of them — that is how `harness/` came to have a `cli/` import
+  at all. What goes into a config stays each verb's **policy**: the `init` wizard always
+  writes the strategy and store it asked about,
   `hooks install` injects a directory store when a config carries none (the deny reasons
   promise `smelt retrieve <hash>`, which a memory store cannot honour across processes).
   The round trip — `parseConfig(renderConfig(c))` equals `c` field for field — is the
