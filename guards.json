@@ -95,6 +95,10 @@
       "count": 7
     },
     {
+      "guard": "packages/core/test/guards/palette.test.ts",
+      "count": 6
+    },
+    {
       "guard": "packages/core/test/guards/persistent-store.test.ts",
       "count": 4
     },

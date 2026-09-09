@@ -1,0 +1,19 @@
+{
+  "format": "smelt-stats-cli/v2",
+  "stats": {
+    "elisionsStored": 1,
+    "bytesStored": 4559,
+    "retrieveCalls": 0,
+    "uniqueRetrieved": 0,
+    "misses": 0,
+    "expansionRate": 0,
+    "allElisionsRetrieved": false
+  },
+  "ledger": [
+    {
+      "rule": "head-tail",
+      "stored": 1,
+      "retrieved": 0
+    }
+  ]
+}

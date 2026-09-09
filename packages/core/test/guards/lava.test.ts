@@ -153,10 +153,12 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     kind: 'src',
+    // Re-anchored when the banner's bar became the palette's `divider` primitive: the
+    // switch it must obey is the same switch, one seam further in.
     id: 'lava-banner-ignores-the-switch',
     file: 'cli/lava.ts',
-    find: '  if (!on) return `${bar}',
-    replace: '  if (false) return `${bar}',
+    find: '  if (!on) return cell.repeat(cells);',
+    replace: '  if (false) return cell.repeat(cells);',
     why: 'the banner rendering its gradient in plain mode — the one place the identity guarantee is most visible, at the very first line a pipe reads',
   },
 ];

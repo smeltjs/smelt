@@ -63,11 +63,13 @@ function runBin(
   args: readonly string[],
   stdin?: { readonly bytes: Uint8Array; readonly delayMs: number; readonly holdOpen?: boolean },
   cwd?: string,
+  env?: Readonly<Record<string, string>>,
 ): Promise<Finished> {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [binPath, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(cwd === undefined ? {} : { cwd }),
+      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
     });
     const stdoutChunks: Buffer[] = [];
     let stderr = '';
@@ -226,6 +228,43 @@ describe('the built binary, as a real process', () => {
     expect(stats.stdout).toMatch(/^ {2}uniqueRetrieved {2,}1$/mu);
     expect(stats.stdout).not.toContain('\u001b[');
   }, 15_000);
+
+  it('honours NO_COLOR and FORCE_COLOR at the process boundary, and never paints an envelope', async () => {
+    // The switches live in `bin.ts`, which is the one file no in-process test can
+    // reach: what `colorAllowed` decides is only true of the CLI if the binary
+    // actually asks it. Spawned, stdout is a pipe — so plain is the default, and
+    // FORCE_COLOR is the only way a person gets paint out of one.
+    const cwd = mkdtempSync(join(tmpdir(), 'smelt-bin-color-'));
+    writeFileSync(
+      join(cwd, 'smelt.config.json'),
+      `${JSON.stringify({
+        smeltConfig: 1,
+        defaultBudgetBytes: 4000,
+        store: { kind: 'directory', path: '.smelt-store' },
+      })}\n`,
+    );
+
+    const piped = await runBin(['stats'], undefined, cwd);
+    expect(piped.code, piped.stderr).toBe(EXIT.ok);
+    expect(piped.stdout).not.toContain('\u001b[');
+
+    const forced = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(forced.code, forced.stderr).toBe(EXIT.ok);
+    expect(forced.stdout).toContain('\u001b[');
+
+    const refused = await runBin(['stats'], undefined, cwd, { FORCE_COLOR: '1', NO_COLOR: '1' });
+    expect(refused.stdout).not.toContain('\u001b[');
+
+    const flagged = await runBin(['stats', '--no-color'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(flagged.stdout).not.toContain('\u001b[');
+
+    // And the envelope, with the terminal shouting for colour: still bytes for a machine.
+    const envelope = await runBin(['stats', '--json'], undefined, cwd, { FORCE_COLOR: '1' });
+    expect(envelope.stdout).not.toContain('\u001b[');
+    expect(() => JSON.parse(envelope.stdout) as unknown).not.toThrow();
+
+    rmSync(cwd, { recursive: true, force: true });
+  }, 20_000);
 
   it('runs the init wizard on a pipe that stays open, and still exits', async () => {
     // The process-boundary half of the wizard, and the shape that matters: the pipe is
