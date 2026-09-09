@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -702,7 +702,9 @@ describe('a configured reranker through the CLI', () => {
 describe('loading a stage from a config block', () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'smelt-rerank-'));
+    // `realpathSync`: `require.resolve` answers in real paths, and macOS hands out a
+    // `/var/folders/...` symlink for `/private/var/folders/...`.
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'smelt-rerank-')));
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
@@ -763,11 +765,59 @@ describe('loading a stage from a config block', () => {
     );
   });
 
-  it('names the install command when the adapter package is absent', async () => {
-    // Resolved from this test file's own directory, where @smeltjs/rerank-voyage is not
-    // a dependency — which is the whole point: the core does not depend on it.
+  it('names both places tried and an install command for the config’s directory', async () => {
+    // Neither the temp directory holding the config nor `@smeltjs/core`'s own install
+    // has the adapter — which is the whole point: the core does not depend on it. The
+    // refusal must name the directory the reader can actually install into, which is
+    // the config's, not smelt's.
     await expect(load({ kind: 'voyage', topK: 4 }, { VOYAGE_API_KEY: 'k' })).rejects.toThrow(
-      /install @smeltjs\/rerank-voyage to use rerank\.kind "voyage"/,
+      new RegExp(
+        `@smeltjs/rerank-voyage is not installed.*npm install --prefix ${dir} ` +
+          `@smeltjs/rerank-voyage`,
+        's',
+      ),
+    );
+  });
+
+  it('loads the adapter installed beside the config file, not one beside smelt', async () => {
+    // The bug this seam exists for, at the loader: a config in a directory of its own
+    // (a `$HOME` config, InstallScope `user`) with the adapter installed beside it.
+    // `voyage` cannot be exercised without the real package, so the `module` kind
+    // carries it — the two kinds share one resolver, which is the property under test.
+    const home = join(dir, 'node_modules', 'my-reranker');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, 'package.json'),
+      `${JSON.stringify({ name: 'my-reranker', version: '1.0.0', type: 'module', main: 'i.js' })}\n`,
+    );
+    writeFileSync(join(home, 'i.js'), `export default { id: 'p/v1', rerank: async () => [] };\n`);
+
+    const stage = await load({ kind: 'module', path: 'my-reranker' });
+
+    expect(stage?.id).toBe('module/my-reranker');
+  });
+
+  it('a file beside the config still wins over a package of the same name', async () => {
+    // The path rule is what the schema promises and what every config written so far
+    // means; the package search is what happens when there is no file there.
+    const home = join(dir, 'node_modules', 'ranker.mjs');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, 'package.json'),
+      `${JSON.stringify({ name: 'ranker.mjs', version: '1.0.0', type: 'module', main: 'i.js' })}\n`,
+    );
+    writeFileSync(join(home, 'i.js'), `export default { id: 'pkg', rerank: async () => [] };\n`);
+    writeFileSync(
+      join(dir, 'ranker.mjs'),
+      `export default { id: 'file', rerank: async () => [] };\n`,
+    );
+
+    expect((await load({ kind: 'module', path: 'ranker.mjs' }))?.id).toBe('module/ranker.mjs');
+  });
+
+  it('a bare path that is neither a file nor a package names both, and the "./" fix', async () => {
+    await expect(load({ kind: 'module', path: 'nowhere' })).rejects.toThrow(
+      /There is no file at .*nowhere, and nowhere is not installed.*Write "\.\/nowhere"/s,
     );
   });
 

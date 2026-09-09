@@ -208,9 +208,9 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'law1-opt-in-reranker-import-spelled-literally',
     file: 'rerank/load.ts',
-    find: 'await import(RERANK_VOYAGE_PACKAGE)',
+    find: 'await import(adapter.url)',
     replace: "await import('@smeltjs/rerank-voyage')",
-    why: 'the loader spelling its dynamic import with a literal instead of the policy constant — behaviourally identical, and the difference is the entire honesty of the arrangement: a literal is an edge the walk follows and a bundler resolves, so the adapter would be back in the graph while nothing about the running code changed',
+    why: 'the loader spelling its dynamic import with a literal instead of the URL the adapter resolver handed it — behaviourally identical on the machine that wrote it, and the difference is the entire honesty of the arrangement: a literal is an edge the walk follows and a bundler resolves, so the adapter would be back in the graph while nothing about the running code changed',
   },
   {
     id: 'law1-node-https-import',
