@@ -33,8 +33,8 @@ the runner rather than by hand.
   the index as it does everywhere else: it states no measured figure and links
   `packages/core/bench/RESULTS.md` instead.
 - **The SkillPack now teaches the 0.7.0 surface.** Four sections joined it, still rendered
-  from the package rather than retyped: setting up (`smelt setup --yes` with `--scope
-user`, the repeatable `--harness` over the ids the registry carries, and the four
+  from the package rather than retyped: setting up (`smelt setup --yes` with
+  `--scope user`, the repeatable `--harness` over the ids the registry carries, and the four
   toggles), checking the install (doctor's `wired (verified)` / `wired but inert` /
   `wired but missing`, and the refused exit meaning "re-run setup"), keeping the store
   small (`smelt store prune --older-than 30d --dry-run`, then the same line without it),
