@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { UnknownHashError } from '../src/errors.ts';
+import { EvictedHashError, UnknownHashError } from '../src/errors.ts';
 import { contentHash } from '../src/hash.ts';
 import { DirectoryElisionStore } from '../src/store-dir.ts';
 
@@ -167,6 +167,130 @@ describe('DirectoryElisionStore under two real concurrent processes', () => {
     expect(stats.bytesStored).toBe(
       blobFiles.reduce((sum, file) => sum + statSync(join(blobsDir, file)).size, 0),
     );
+  }, 60_000);
+});
+
+/**
+ * The one race the prune ordering leaves open, run for real.
+ *
+ * `prune` journals `evict "<hash>"` and *then* unlinks, because the other order loses
+ * information — bytes gone with no receipt read back as {@link UnknownHashError}, "it
+ * never existed", for an elision the user themselves deleted. The order it does use can
+ * leave the opposite state: another process `put`ting the same content between the
+ * append and the unlink takes put's existing-blob fast path, gets the hash back, and
+ * this loop then deletes the bytes underneath it.
+ *
+ * The store's own doc calls every outcome from there honest. This is that claim under
+ * two real processes hammering one directory — one putting, one pruning everything old
+ * enough, which with a cut-off in the future is everything:
+ *
+ *   - no blob file on disk is ever torn: each still hashes to its own name;
+ *   - a hash a `put` returned is **never** {@link UnknownHashError}. That is the whole
+ *     point of journalling first, and the one answer that would be a lie;
+ *   - it is either the exact bytes, or an {@link EvictedHashError} that names the date;
+ *   - and a re-`put` of the same content brings it back, because `retrieve` reads the
+ *     blob before it reads the journal.
+ */
+const PRUNER_SOURCE = `
+import { DirectoryElisionStore } from './out/store-dir.js';
+
+const [root, want] = process.argv.slice(2);
+const store = new DirectoryElisionStore(root);
+// Until it has actually taken bytes the other process wrote (or a ceiling passes, so
+// this can never hang a suite). A round count alone would let a slow start finish every
+// round against an empty directory and call that a race.
+const deadline = Date.now() + 20_000;
+let evicted = 0;
+while (evicted < Number(want) && Date.now() < deadline) {
+  // A cut-off in the future: every blob on disk is old enough, so the loop is racing
+  // the other process's puts for every byte it wrote.
+  const report = store.prune({ olderThan: new Date(Date.now() + 3600_000), keepRetrieved: false, dryRun: false });
+  evicted += report.evicted.length;
+}
+process.stdout.write(JSON.stringify({ evicted }));
+`;
+
+const PUTTER_SOURCE = `
+import { DirectoryElisionStore } from './out/store-dir.js';
+
+const [root, count] = process.argv.slice(2);
+const store = new DirectoryElisionStore(root);
+const put = [];
+for (let i = 0; i < Number(count); i += 1) {
+  const text = 'racing blob ' + String(i) + ' — put while another process prunes';
+  put.push({ hash: store.put(text), text });
+}
+process.stdout.write(JSON.stringify(put));
+`;
+
+/** Run one worker script and return its parsed stdout. */
+function runScript<T>(workerPath: string, args: readonly string[]): Promise<T> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [workerPath, ...args], { stdio: 'pipe' });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => void (stdout += chunk.toString('utf8')));
+    child.stderr.on('data', (chunk: Buffer) => void (stderr += chunk.toString('utf8')));
+    child.on('error', rejectPromise);
+    child.on('close', (code) => {
+      if (code === 0) resolvePromise(JSON.parse(stdout) as T);
+      else rejectPromise(new Error(`worker exited ${String(code)}: ${stderr}`));
+    });
+  });
+}
+
+describe('a put racing a prune, in two real processes', () => {
+  it('never answers "it never existed" for bytes it took, and never serves wrong ones', async () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'smelt-prune-race-'));
+    roots.push(scratch);
+    const storeRoot = join(scratch, 'store');
+    emitStoreModule(scratch);
+    const putterPath = join(scratch, 'putter.mjs');
+    const prunerPath = join(scratch, 'pruner.mjs');
+    writeFileSync(putterPath, PUTTER_SOURCE);
+    writeFileSync(prunerPath, PRUNER_SOURCE);
+
+    // The store exists before either starts, so the pruner has a directory to walk
+    // from its first round and the two overlap for the whole run.
+    new DirectoryElisionStore(storeRoot).put('the blob that made the directory');
+
+    const [put, pruned] = await Promise.all([
+      runScript<readonly { hash: string; text: string }[]>(putterPath, [storeRoot, '400']),
+      runScript<{ evicted: number }>(prunerPath, [storeRoot, '50']),
+    ]);
+    // The interleaving is what this case is about, so it is asserted rather than hoped
+    // for: the pruner took bytes out while the putter was still putting them in.
+    expect(pruned.evicted).toBeGreaterThanOrEqual(50);
+
+    // Whatever survived is intact: a torn or half-published write fails this.
+    const blobsDir = join(storeRoot, 'blobs');
+    for (const file of readdirSync(blobsDir)) {
+      expect(contentHash(readFileSync(join(blobsDir, file), 'utf8')), file).toBe(file);
+    }
+
+    const store = new DirectoryElisionStore(storeRoot);
+    let evicted = 0;
+    for (const blob of put) {
+      try {
+        // The bytes, exactly — a hash whose blob is still there always serves them,
+        // because `retrieve` reads the blob before it reads the journal.
+        expect(store.retrieve(blob.hash)).toBe(blob.text);
+      } catch (error) {
+        // Or the receipt. Never `UnknownHashError`: "it never existed" about bytes this
+        // store took and this store deleted is the silent loss the ordering refuses.
+        expect(error, blob.hash).toBeInstanceOf(EvictedHashError);
+        expect((error as Error).message).toContain('was evicted on');
+        expect((error as Error).message).toContain('smelt store prune');
+        evicted += 1;
+
+        // And it comes back: the same content re-put restores the blob and is served.
+        expect(store.put(blob.text)).toBe(blob.hash);
+        expect(store.retrieve(blob.hash)).toBe(blob.text);
+      }
+    }
+    // And the putter is holding hashes whose bytes that prune took — which is the
+    // state the whole case exists to ask about.
+    expect(evicted).toBeGreaterThan(0);
   }, 60_000);
 });
 

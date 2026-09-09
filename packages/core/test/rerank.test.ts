@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CliUsageError, RerankStageError } from '../src/errors.ts';
 import { formatReport } from '../src/cli/report.ts';
+import { EXIT, runCli } from '../src/cli/run.ts';
 import { loadRerankStage } from '../src/rerank/load.ts';
 import { applyRerank } from '../src/rerank/protect.ts';
 import { createSmelter } from '../src/smelter.ts';
@@ -271,6 +272,76 @@ describe('a smelter with a stage wired in', () => {
     const smelter = createSmelter({ strategy: 'lexical', rerank: stage });
     const result = await smelter.smelt(TEXT, { budgetBytes: 300, focus: ['line 30'] });
     expect(smelter.reconstruct(result)).toBe(TEXT);
+  });
+});
+
+/**
+ * THE SAME LAW, FROM THE OUTSIDE — a reranker named in a config file can change a
+ * run's exit code.
+ *
+ * `applyRerank`'s spare-only rule is pinned above at the seam; this is the consequence
+ * a person meets. A reranker is the one config key that can make smelt talk to another
+ * machine, and it is also the one that can make a run that fitted stop fitting: the
+ * regions a stage asks to keep are kept, and smelt does not re-cut them to make a
+ * number look right. Exit 1 is how a script finds out, so it is asserted through the
+ * CLI rather than inferred from `outputBytes`.
+ */
+describe('a configured reranker through the CLI', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'smelt-rerank-cli-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const BUDGET = 700;
+
+  async function smelt(): Promise<{ code: number; stdout: string; stderr: string }> {
+    let stdout = '';
+    let stderr = '';
+    const code = await runCli(['--budget', String(BUDGET), '--focus', 'line 30'], {
+      stdout: (text) => void (stdout += text),
+      stderr: (text) => void (stderr += text),
+      stdin: () => `${TEXT}\n`,
+      version: '9.9.9-test',
+      cwd: dir,
+    });
+    return { code, stdout, stderr };
+  }
+
+  /** A config in `dir`, with the `rerank` block when one is given. */
+  function config(rerank?: Record<string, unknown>): void {
+    writeFileSync(
+      join(dir, 'smelt.config.json'),
+      `${JSON.stringify({ smeltConfig: 1, strategy: 'lexical', ...(rerank === undefined ? {} : { rerank }) })}\n`,
+    );
+  }
+
+  it('turns an in-budget run into exit 1, and the report says which stage did it', async () => {
+    config();
+    const plain = await smelt();
+    expect(plain.code, plain.stderr).toBe(EXIT.ok);
+
+    // The same run, with a stage that asks to keep every region the planner proposed.
+    // It is a real file, loaded through the real loader: the seam under test is the
+    // config block reaching a run, not a stage handed to a smelter by a test.
+    writeFileSync(
+      join(dir, 'keep-everything.mjs'),
+      `export default {\n` +
+        `  id: 'keeps-all',\n` +
+        `  rerank: async (candidates) => candidates.map((c, i) => ({ ...c, score: 1 - i / 100 })),\n` +
+        `};\n`,
+    );
+    config({ kind: 'module', path: './keep-everything.mjs' });
+
+    const reranked = await smelt();
+    expect(reranked.code, reranked.stderr).toBe(EXIT.overBudget);
+    expect(reranked.stderr).toContain('OVER BUDGET');
+    // Attributed, not anonymous: the path the config named is what the report prints.
+    expect(reranked.stderr).toContain('module/./keep-everything.mjs');
+    // And nothing was cut to make the number look right — the text is the whole input.
+    expect(reranked.stdout).toBe(`${TEXT}\n`);
   });
 });
 
