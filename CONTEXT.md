@@ -101,8 +101,15 @@ codebase-design glossary.
   compile error. It imports nothing from `cli/` — that cycle is why the `--harness` help
   list used to be hand-typed — and every rendered list and derived set (`HARNESS_IDS`,
   `MANAGED_EVENTS`, `GUARD_EVENTS`, `JSON_HOOK_FILES`, `GUARD_ONLY_FILES`) is a view
-  over it. `planInstall`/`planRemove` fold over `profile.install`; they hold no per-harness
-  case. `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
+  over it. `planInstall`/`planRemove` (**InstallPlan**, `src/harness/plan.ts`) fold over
+  `profile.install`; they hold no per-harness case. `profile.mcp` is the same discipline
+  for the MCP server: a profile that registers smelt carries the registration _as a
+  person performs it_ (`{manual, manualUser?}`) beside the step that writes it — Claude
+  Code's CLI verb, Codex's and Grok's `[mcp_servers.smelt]` table, opencode's `mcp` key
+  — composed from `MCP_RUN_ARGS` so the sentence and the bytes cannot drift, and pinned
+  section-by-section against `packages/mcp/README.md`. `smelt setup` printed the
+  recipe's Claude Code command for _every_ harness before it, which is a command about
+  a file Codex does not read. `shimFromSchema(schema)` builds the **ShimAdapter** a shim script runs and owns
   what every shim shares — the rewrite-input splice, the deny fallback, and the one
   rewrite announcement (also spliced into the generated opencode plugin). ShimAdapter
   stays public as the escape hatch for a harness a table cannot express. The **tier
@@ -207,6 +214,22 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   for an artefact is **project-only** and reported skipped with the reason — today
   Hermes, KiloCode and Aider entirely, plus Grok's and Cursor's instruction layers and
   Grok's hook file.
+- **InstallPlan** (`src/harness/plan.ts`): every file an install would write, and every
+  one `remove` would take back out, computed against the disk and writing nothing —
+  `planInstall(cwd, choices)` → `{files, skipped, notes, manual}` and its mirror
+  `planRemove`. Both are folds over `HarnessProfile.install` with no per-harness case:
+  what to write is the profile's, where it goes is `locateStep`'s, what a hook entry
+  says is `harness/hook-command.ts`'s, and the byte-faithful edit is `text/json-edit.ts`
+  or `text/toml-edit.ts`. It sits in `harness/` because **planning is not a verb**: both
+  install verbs plan identically and differ only in who consents to the write
+  (**MergePolicy**). While the fold sat inside the hooks wizard's module, `smelt setup`
+  imported that wizard to plan, and the file was ~1200 lines of two unrelated jobs.
+  Its one `cli/` import is `cli/config.ts` — the config schema and its one writer,
+  because `smelt.config.json` is what the install is _for_, and a key added to the
+  schema must reach the installer and `init` together or not at all.
+  `test/guards/module-seams.test.ts` pins both halves: the import edges, and the count
+  of the declarations, because an import edge that is merely absent is satisfied by a
+  copy.
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
   bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
   built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from
@@ -488,7 +511,7 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   directory it detects a machine-wide install, says so, and lets you flip it; everywhere
   else it is the project's. The `init` wizard remains the deliberate sibling, not the
   repair path. _Avoid_: installer, `smelt init` (that is the careful wizard).
-- **MergePolicy** (`Consent` in `cli/hooks.ts`): the one answer to "may this run write
+- **MergePolicy** (`Consent` in `cli/merge-policy.ts`): the one answer to "may this run write
   over a file that already exists", behind both install verbs. There are two ways to
   consent and one apply loop, because two loops drift and the one that drifts is the
   non-interactive path nobody watches. A **wizard** consent asks per file and takes
@@ -502,8 +525,10 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   edited region is re-serialised, so a foreign entry inside `hooks` keeps its content
   and can come back formatted differently. Recorded on
   `PlannedFile.ownership` (`'merged' | 'whole'`), so the question is answered by data
-  the planner produced rather than by a list of filenames. _Avoid_: "overwrite" for the
-  merged case — nothing of anybody else's is overwritten.
+  the planner produced rather than by a list of filenames. It is its own module because
+  it is one idea with two consenters: while it sat inside the hooks wizard, `setup`
+  imported a wizard to apply. _Avoid_: "overwrite" for the merged case — nothing of
+  anybody else's is overwritten.
 - **InstalledState**: what smelt has written for one **InstallScope** — hook entries
   (found by their ownership marker), the config, the MCP registration, the binary
   version. Every path it reads is resolved by `locateStep`, the same resolver the
@@ -512,7 +537,9 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   names is how doctor came to agree with a writer that had moved. `smelt doctor` reads
   it and never writes it — including the registrations that are the harness's own file
   to rewrite, which it checks and names but never edits; orphaned pieces are reported
-  facts, never silently cleaned.
+  facts, never silently cleaned. `presetToggles` lives with it (`cli/installed.ts`), for
+  the same reason: what a re-run's four toggles start from is a reading of what is
+  installed, not a wizard's memory.
 - **SkillPack**: the opt-in, published teaching artifact an agent's owner installs by
   consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
   content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt

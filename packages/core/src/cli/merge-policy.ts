@@ -12,12 +12,12 @@ import type { Ask } from './wizard.ts';
  * The **MergePolicy** (CONTEXT.md): the one answer to "may this run write over a file
  * that already exists", and the one apply loop behind both install verbs.
  *
- * It is its own module because it is one idea with two callers: `smelt hooks install`
- * consents by asking, `smelt setup` and `--yes` consent by policy, and both go through
- * {@link applyPlanFiles}. Two apply loops would drift, and the one that drifted would
- * be the non-interactive path an agent drives blind. The plan it applies is
- * `harness/plan.ts`'s — the policy reads `PlannedFile.ownership`, a fact the planner
- * recorded, never a list of filenames it would have to keep in sync.
+ * It is its own module because it is one idea with two callers — `smelt hooks install`
+ * consents by asking, `smelt setup` and `--yes` consent by policy — and while it sat
+ * inside the wizard, `cli/setup.ts` imported a wizard to apply. The plan it applies is
+ * `harness/plan.ts`'s, and the policy reads `PlannedFile.ownership` off it: a fact the
+ * planner recorded, never a list of filenames this module would have to keep in sync.
+ * {@link Consent} below is the reasoning for having exactly two answers and one loop.
  */
 
 /**
