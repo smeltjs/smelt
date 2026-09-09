@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CliUsageError } from '../src/errors.ts';
 import { STRATEGIES } from '../src/plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../src/plan/structural.ts';
-import { CONFIG_FILE_NAME, findConfigFile } from '../src/cli/config.ts';
-import type { SmeltConfig } from '../src/cli/config.ts';
+import { CONFIG_FILE_NAME, findConfigFile } from '../src/config.ts';
+import type { SmeltConfig } from '../src/config.ts';
 import {
   findWorkspaceRoot,
   MEASURE_STUB_FILE,

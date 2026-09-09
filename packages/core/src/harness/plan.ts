@@ -40,8 +40,8 @@ import {
   findConfigFile,
   parseConfig,
   renderConfig,
-} from '../cli/config.ts';
-import type { SmeltConfig, SmeltConfigHooks } from '../cli/config.ts';
+} from '../config.ts';
+import type { SmeltConfig, SmeltConfigHooks } from '../config.ts';
 
 /**
  * The install plan: every file the two install verbs would write, and every one
@@ -61,10 +61,11 @@ import type { SmeltConfig, SmeltConfigHooks } from '../cli/config.ts';
  * fold sat inside the wizard's module, `setup` imported the wizard to plan, and every
  * reader of either had to read both.
  *
- * The one import from `cli/` is `cli/config.ts` — the config schema, its reader and
- * its one writer. `planInstall` writes `smelt.config.json` because the guard's runtime
- * settings are what the install is *for*; going through `renderConfig` is what keeps
- * a key added to the schema reaching this file and `init`'s together or not at all.
+ * It imports nothing from `cli/`. The config schema it goes through is `src/config.ts`
+ * at the root — its reader and its one writer. `planInstall` writes `smelt.config.json`
+ * because the guard's runtime settings are what the install is *for*; going through
+ * `renderConfig` is what keeps a key added to the schema reaching this file and
+ * `init`'s together or not at all.
  */
 
 /**

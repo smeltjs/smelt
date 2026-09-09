@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-import { CliUsageError } from '../errors.ts';
-import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
-import { ENFORCEMENT_MODES } from '../hooks/guard-core.ts';
-import type { EnforcementMode } from '../hooks/guard-core.ts';
-import { isStrategy, STRATEGIES } from '../plan/planners.ts';
-import type { Strategy } from '../plan/planners.ts';
+import { CliUsageError } from './errors.ts';
+import { RERANK_VOYAGE_PACKAGE } from './net/policy.ts';
+import { ENFORCEMENT_MODES } from './hooks/guard-core.ts';
+import type { EnforcementMode } from './hooks/guard-core.ts';
+import { isStrategy, STRATEGIES } from './plan/planners.ts';
+import type { Strategy } from './plan/planners.ts';
 
-import { CLI_NAME } from './shell.ts';
+import { CLI_NAME } from './cli/shell.ts';
 
 /**
  * `smelt.config.json` — CLI defaults, and nothing more.

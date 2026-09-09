@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from '../src/cli/config.ts';
+import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from '../src/config.ts';
 import { EXIT, runCli } from '../src/cli/run.ts';
 import type { CliIo } from '../src/cli/run.ts';
 

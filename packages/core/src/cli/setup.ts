@@ -22,8 +22,8 @@ import {
   findConfigFile,
   parseConfig,
   renderConfig,
-} from './config.ts';
-import type { SmeltConfig, SmeltConfigStore } from './config.ts';
+} from '../config.ts';
+import type { SmeltConfig, SmeltConfigStore } from '../config.ts';
 import { HARNESSES, harnessById } from '../harness/registry.ts';
 import { locateStep, resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';

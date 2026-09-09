@@ -9,7 +9,7 @@ import { STRATEGIES, DEFAULT_STRATEGY } from '../../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../../plan/structural.ts';
 import { DEFAULT_REPO_IGNORE } from '../../repomap/map.ts';
 import { SETUP_RECIPE } from '../../setup/recipe.ts';
-import { CONFIG_FILE_NAME } from '../config.ts';
+import { CONFIG_FILE_NAME } from '../../config.ts';
 import { CLI_NAME } from '../shell.ts';
 
 /**

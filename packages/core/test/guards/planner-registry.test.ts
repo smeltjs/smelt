@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
 import { cliUsage, parseSmeltArgs } from '@guard/cli/args';
-import { parseConfig } from '@guard/cli/config';
+import { parseConfig } from '@guard/config';
 import { AUTO_PLANNER_ID } from '@guard/plan/auto';
 import { DIFF_PLANNER_ID } from '@guard/plan/diff';
 import { JSON_PLANNER_ID } from '@guard/plan/json';

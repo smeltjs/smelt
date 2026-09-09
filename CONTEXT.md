@@ -240,9 +240,9 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   install verbs plan identically and differ only in who consents to the write
   (**MergePolicy**). While the fold sat inside the hooks wizard's module, `smelt setup`
   imported that wizard to plan, and the file was ~1200 lines of two unrelated jobs.
-  Its one `cli/` import is `cli/config.ts` — the config schema and its one writer,
-  because `smelt.config.json` is what the install is _for_, and a key added to the
-  schema must reach the installer and `init` together or not at all.
+  It imports nothing from `cli/`: the config schema it goes through is `src/config.ts`
+  at the root, because `smelt.config.json` is what the install is _for_, and a key added
+  to the schema must reach the installer and `init` together or not at all.
   `test/guards/module-seams.test.ts` pins both halves: the import edges, and the count
   of the declarations, because an import edge that is merely absent is satisfied by a
   copy.
@@ -454,8 +454,11 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   satisfies strict-mode structured outputs. Those are properties of _published bytes_,
   which no repo-level check can see.
 - **SmeltConfig**: the parsed shape of `smelt.config.json`, and the module that owns the
-  schema (`src/cli/config.ts`) owns **both** directions — `parseConfig` reads,
-  `renderConfig` writes, one key order. What goes into a config stays each verb's
+  schema (`src/config.ts`) owns **both** directions — `parseConfig` reads,
+  `renderConfig` writes, one key order. It sits at the package root, not under `cli/`:
+  the file is a CLI concern (the programmatic API never reads it), but the schema is
+  read by `harness/`, `ops/` and `rerank/` too, and a module three layers depend on that
+  lives inside one of them is how `harness/` came to have a `cli/` import at all. What goes into a config stays each verb's
   **policy**: the `init` wizard always writes the strategy and store it asked about,
   `hooks install` injects a directory store when a config carries none (the deny reasons
   promise `smelt retrieve <hash>`, which a memory store cannot honour across processes).

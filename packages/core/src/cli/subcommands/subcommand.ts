@@ -1,4 +1,4 @@
-import type { LoadedConfig } from '../config.ts';
+import type { LoadedConfig } from '../../config.ts';
 import type { CliIo } from '../shell.ts';
 
 import type { FlagValues, VerbFlag } from './flags.ts';

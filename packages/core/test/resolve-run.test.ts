@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveRun } from '../src/cli/subcommands/smelt.ts';
 import type { SmeltInvocation } from '../src/cli/args.ts';
-import type { LoadedConfig, SmeltConfig } from '../src/cli/config.ts';
+import type { LoadedConfig, SmeltConfig } from '../src/config.ts';
 import { CliUsageError } from '../src/errors.ts';
 
 /**

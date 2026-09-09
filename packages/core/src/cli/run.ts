@@ -2,7 +2,7 @@ import process from 'node:process';
 
 import { CliUsageError, SmeltError } from '../errors.ts';
 
-import { loadNearestConfig } from './config.ts';
+import { loadNearestConfig } from '../config.ts';
 import { stderrPalette, stdoutPalette } from './lava.ts';
 import { EXIT } from './shell.ts';
 import type { CliIo } from './shell.ts';

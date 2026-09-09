@@ -21,7 +21,7 @@ import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } fro
 import type { Ask } from './wizard.ts';
 import { CLI_NAME } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
-import { CONFIG_FILE_NAME } from './config.ts';
+import { CONFIG_FILE_NAME } from '../config.ts';
 
 /**
  * `smelt hooks install` / `smelt hooks remove` — the wizard over the guard preset.

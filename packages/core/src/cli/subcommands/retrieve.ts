@@ -1,8 +1,8 @@
 import { CliUsageError } from '../../errors.ts';
 import { openStore } from '../../ops/inputs.ts';
 import { retrieveBytes } from '../../ops/verbs.ts';
-import { CONFIG_FILE_NAME, configuredStore } from '../config.ts';
-import type { LoadedConfig } from '../config.ts';
+import { CONFIG_FILE_NAME, configuredStore } from '../../config.ts';
+import type { LoadedConfig } from '../../config.ts';
 import { CLI_NAME, EXIT } from '../shell.ts';
 import type { CliIo } from '../shell.ts';
 

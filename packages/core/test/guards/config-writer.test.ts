@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 // Through @guard, so the mutation runner can point this at a deliberately broken
 // copy of `src` and watch it go red. See scripts/mutate.mjs.
-import { CONFIG_VERSION, parseConfig, renderConfig } from '@guard/cli/config';
-import type { SmeltConfig } from '@guard/cli/config';
+import { CONFIG_VERSION, parseConfig, renderConfig } from '@guard/config';
+import type { SmeltConfig } from '@guard/config';
 import { renderConfigWithHooks } from '@guard/harness/plan';
 import { resolveRun } from '@guard/cli/subcommands/smelt';
 import { LEXICAL_PLANNER_ID } from '@guard/plan/lexical';
@@ -204,7 +204,7 @@ describe('planners.ts owns the default strategy', () => {
 export const MUTATIONS: GuardMutation[] = [
   {
     id: 'config-writer-field-dropped',
-    file: 'cli/config.ts',
+    file: 'config.ts',
     find: '    ...(config.store === undefined ? {} : { store: renderStore(config.store) }),\n',
     replace: '',
     why: 'the one writer stops emitting a field the reader still accepts — the config comes back missing a store the user set, which is the silent "setting you believed was in force" failure a single writer exists to make impossible',
@@ -218,7 +218,7 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     id: 'config-writer-rerank-block-write-only',
-    file: 'cli/config.ts',
+    file: 'config.ts',
     find: '    ...(config.rerank === undefined ? {} : { rerank: renderRerank(config.rerank) }),\n',
     replace: '',
     why: 'the writer stops emitting the one key that can send a caller\u2019s source to a third party — `smelt init` would report writing a reranker, the file would carry none, and the totality leg (which reads the key set out of the reader\u2019s own refusal) is what notices without anyone remembering to update this guard',

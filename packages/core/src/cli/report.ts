@@ -6,7 +6,7 @@ import type { RepoMap } from '../repomap/map.ts';
 import type { PruneReport } from '../store-dir.ts';
 import type { RerankAttribution, RetrieveStats, RuleLedgerEntry, SmeltResult } from '../types.ts';
 
-import { CONFIG_FILE_NAME } from './config.ts';
+import { CONFIG_FILE_NAME } from '../config.ts';
 import { PLAIN } from './lava.ts';
 import type { Palette } from './lava.ts';
 import { CLI_NAME } from './shell.ts';

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
 import type { PlannedFile } from '../harness/plan.ts';
-import { CONFIG_FILE_NAME } from './config.ts';
+import { CONFIG_FILE_NAME } from '../config.ts';
 import { fileIsOurs } from './installed.ts';
 import { CLI_NAME } from './shell.ts';
 import { writePlannedFile } from './wizard.ts';

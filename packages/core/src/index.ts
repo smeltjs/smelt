@@ -132,14 +132,14 @@ export {
   resolveStorePath,
   VOYAGE_DEFAULT_KEY_ENV,
   VOYAGE_DEFAULT_MODEL,
-} from './cli/config.ts';
+} from './config.ts';
 export type {
   ConfiguredStore,
   LoadedConfig,
   SmeltConfig,
   SmeltConfigRerank,
   SmeltConfigStore,
-} from './cli/config.ts';
+} from './config.ts';
 export {
   MEASURE_STUB_FILE,
   measureStubSource,

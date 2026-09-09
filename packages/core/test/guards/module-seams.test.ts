@@ -25,12 +25,12 @@ import type { GuardMutation } from './_mutations.ts';
  *      `harness/plan.ts` name `cli/hooks.ts` in no import. The wizard is a leaf: it
  *      imports the plan, the policy and the toggle reader, and nothing imports it back
  *      except the verb (`cli/subcommands/hooks.ts`) that is its front door.
- *   2. **`harness/` stays free of `cli/`.** The registry's oldest rule (`cli/hooks.ts`
- *      imported `CLI_NAME` from `cli/args.ts`, so the `--harness` help list could not
- *      be derived and was hand-typed five times) now covers the planner that moved in
- *      beside it. The one exception is `cli/config.ts` — the config schema, its reader
- *      and its one writer, which `planInstall` goes through so that a key added to the
- *      schema reaches the installer and `init` together or not at all.
+ *   2. **`harness/` imports nothing from `cli/`.** The registry's oldest rule
+ *      (`cli/hooks.ts` imported `CLI_NAME` from `cli/args.ts`, so the `--harness` help
+ *      list could not be derived and was hand-typed five times) now covers the planner
+ *      that moved in beside it, with no exception left: the config schema `planInstall`
+ *      goes through is `src/config.ts`, at the root, because every layer reads it and
+ *      none of them is the CLI.
  *   3. **Each shared symbol is declared once.** An import edge that is merely absent
  *      can be satisfied by a copy, and a copy is how the two verbs would come to
  *      disagree about whose file `CLAUDE.md` is. So the declarations themselves are
@@ -84,16 +84,16 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
     ).toEqual(['cli/subcommands/hooks.ts']);
   });
 
-  it('harness/ imports nothing from cli/ but the config schema', () => {
+  it('harness/ imports nothing from cli/', () => {
     for (const file of SOURCE.filter((one) => one.startsWith('harness/'))) {
       const cliImports = importedModules(file).filter((one) => one.startsWith('cli/'));
       expect(
-        cliImports.every((one) => one === 'cli/config.ts'),
+        cliImports,
         `${file} imports ${cliImports.join(', ')} from cli/. A harness fact that needs ` +
           `a verb is a fact in the wrong module — that cycle is why the --harness help ` +
-          `list was hand-typed. cli/config.ts is the one exception, and it is the ` +
-          `config schema, not a verb.`,
-      ).toBe(true);
+          `list was hand-typed. The config schema is not an exception either: it is ` +
+          `src/config.ts, read by every layer and owned by none of them.`,
+      ).toEqual([]);
     }
   });
 

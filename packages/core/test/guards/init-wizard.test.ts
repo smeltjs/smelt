@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 // Through @guard, so the mutation runner can point this at a deliberately broken
 // copy of `src` and watch it go red. See scripts/mutate.mjs.
-import { CONFIG_FILE_NAME } from '@guard/cli/config';
+import { CONFIG_FILE_NAME } from '@guard/config';
 import { RERANK_STUB_FILE, runInit } from '@guard/cli/init';
 
 import type { GuardMutation } from './_mutations.ts';

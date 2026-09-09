@@ -16,8 +16,8 @@ import {
   CONFIG_VERSION,
   VOYAGE_DEFAULT_KEY_ENV,
   VOYAGE_DEFAULT_MODEL,
-} from './config.ts';
-import type { SmeltConfig } from './config.ts';
+} from '../config.ts';
+import type { SmeltConfig } from '../config.ts';
 import { readInstalledState } from './installed.ts';
 import { EM_DASH, PLAIN } from './lava.ts';
 import type { Glyph, Palette } from './lava.ts';

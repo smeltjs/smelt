@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from './config.ts';
-import type { SmeltConfig } from './config.ts';
+import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from '../config.ts';
+import type { SmeltConfig } from '../config.ts';
 import {
   hookEntryCommands,
   isOursEntry,

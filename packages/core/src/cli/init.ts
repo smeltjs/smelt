@@ -20,13 +20,13 @@ import {
   renderConfig,
   VOYAGE_DEFAULT_KEY_ENV,
   VOYAGE_DEFAULT_MODEL,
-} from './config.ts';
+} from '../config.ts';
 import type {
   SmeltConfig,
   SmeltConfigHooks,
   SmeltConfigRerank,
   SmeltConfigStore,
-} from './config.ts';
+} from '../config.ts';
 
 /**
  * `smelt init` — the setup wizard.

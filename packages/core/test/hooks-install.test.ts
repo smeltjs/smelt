@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CliUsageError } from '../src/errors.ts';
-import { parseConfig } from '../src/cli/config.ts';
+import { parseConfig } from '../src/config.ts';
 import { runHooks } from '../src/cli/hooks.ts';
 import { presetToggles } from '../src/cli/installed.ts';
 import { planInstall } from '../src/harness/plan.ts';

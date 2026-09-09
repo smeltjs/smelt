@@ -6,8 +6,8 @@ import { CliUsageError } from '../errors.ts';
 import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
 import type { RerankCandidate, RerankStage } from '../types.ts';
 import { CLI_NAME } from '../cli/shell.ts';
-import { CONFIG_FILE_NAME, VOYAGE_DEFAULT_KEY_ENV, VOYAGE_DEFAULT_MODEL } from '../cli/config.ts';
-import type { SmeltConfigRerank } from '../cli/config.ts';
+import { CONFIG_FILE_NAME, VOYAGE_DEFAULT_KEY_ENV, VOYAGE_DEFAULT_MODEL } from '../config.ts';
+import type { SmeltConfigRerank } from '../config.ts';
 
 /**
  * TURNING A `rerank` CONFIG BLOCK INTO A LIVE STAGE — and the one place in smelt that
