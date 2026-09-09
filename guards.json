@@ -1,6 +1,6 @@
 {
-  "guards": 45,
-  "mutations": 237,
+  "guards": 46,
+  "mutations": 240,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -121,6 +121,10 @@
     {
       "guard": "packages/core/test/guards/repo-map.test.ts",
       "count": 20
+    },
+    {
+      "guard": "packages/core/test/guards/rerank-budget.test.ts",
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/reversibility.test.ts",
