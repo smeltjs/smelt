@@ -673,7 +673,7 @@ describe('the prose says only what the scope makes it say', () => {
     expect(prose, 'claude-code does carry one — it is just not ours to write').not.toContain(
       'no selected harness carries it',
     );
-    expect(prose).toContain(SETUP_RECIPE.mcp.registerUser);
+    expect(prose).toContain(harnessById('claude-code')?.mcp?.manualUser ?? '');
   });
 
   it('a run that wrote a registration is applied, whatever else it handed over', async () => {
@@ -696,7 +696,9 @@ describe('the prose says only what the scope makes it say', () => {
     );
     expect(receipt.mcp.status).toBe('applied');
     // And the one it could not write is still handed over, per step, in the notes.
-    expect((receipt.notes ?? []).join('\n')).toContain(SETUP_RECIPE.mcp.registerUser);
+    expect((receipt.notes ?? []).join('\n')).toContain(
+      harnessById('claude-code')?.mcp?.manualUser ?? '',
+    );
   });
 });
 

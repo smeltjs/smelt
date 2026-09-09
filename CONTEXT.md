@@ -557,9 +557,13 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
 Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasoning.
 
 - **SetupRecipe** (`src/setup/recipe.ts`): the one true way to put smelt on a machine —
-  install, init choices, hooks, MCP registration, verification — held as data, from
-  which every rendering (README fragments, site prompts, the `setup` verb) derives, or
-  is guard-pinned against it. Prose is never the source.
+  install, init choices, hooks, the MCP server's own command, verification — held as
+  data, from which every rendering (README fragments, site prompts, the `setup` verb)
+  derives, or is guard-pinned against it. Prose is never the source. It names **no
+  harness**: registration is a **HarnessProfile** fact (`profile.mcp`), because a
+  `claude` CLI verb is not how Codex or opencode register anything. The recipe held
+  Claude Code's spelling as though it were everyone's, and five renderings read it from
+  there; what is left is `mcp.run`, the plain stdio command true of every MCP client.
 - **Setup** (`smelt setup`): the one-command, idempotent application of the recipe for
   chosen harnesses, at an **InstallScope** — interactive when a TTY is present,
   fully scriptable when an agent runs it, and the only repair path for installed state.

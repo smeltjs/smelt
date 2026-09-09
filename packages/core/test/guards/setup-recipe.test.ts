@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SETUP_RECIPE, SETUP_STEPS } from '@guard/setup/recipe';
 import { DEFAULT_STORE_DIR } from '@guard/harness/plan';
-import { HARNESSES } from '@guard/harness/registry';
+import { HARNESSES, harnessById } from '@guard/harness/registry';
 import type { HarnessProfile } from '@guard/harness/profile';
 import type { GuardMutation } from './_mutations.ts';
 import { guardRoot, packageRoot, repoRoot } from './_source.ts';
@@ -29,7 +29,18 @@ describe('the setup recipe is owned once', () => {
     expect(SETUP_RECIPE.install.globalInstall).toBe('npm install -g @smeltjs/core');
     expect(SETUP_RECIPE.install.oneShot).toBe('npx @smeltjs/core');
     expect(SETUP_RECIPE.mcp.run).toBe('npx @smeltjs/mcp');
-    expect(SETUP_RECIPE.mcp.register).toBe('claude mcp add smelt -- npx @smeltjs/mcp');
+  });
+
+  it('carries no harness’s registration — `run` is the whole of its MCP block', () => {
+    // The recipe held Claude Code's `claude mcp add …` as though it were every
+    // harness's registration, and five renderings read it from there — one of them
+    // printed it at somebody wiring Codex. Registration is a HarnessProfile fact now;
+    // what the recipe owns is the one command true of every MCP client.
+    expect(
+      Object.keys(SETUP_RECIPE.mcp),
+      'the recipe has grown a second MCP fact. A registration belongs to the harness ' +
+        'that reads it (HarnessProfile.mcp); the recipe names no harness.',
+    ).toEqual(['run']);
   });
 
   it('the hooks store injection reads the recipe, not its own literal', () => {
@@ -47,7 +58,9 @@ describe('the setup recipe is owned once', () => {
     for (const step of SETUP_STEPS) {
       expect(step.command, `step ${step.id} carries no command`).toBeTruthy();
     }
-    expect(SETUP_STEPS.find((step) => step.id === 'mcp')?.command).toBe(SETUP_RECIPE.mcp.register);
+    // The steps name no harness, so the MCP step names the stdio command any client
+    // registers — not Claude Code's CLI verb, which is Claude Code's profile's.
+    expect(SETUP_STEPS.find((step) => step.id === 'mcp')?.command).toBe(SETUP_RECIPE.mcp.run);
   });
 });
 
@@ -113,7 +126,6 @@ describe('the recipe is the only place the facts are spelled', () => {
     'npm install -g @smeltjs/core',
     'npx @smeltjs/core',
     'npx @smeltjs/mcp',
-    'claude mcp add smelt -- npx @smeltjs/mcp',
     'npx skills add smeltjs/smelt',
     'brew install smeltjs/tap/smelt',
     'brew upgrade smelt',
@@ -129,7 +141,36 @@ describe('the recipe is the only place the facts are spelled', () => {
       ).toEqual(['packages/core/src/setup/recipe.ts']);
     }
   });
+
+  it('Claude Code’s CLI verb is spelled once, in the profile that reads it', () => {
+    // The registration left the recipe, so it needs an owner of its own or it becomes
+    // the retyped literal again — in the site component, in a README-rendering module,
+    // in whichever verb prints it next. Only the prefix is scanned: the tail of the
+    // command is `SETUP_RECIPE.mcp.run`, interpolated rather than retyped, so that the
+    // sentence a person is told to run and the server smelt wires cannot name
+    // different packages.
+    expect(
+      filesSpelling('claude mcp add smelt --'),
+      'Claude Code’s registration verb is spelled outside its own profile. A fact ' +
+        'with two owners has none — this one had four.',
+    ).toEqual(['packages/core/src/harness/claude-code.ts']);
+  });
 });
+
+/**
+ * Claude Code's registration, from the profile that owns it. The docs that show a
+ * registration show *this* one — the quickstart is written for Claude Code — so the
+ * README pins below read it from there rather than from the recipe, which carries no
+ * harness's registration at all.
+ */
+function claudeCodeRegistration(): string {
+  const manual = harnessById('claude-code')?.mcp?.manual;
+  expect(
+    manual,
+    'claude-code carries no MCP manual step for the docs to be pinned to',
+  ).toBeTruthy();
+  return manual ?? '';
+}
 
 /**
  * Every harness whose profile writes an MCP registration — the ones that must also
@@ -305,9 +346,10 @@ describe('the docs stay pinned to the recipe', () => {
     expect(lines, 'the README no longer shows the global install the recipe carries').toContain(
       SETUP_RECIPE.install.globalInstall,
     );
-    expect(lines, 'the README no longer shows the MCP registration the recipe carries').toContain(
-      SETUP_RECIPE.mcp.register,
-    );
+    expect(
+      lines,
+      'the README no longer shows the MCP registration Claude Code’s profile carries',
+    ).toContain(claudeCodeRegistration());
     expect(readme).toContain(SETUP_RECIPE.store.defaultDir);
     // The distribution and update narrative, pinned to the recipe the same way:
     const setupLine = `${SETUP_RECIPE.install.oneShot} setup --yes --harness claude-code --json`;
@@ -329,7 +371,7 @@ describe('the docs stay pinned to the recipe', () => {
   it('the MCP README spells the run and registration commands the recipe carries', () => {
     const readme = repoFile('packages/mcp/README.md');
     const lines = readme.split('\n').map((line) => line.trim());
-    expect(lines).toContain(SETUP_RECIPE.mcp.register);
+    expect(lines).toContain(claudeCodeRegistration());
     expect(readme).toContain(SETUP_RECIPE.mcp.run);
     expect(readme).toContain(SETUP_RECIPE.store.defaultDir);
   });

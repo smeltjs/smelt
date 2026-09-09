@@ -219,7 +219,10 @@ describe('the site states the packages, and nothing it made up', () => {
     expect(facts.recipe.brewUpgrade).toBe(SETUP_RECIPE.install.brewUpgrade);
     expect(facts.recipe.skillInstall).toBe(SETUP_RECIPE.install.skillInstall);
     expect(facts.recipe.mcpRun).toBe(SETUP_RECIPE.mcp.run);
-    expect(facts.recipe.mcpRegister).toBe(SETUP_RECIPE.mcp.register);
+    // The registration is a harness fact, and the two places the site prints one are
+    // Claude Code's prose — so it is pinned to Claude Code's profile, not to the
+    // recipe, which carries no harness's registration any more.
+    expect(facts.recipe.mcpRegister).toBe(harnessById('claude-code')?.mcp?.manual);
     expect(facts.recipe.recommendedBudgetBytes).toBe(SETUP_RECIPE.recommendedBudgetBytes);
     expect(facts.recipe.steps.map((step) => step.id)).toEqual(SETUP_STEPS.map((step) => step.id));
     for (const step of facts.recipe.steps) {

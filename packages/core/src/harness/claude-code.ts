@@ -54,6 +54,28 @@ const HOOKS: HarnessHookSchema = {
 // derived once beside the fact) — so the CLI command the README teaches and the file
 // setup writes cannot disagree.
 
+/**
+ * Registration as Claude Code's CLI spells it — this harness's fact, composed from the
+ * one command the recipe owns rather than retyped, so the verb a person is told to run
+ * and the server smelt actually wires can never name different packages.
+ *
+ * `MCP_REGISTER_USER` is the same registration for the whole machine. Claude Code's
+ * user scope is the top-level `mcpServers` key of `~/.claude.json` — a file Claude Code
+ * owns and rewrites, and whose docs say to manage it through `/config` and this CLI
+ * rather than by editing — so at user scope smelt prints this instead of writing a
+ * byte. Verified 2026-09-09 against code.claude.com/docs/en/mcp and .../mcp-quickstart
+ * ("Where servers are saved").
+ *
+ * Both lived in `SETUP_RECIPE.mcp` as though a `claude` verb were every harness's
+ * registration; five renderings read them from there, and one of them printed this at
+ * somebody wiring Codex. The recipe keeps `mcp.run` — true of every MCP client — and
+ * the spelling belongs to the harness that reads it.
+ */
+const MCP_REGISTER = `claude mcp add smelt -- ${SETUP_RECIPE.mcp.run}`;
+
+/** The same, for the whole machine. See {@link MCP_REGISTER}. */
+const MCP_REGISTER_USER = `claude mcp add --scope user smelt -- ${SETUP_RECIPE.mcp.run}`;
+
 export const claudeCode: ShimmedHarnessProfile = {
   id: 'claude-code',
   name: 'Claude Code',
@@ -67,9 +89,9 @@ export const claudeCode: ShimmedHarnessProfile = {
   userInstructionFile: '.claude/CLAUDE.md',
   instructions: 'snippet',
   // The registration, as a person performs it — Claude Code's own CLI verb, and its
-  // `--scope user` spelling for the machine. Both are the recipe's, imported rather
-  // than retyped: this exact string had four owners once.
-  mcp: { manual: SETUP_RECIPE.mcp.register, manualUser: SETUP_RECIPE.mcp.registerUser },
+  // `--scope user` spelling for the machine. Owned here, beside the step that writes
+  // the same thing: this exact string had four owners once.
+  mcp: { manual: MCP_REGISTER, manualUser: MCP_REGISTER_USER },
   caveats: [],
   hooks: HOOKS,
   install: [
@@ -90,7 +112,7 @@ export const claudeCode: ShimmedHarnessProfile = {
       // `.mcp.json` is the *project* scope and is ours to merge into. The user scope
       // is the top-level `mcpServers` key of `~/.claude.json`, which Claude Code owns
       // and rewrites — so it is a printed command, checked read-only by doctor.
-      user: { file: '.claude.json', manual: SETUP_RECIPE.mcp.registerUser },
+      user: { file: '.claude.json', manual: MCP_REGISTER_USER },
     },
   ],
 };

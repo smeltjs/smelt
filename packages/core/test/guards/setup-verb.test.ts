@@ -13,6 +13,7 @@ import { runSetup } from '@guard/cli/setup';
 import type { SetupReceipt } from '@guard/cli/setup';
 import type { AnswerStream } from '@guard/cli/shell';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
+import { harnessById } from '@guard/harness/registry';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -125,9 +126,10 @@ describe('smelt setup applies the recipe in one command', () => {
       expect(readFileSync(join(cwd, 'CLAUDE.md'), 'utf8')).toContain('smelt:hooks');
 
       // The MCP step: claude-code's profile carries the registration, so it is
-      // applied to `.mcp.json` — byte-faithfully, with the recipe's own command.
+      // applied to `.mcp.json` — byte-faithfully, and the receipt names that
+      // profile's own command, not a command the recipe holds for every harness.
       expect(receipt.mcp.status).toBe('applied');
-      expect(receipt.mcp.command).toBe(SETUP_RECIPE.mcp.register);
+      expect(receipt.mcp.command).toBe(harnessById('claude-code')?.mcp?.manual);
       const mcpConfig = JSON.parse(readFileSync(join(cwd, '.mcp.json'), 'utf8')) as {
         mcpServers: { smelt: { command: string; args: readonly string[] } };
       };
@@ -630,8 +632,8 @@ export const MUTATIONS: GuardMutation[] = [
     id: 'setup-prints-one-harness-command-for-all',
     file: 'cli/setup.ts',
     find: "  return scope === 'user' ? (manual.manualUser ?? manual.manual) : manual.manual;",
-    replace: '  return SETUP_RECIPE.mcp.register;',
-    why: 'the MCP step read off the recipe again instead of off the harness that carries it — somebody wiring Codex or Grok is told to run a `claude` CLI verb against a file their harness never reads, which is the defect the per-harness fact exists to end',
+    replace: '  return SETUP_RECIPE.mcp.run;',
+    why: 'the MCP step read off the recipe again instead of off the harness that carries it — somebody wiring Codex or Grok is told about a bare stdio command instead of the `[mcp_servers.smelt]` table setup just wrote them, which is the defect the per-harness fact exists to end',
   },
   {
     kind: 'src',

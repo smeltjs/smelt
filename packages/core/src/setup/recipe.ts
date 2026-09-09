@@ -1,7 +1,7 @@
 /**
  * The SetupRecipe (CONTEXT.md): the one true way to put smelt on a machine — the
  * install commands, the init defaults, the store default, the hooks step, the MCP
- * registration — held as data, because prose is never the source. Every rendering
+ * server's own command — held as data, because prose is never the source. Every rendering
  * derives from this module or is pinned to it by a guard
  * (`test/guards/setup-recipe.test.ts`); the same facts used to be retyped until the
  * store default existed under three doc spellings, one of them wrong, and the MCP
@@ -39,23 +39,19 @@ export const SETUP_RECIPE = {
     defaultDir: '.smelt/store',
   },
   mcp: {
-    /** The MCP server, run from the project directory. */
+    /**
+     * The MCP server, run from the project directory — the plain stdio command, and
+     * the whole of what this module knows about MCP.
+     *
+     * **There is no `register` here, deliberately.** Registration is a *harness's*
+     * fact: it is a `claude` CLI verb for Claude Code, a `[mcp_servers.smelt]` table
+     * for Codex and Grok, an `mcp` key for opencode. This module held Claude Code's
+     * spelling as though it were everyone's, and five renderings read it — so a Codex
+     * user was told to run a `claude` verb against a file Codex never reads. Each
+     * registering harness now carries its own (`HarnessProfile.mcp`), and what is
+     * left here is the one command that is true of every MCP client: run this.
+     */
     run: 'npx @smeltjs/mcp',
-    /**
-     * Registration as Claude Code's CLI spells it — the canonical string while the
-     * harness profiles cannot yet carry per-harness registration; the
-     * mcp-registration step kind generalizes this per harness.
-     */
-    register: 'claude mcp add smelt -- npx @smeltjs/mcp',
-    /**
-     * The same registration for the whole machine. Claude Code's user scope is stored
-     * under the top-level `mcpServers` key of `~/.claude.json` — a file Claude Code
-     * owns and rewrites, and whose docs say to manage it through `/config` and this
-     * CLI rather than by editing — so at user scope smelt prints this instead of
-     * writing a byte. Verified 2026-09-09 against code.claude.com/docs/en/mcp and
-     * .../mcp-quickstart ("Where servers are saved").
-     */
-    registerUser: 'claude mcp add --scope user smelt -- npx @smeltjs/mcp',
   },
 } as const;
 
@@ -86,7 +82,14 @@ export const SETUP_STEPS: readonly SetupStep[] = [
   { id: 'install', title: 'install the CLI', command: SETUP_RECIPE.install.globalInstall },
   { id: 'init', title: 'write smelt.config.json', command: 'smelt init' },
   { id: 'hooks', title: 'wire the hooks preset', command: 'smelt hooks install' },
-  { id: 'mcp', title: 'register the MCP server', command: SETUP_RECIPE.mcp.register },
+  {
+    id: 'mcp',
+    // The steps name no harness, so this one names none either: the stdio command any
+    // MCP client registers. How a *particular* harness registers it is that harness's
+    // `HarnessProfile.mcp`, which `smelt setup` prints for the harness it is wiring.
+    title: 'register the MCP server with your harness',
+    command: SETUP_RECIPE.mcp.run,
+  },
   {
     id: 'verify',
     title: 'prove the round trip on a real file',

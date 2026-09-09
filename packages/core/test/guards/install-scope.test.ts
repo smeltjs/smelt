@@ -20,6 +20,7 @@ import { presetToggles } from '@guard/cli/installed';
 import type { DoctorReceipt } from '@guard/cli/doctor';
 import type { SetupReceipt } from '@guard/cli/setup';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
+import { harnessById } from '@guard/harness/registry';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -130,7 +131,7 @@ describe('a machine-wide install lands where the harness reads', () => {
     const receipt = await setup('user', 'claude-code');
     expect(existsSync(join(home, '.claude.json')), 'smelt must not write it').toBe(false);
     expect(receipt.mcp.status).toBe('manual');
-    expect(receipt.mcp.command).toBe(SETUP_RECIPE.mcp.registerUser);
+    expect(receipt.mcp.command).toBe(harnessById('claude-code')?.mcp?.manualUser);
     expect(receipt.mcp.command).toContain('--scope user');
 
     // The manual path builds its list the same way the applied one does: every manual
@@ -138,7 +139,7 @@ describe('a machine-wide install lands where the harness reads', () => {
     // profile documents a user-scope registration file it owns, so one is all this
     // combination can produce — and a list of one is still a list, which is what makes
     // `commands` the field a reader can act on without asking how many there are.
-    expect(receipt.mcp.commands).toEqual([SETUP_RECIPE.mcp.registerUser]);
+    expect(receipt.mcp.commands).toEqual([harnessById('claude-code')?.mcp?.manualUser]);
     expect(receipt.mcp.command).toBe((receipt.mcp.commands ?? [])[0]);
   });
 
@@ -152,7 +153,7 @@ describe('a machine-wide install lands where the harness reads', () => {
     // A one-harness run still carries `commands`, holding the one thing `command`
     // holds. Deliberate: a reader that always reads the list never has to branch on
     // how many harnesses a run happened to name.
-    expect(receipt.mcp.commands).toEqual([SETUP_RECIPE.mcp.register]);
+    expect(receipt.mcp.commands).toEqual([harnessById('claude-code')?.mcp?.manual]);
     expect(readdirSync(home)).toEqual([]);
   });
 });
