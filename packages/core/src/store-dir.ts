@@ -528,11 +528,16 @@ export class DirectoryElisionStore implements ElisionStore {
    * three answers simply come out of one pass, and {@link rawCounters}, {@link ledger}
    * and {@link stats} are views over it.
    *
-   * There is no cache. A cache would be a second copy of numbers whose whole value is
-   * that they are read off the disk every time — two instances over one directory
-   * always agree because neither remembers anything — and at the size this was measured
-   * at, one traversal is already fast enough that a stale-detection scheme would be the
-   * more likely source of a wrong answer. See `bench/` and the class doc above.
+   * There is no cache, and the measurement is why. On a scratch store of 5,500 puts and
+   * 500 retrievals (a 226,500-byte journal over 21 MB of blobs; Node 26, macOS 15, APFS
+   * SSD, 2026-09-09) the three traversals cost 47-59 ms and this one costs 24-28 ms,
+   * inside a `smelt stats` that runs end to end in 0.11-0.14 s. A cached tail would be a
+   * second copy of numbers whose whole value is that they are read off the disk every
+   * time — two instances over one directory agree precisely because neither remembers
+   * anything — bought against a cost nobody is paying. If a store an order of magnitude
+   * larger ever changes that, the cache is an offset-keyed tail keyed on the journal's
+   * size and mtime and discarded on any mismatch; it is not written until a measurement
+   * asks for it.
    *
    * **A prune moves `bytesStored` and nothing else.** `elisionsStored` is *distinct
    * blobs put into this store*, so an evicted hash still counts: the blobs on disk,

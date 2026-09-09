@@ -1,11 +1,7 @@
 {
-  "guards": 46,
-  "mutations": 240,
+  "guards": 44,
+  "mutations": 233,
   "byGuard": [
-    {
-      "guard": "packages/core/test/guards/adapter-resolver.test.ts",
-      "count": 7
-    },
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
       "count": 10
@@ -24,7 +20,7 @@
     },
     {
       "guard": "packages/core/test/guards/config-writer.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/doctor.test.ts",
@@ -108,7 +104,7 @@
     },
     {
       "guard": "packages/core/test/guards/persistent-store.test.ts",
-      "count": 4
+      "count": 5
     },
     {
       "guard": "packages/core/test/guards/planner-registry.test.ts",
@@ -121,10 +117,6 @@
     {
       "guard": "packages/core/test/guards/repo-map.test.ts",
       "count": 20
-    },
-    {
-      "guard": "packages/core/test/guards/rerank-budget.test.ts",
-      "count": 3
     },
     {
       "guard": "packages/core/test/guards/reversibility.test.ts",
@@ -148,7 +140,7 @@
     },
     {
       "guard": "packages/core/test/guards/store-prune.test.ts",
-      "count": 6
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/structural-totality.test.ts",

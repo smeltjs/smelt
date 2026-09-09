@@ -31,8 +31,10 @@ codebase-design glossary.
   `smelt stats`) from pure shell, not only through the `smelt_retrieve` tool.
 - **Prune** (`smelt store prune`): the only eviction in smelt, and the reason a store
   that deletes can still satisfy Law 3. Explicit (a user typed the verb; nothing prunes
-  on a timer, a size cap, or when a store is opened), bounded by a cut-off that user
-  named (`--older-than <n>d|h|w`, no default), journalled **before** the bytes go
+  on a timer, a size cap, or when a store is opened), bounded by a **Cut-off** that user
+  named — `--older-than <n>d|h|w`, or `store.retention.olderThan` in
+  `smelt.config.json`, the flag winning and the receipt naming which — journalled
+  **before** the bytes go
   (`evict "<hash>" "<date>"`, `fsync`ed, then the unlink), and counted: `elisionsStored`
   keeps counting what was evicted, so pruning cannot raise the **Expansion rate** by
   shrinking its own denominator, and the **Ledger** is untouched — the rule did make
@@ -45,6 +47,23 @@ codebase-design glossary.
   differs, because only the error is read by a person deciding what went wrong. `has()`
   answers `false` — a boolean has no room for a reason. _Avoid_: eviction policy, GC,
   LRU, TTL.
+- **Cut-off**: the age a Prune deletes at, as a user spells it — `30d`, `12h`, `2w`
+  (`readCutoff` in `src/store-cutoff.ts`, one grammar for both places it can be
+  written). There is no default cut-off and never will be: one smelt invented would
+  decide which of somebody's elisions stop being reversible, at an age nobody chose.
+  What a user may do is **write theirs down** — `store.retention: { olderThan,
+keepRetrieved? }` inside a directory store — which is a number in a file, not a
+  schedule: it makes no deletion happen, and the verb is still typed. The two spellings
+  are a merge (`resolveRetention`), the flag wins, `--keep-retrieved` is OR-ed rather
+  than overridden because a flag with no negative spelling must not delete more than the
+  file asked for, and the receipt carries the provenance (`olderThanSource`). _Avoid_:
+  retention policy, expiry, TTL.
+- **Survey** (`DirectoryElisionStore.survey()`): the whole reading of a store directory
+  from one traversal — the counters, the **Ledger** and the size on disk. Not a cache
+  and not a new fact: `stats()`, `ledger()` and `rawCounters()` are views over it, and a
+  store still remembers nothing between calls, which is what makes two processes over
+  one directory always agree. It exists because `smelt stats` (the Stop hook's, at every
+  session end) walked the same two files three times to print one report.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by
