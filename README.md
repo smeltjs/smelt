@@ -94,25 +94,37 @@ focus  planLexical
   focus-window    141  4,715  9d211d0922e7bb2f  collapsed 141 lines with no match for the foc…
 ```
 
-At the end of a session the store reports on itself — the counters, then the ledger, one
-rule at a time. Real output of `smelt stats` (0.6.0) after smelting this repo's
-`lexical.ts` under `--strategy auto` and retrieving one of the two markers:
+At the end of a session the store reports on itself — what it holds, the expansion rate,
+the counters, then the ledger, one rule at a time. Real output of `smelt stats` (0.6.0)
+after `smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical
+--strategy auto` and retrieving one of the two markers:
 
 ```
-elisionsStored 2
-bytesStored 4865
-retrieveCalls 1
-uniqueRetrieved 1
-expansionRate 0.5
-allElisionsRetrieved false
-rule.sibling-collapse.stored 2
-rule.sibling-collapse.retrieved 1
+smelt stats  /your/project/.smelt/store
+2 blobs, 4.8 KB on disk
+
+  expansion  ████████████░░░░░░░░░░░░  50.0%   1 of 2 elisions asked for back
+
+  elisionsStored            2
+  bytesStored           4,865
+  retrieveCalls             1
+  uniqueRetrieved           1
+  misses                    0
+  expansionRate           0.5
+  allElisionsRetrieved  false
+
+  rule              stored  retrieved   rate
+  sibling-collapse       2          1  50.0%
 ```
+
+In a terminal that is lava-coloured; in a pipe, in CI, under `NO_COLOR` or with
+`--no-color`, it is exactly these bytes. `--json` is the surface to parse, and it never
+carries a colour byte.
 
 `expansionRate` is the fraction of what smelt hid that the model asked for back — the
-honest signal of over-pruning, measured and never thresholded. The `rule.*` lines are the
-same signal per elision rule, so a rule whose every cut keeps getting asked back shows up
-as a fact you can act on. Reading stats never moves them.
+honest signal of over-pruning, measured and never thresholded. The ledger is the same
+signal per elision rule, so a rule whose every cut keeps getting asked back shows up as a
+fact you can act on. Reading stats never moves them.
 
 - `--strategy structural` parses the file and collapses whole sibling declarations,
   keeping every signature and doc comment. `--strategy lexical` (the default) uses focus
@@ -386,9 +398,9 @@ project on the machine.)
 
 The marker's `retrieve("hash")` **is** that command, and it is counted like any other
 retrieval — so at the end of a session, `smelt stats` prints the same honest numbers
-(`expansionRate`, `allElisionsRetrieved`, one `name value` per line, then the ledger:
-`rule.<id>.stored` and `rule.<id>.retrieved` per elision rule, so you can see which
-rule's cuts keep getting asked for back; `--json` for the envelope) that
+(`expansionRate` with a bar, `allElisionsRetrieved`, the counters, then the ledger as a
+table — stored, retrieved and rate per elision rule, so you can see which rule's cuts
+keep getting asked for back; `--json` for the envelope) that
 `smelter.stats()` and `smelter.store.ledger()` give a harness. The instruction pattern above works
 with any agent that can run a command; the hooks preset below wires it in with real
 enforcement.

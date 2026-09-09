@@ -549,3 +549,24 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
   content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt
   still never writes an agent's files uninvited.
+- **Palette** (`src/cli/lava.ts`): every byte of colour smelt writes, and the primitives
+  that lay text out under it, behind one interface. The seam is `palette({color,
+unicode})` — plus `stdoutPalette(io)` / `stderrPalette(io)`, which answer the two
+  streams separately, because `smelt big.log --budget 4000 > small.log` leaves the
+  report on a terminal while stdout is a file. It owns **roles** (`heading`, `rule`,
+  `hash`, `number`, `path`, `good`, `bad`, `warn`, `dim`, `strong` — what a span _is_,
+  never what colour it should be), the **primitives** (`kv`, `table`, `bar`, `glyph`,
+  `percent`, `divider`, `logo`) and nothing else: no verb builds an ANSI sequence
+  inline, so the day the brand changes it changes in one file. Three rules make it safe,
+  and `test/guards/palette.test.ts` holds all three. **Off is the identity** — colour
+  off is byte-for-byte the plain rendering, which is what every `--json` envelope, every
+  `--yes` receipt, every pipe, `NO_COLOR`, `--no-color` and every guard's assertion
+  gets. **Padding is measured before painting** — an escape sequence has zero width on
+  screen and a dozen bytes in a string, so a cell padded after painting is a column that
+  does not line up. **A rendering may not round a non-zero to zero** — `percent` prints
+  `<0.1%` and `bar` keeps one filled cell for a rate that is not zero, which is Law 4 at
+  the last inch before a person reads it. The **glyph set** (`✓ ✗ ⚠ · •`) and the bar's
+  block cells fall back to ASCII where the locale never said it could render more
+  (`supportsUnicode`), and the **wordmark** is a committed constant in the ANSI Shadow
+  letterforms with a plain-ASCII twin — smelt runs no figlet. _Avoid_: "theme",
+  "styling helper"; and never a colour name at a call site.
