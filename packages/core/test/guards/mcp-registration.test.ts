@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
-import { planInstall, planRemove } from '@guard/cli/hooks';
-import type { HooksChoices } from '@guard/cli/hooks';
+import { planInstall, planRemove } from '@guard/harness/plan';
+import type { HooksChoices } from '@guard/harness/plan';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
 import { claudeCode } from '@guard/harness/claude-code';
 import { grok } from '@guard/harness/grok';

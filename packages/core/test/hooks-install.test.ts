@@ -7,13 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CliUsageError } from '../src/errors.ts';
 import { parseConfig } from '../src/cli/config.ts';
-import {
-  planInstall,
-  presetToggles,
-  runHooks,
-  SNIPPET_END_MD,
-  SNIPPET_START_MD,
-} from '../src/cli/hooks.ts';
+import { runHooks } from '../src/cli/hooks.ts';
+import { presetToggles } from '../src/cli/installed.ts';
+import { planInstall } from '../src/harness/plan.ts';
+import { SNIPPET_END_MD, SNIPPET_START_MD } from '../src/harness/snippet.ts';
 import { harnessById } from '../src/harness/registry.ts';
 import type { SmeltInvocation } from '../src/hooks/invocation.ts';
 import { runInit } from '../src/cli/init.ts';

@@ -12,7 +12,7 @@ import { parseScope, parseToggle } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
 import type { InstallScope } from '../../harness/scope.ts';
-import type { ToggleFlags } from '../hooks.ts';
+import type { ToggleFlags } from '../installed.ts';
 
 /**
  * `smelt hooks install` / `smelt hooks remove` — the harness-hooks installer's front

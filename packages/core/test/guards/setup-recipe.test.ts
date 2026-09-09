@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { SETUP_RECIPE, SETUP_STEPS } from '@guard/setup/recipe';
-import { DEFAULT_STORE_DIR } from '@guard/cli/hooks';
+import { DEFAULT_STORE_DIR } from '@guard/harness/plan';
 import type { GuardMutation } from './_mutations.ts';
 import { guardRoot, packageRoot, repoRoot } from './_source.ts';
 

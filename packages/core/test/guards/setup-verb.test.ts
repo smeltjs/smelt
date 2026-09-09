@@ -519,7 +519,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-writes-a-whole-file-that-is-not-ours',
-    file: 'cli/hooks.ts',
+    file: 'cli/merge-policy.ts',
     find: '  return fileIsOursToRepair(file);',
     replace: '  return true;',
     why: "the merge policy's one refusal wired shut — a run with nobody to ask would write smelt's own bytes over a file it does not own and cannot merge into (somebody's opencode plugin, Cline's hook wrapper), which is the single act the whole policy exists to prevent",
@@ -527,7 +527,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-stops-repairing-its-own-blocks',
-    file: 'cli/hooks.ts',
+    file: 'cli/merge-policy.ts',
     find: "  return fileIsOurs(file.name, readFileSync(file.path, 'utf8'));",
     replace: '  return false;',
     why: 'setup treating its own instruction blocks as foreign — doctor would name them behind forever and the repair it names would skip them, the update loop this whole arc exists to close, quietly not closing',
@@ -535,7 +535,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'setup-claims-to-skip-while-touched',
-    file: 'cli/hooks.ts',
+    file: 'cli/merge-policy.ts',
     find: "        action: 'skipped',",
     replace: "        action: 'written',",
     why: 'the receipt claiming a skipped file was written — the receipt is what an agent reads to verify the run, and a receipt that lies is worse than no receipt',

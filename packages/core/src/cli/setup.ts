@@ -4,17 +4,13 @@ import { basename, dirname, join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
 import { DEFAULT_THRESHOLD_BYTES } from '../hooks/guard-core.ts';
-import {
-  applyPlanFiles,
-  detectedHarnesses,
-  planInstall,
-  presetToggles,
-  renderConfigWithHooks,
-  withToggleFlags,
-} from './hooks.ts';
+import { detectedHarnesses, planInstall, renderConfigWithHooks } from '../harness/plan.ts';
+import type { HooksChoices, ManualStep } from '../harness/plan.ts';
+import { applyPlanFiles } from './merge-policy.ts';
+import { presetToggles, withToggleFlags } from './installed.ts';
+import type { ToggleFlags } from './installed.ts';
 import { confirmLoop, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
 import type { Ask, Step } from './wizard.ts';
-import type { HooksChoices, ManualStep, ToggleFlags } from './hooks.ts';
 import {
   CONFIG_FILE_NAME,
   CONFIG_VERSION,
@@ -52,7 +48,7 @@ import { lavaBanner } from './lava.ts';
  *     defaults, read the same way `smelt hooks install` reads them.
  *   - interactive asks four questions, each with an Enter default, then confirms.
  *
- * The one hard rule is the merge policy `cli/hooks.ts` owns and both verbs apply
+ * The one hard rule is the merge policy `cli/merge-policy.ts` owns and both verbs apply
  * (`Consent`): an existing file is **merged**, never overwritten — every byte that is
  * not smelt's own rides through — and a file smelt would write *whole* is left alone
  * unless it is already smelt's, reported skipped with a reason naming it.
@@ -583,7 +579,7 @@ async function applySetup(choices: SetupChoices, io: SetupIo): Promise<ApplyOutc
   const plan = hooks === undefined ? undefined : planInstall(io.cwd, hooks);
   if (plan !== undefined) {
     // One merge policy, one apply loop, shared with `smelt hooks install` — see
-    // `Consent` in cli/hooks.ts. Setup has nobody to ask, so it consents by policy:
+    // `Consent` in cli/merge-policy.ts. Setup has nobody to ask; it consents by policy:
     // a file whose planned content was merged out of the existing bytes is written
     // (nothing of anybody's is lost), and one smelt would write *whole* is refused
     // unless it is already ours.

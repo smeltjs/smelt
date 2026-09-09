@@ -284,7 +284,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'yes-overwrites-foreign-entry',
-    file: 'cli/hooks.ts',
+    file: 'harness/plan.ts',
     find: '    const foreign = existing.filter((entry) => !isOursEntry(entry));',
     replace: '    const foreign: unknown[] = [];',
     why: "the merge dropping every entry that is not smelt's — a non-interactive install would delete the hooks somebody else's tool wired, under a managed event, with the receipt reporting a clean write",
@@ -292,7 +292,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     kind: 'src',
     id: 'yes-skips-existing',
-    file: 'cli/hooks.ts',
+    file: 'cli/merge-policy.ts',
     find: "  if (file.ownership === 'merged') return true;",
     replace: "  if (file.ownership === 'merged') return false;",
     why: 'the merge policy refusing every existing file instead of merging it — the safe-looking break: `--yes` exits 0 having written nothing into the file that matters, so the one command an agent can drive cannot finish the install it started',

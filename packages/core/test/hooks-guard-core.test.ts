@@ -20,7 +20,7 @@ import {
 import type { GuardSettings } from '../src/hooks/guard-core.ts';
 import type { InvocationFs } from '../src/hooks/invocation.ts';
 import { parseConfig } from '../src/cli/config.ts';
-import { renderConfigWithHooks } from '../src/cli/hooks.ts';
+import { renderConfigWithHooks } from '../src/harness/plan.ts';
 import { packageRoot } from './guards/_source.ts';
 import { envWithoutSmelt, envWithSmeltOnPath } from './hooks-fixtures.ts';
 

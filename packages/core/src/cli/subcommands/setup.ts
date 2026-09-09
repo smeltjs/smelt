@@ -12,7 +12,7 @@ import { parseScope, parseToggle } from './flags.ts';
 import type { FlagValues } from './flags.ts';
 import type { Subcommand } from './subcommand.ts';
 import type { InstallScope } from '../../harness/scope.ts';
-import type { ToggleFlags } from '../hooks.ts';
+import type { ToggleFlags } from '../installed.ts';
 
 /**
  * `smelt setup` — the one-command front door for the whole recipe. The flow itself is

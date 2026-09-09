@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // copy of `src` and watch it go red. See scripts/mutate.mjs.
 import { isMainModule } from '@guard/hooks/guard-core';
 import { pathStability, stableScriptPath } from '@guard/hooks/invocation';
-import { planInstall } from '@guard/cli/hooks';
+import { planInstall } from '@guard/harness/plan';
 import { harnessById } from '@guard/harness/registry';
 import type { InvocationFs } from '@guard/hooks/invocation';
 
@@ -182,7 +182,7 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     id: 'invocation-stability-judged-on-the-value',
-    file: 'cli/hooks.ts',
+    file: 'harness/plan.ts',
     find: '    if (stability.stable || said.has(stability.why)) continue;',
     replace: '    if (invocation.stable || said.has(stability.why)) continue;',
     why: 'the unstable-path warning taken from the invocation value instead of the script actually written — the value is stable whenever `smelt` is on PATH, so a keg with a broken opt alias writes the guard hook (the security-relevant one) as a bare Cellar path and says nothing about it',

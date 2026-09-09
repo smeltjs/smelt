@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 // copy of `src` and watch it go red. See scripts/mutate.mjs.
 import { CONFIG_VERSION, parseConfig, renderConfig } from '@guard/cli/config';
 import type { SmeltConfig } from '@guard/cli/config';
-import { renderConfigWithHooks } from '@guard/cli/hooks';
+import { renderConfigWithHooks } from '@guard/harness/plan';
 import { resolveRun } from '@guard/cli/subcommands/smelt';
 import { LEXICAL_PLANNER_ID } from '@guard/plan/lexical';
 import { DEFAULT_STRATEGY, isStrategy, PLANNERS } from '@guard/plan/planners';

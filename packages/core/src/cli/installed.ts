@@ -4,10 +4,23 @@ import { join } from 'node:path';
 
 import { CONFIG_FILE_NAME, findConfigFile, parseConfig } from './config.ts';
 import type { SmeltConfig } from './config.ts';
-import { jsonHooksContainOurs, parseHookEntries } from '../harness/hook-command.ts';
-import type { HookEntry } from '../harness/hook-command.ts';
+import {
+  hookEntryCommands,
+  isOursEntry,
+  jsonHooksContainOurs,
+  parseHookCommand,
+  parseHookEntries,
+} from '../harness/hook-command.ts';
+import type { HookCommand, HookEntry } from '../harness/hook-command.ts';
 import type { HarnessInstallStep, HarnessProfile } from '../harness/profile.ts';
-import { HARNESS_PROFILES, JSON_HOOK_FILE_NAMES } from '../harness/registry.ts';
+import {
+  GUARD_EVENTS,
+  HARNESS_PROFILES,
+  HARNESSES,
+  JSON_HOOK_FILE_NAMES,
+  LIFECYCLE_EVENTS,
+  MANAGED_EVENTS,
+} from '../harness/registry.ts';
 import { instructionArtefact, locateStep } from '../harness/scope.ts';
 import type { InstallScope, ScopeRoots } from '../harness/scope.ts';
 import { OURS_TOKEN, SNIPPET_START_MD, snippetStampVersion } from '../harness/snippet.ts';
@@ -236,6 +249,11 @@ export function readInstalledState(
   return { blocks, hookFiles, hooks, mcp: [...mcp.values()], config };
 }
 
+/** A file's text when it is there, `undefined` when it is not. */
+function readIfExists(path: string): string | undefined {
+  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+}
+
 /** A path when it exists, `undefined` when it does not — the config's own presence. */
 function existingOrUndefined(path: string): string | undefined {
   return existsSync(path) ? path : undefined;
@@ -259,4 +277,141 @@ function mcpEntryRegistered(full: string, path: readonly [string, string]): bool
 function tomlMcpEntryRegistered(full: string, path: readonly [string, string]): boolean {
   if (!existsSync(full)) return false;
   return hasTomlEntry(readFileSync(full, 'utf8'), path);
+}
+
+/* ------------------------------------------------------------------------------------
+ * The four toggles, as installed
+ * ---------------------------------------------------------------------------------- */
+
+/** The four toggles this preset installs, as a value. */
+export interface PresetToggles {
+  readonly guard: boolean;
+  readonly statsOnStop: boolean;
+  readonly mapOnStart: boolean;
+  readonly lintOnStart: boolean;
+}
+
+/**
+ * The same four, as *flags* answered them: absent means "not named", which is a third
+ * answer beside on and off — the install's own current state, read off disk.
+ */
+export type ToggleFlags = { readonly [K in keyof PresetToggles]?: boolean };
+
+/**
+ * The toggles a run installs: the wizard's defaults, overridden by whatever is
+ * already installed for these harnesses, overridden by the flags. One derivation,
+ * because `smelt setup --yes --map on` and `smelt hooks install --yes --map on` must
+ * wire the same hook — and because a re-run that reset a toggle the user had set is
+ * the toggle reader's standing failure mode, one layer up.
+ */
+export function withToggleFlags(base: PresetToggles, flags: ToggleFlags): PresetToggles {
+  return {
+    guard: flags.guard ?? base.guard,
+    statsOnStop: flags.statsOnStop ?? base.statsOnStop,
+    mapOnStart: flags.mapOnStart ?? base.mapOnStart,
+    lintOnStart: flags.lintOnStart ?? base.lintOnStart,
+  };
+}
+
+/**
+ * A re-run reads the toggles back off what is actually installed — every JSON hook
+ * file this installer writes, plus the guard-only shim files, both derived from the
+ * registry — so it edits instead of resetting. Harnesses that only wire the guard
+ * (gemini, grok, cursor, hermes, opencode, cline) persist no stats/map entries, so
+ * after a re-run scoped to them those toggles read back as off; the defaults below
+ * apply only when nothing of smelt's is installed at all.
+ *
+ * The two `SessionStart` toggles share one event, so they are told apart by **the
+ * command each entry runs**, not by the key it sits under. Reading `SessionStart` as
+ * one boolean would make a re-run with the map on and the lint off write both back —
+ * or neither — which is a toggle the user believed they had set.
+ *
+ * Exported for `smelt setup`, which applies the preset's *current* state the same way
+ * — read off what is installed — rather than keeping a second copy of the defaults.
+ */
+export function presetToggles(
+  cwd: string,
+  where: { readonly scope?: InstallScope; readonly home?: string } = {},
+): PresetToggles {
+  const defaults = { guard: true, statsOnStop: true, mapOnStart: false, lintOnStart: false };
+  let anyOurs = false;
+  let guard = false;
+  let statsOnStop = false;
+  let mapOnStart = false;
+  let lintOnStart = false;
+
+  const scope: InstallScope = where.scope ?? 'project';
+  const home = where.home ?? homedir();
+  // The files to read are derived from the registry through the same resolver the
+  // installer wrote them with — never from a second list of names, which at user scope
+  // would be the project spellings and would read every toggle back as off.
+  const installedFiles = (kind: 'json-hooks' | 'guard-only'): readonly string[] => {
+    const paths = new Set<string>();
+    for (const profile of HARNESSES) {
+      const roots: ScopeRoots = { cwd, home, harness: profile.name };
+      for (const step of profile.install) {
+        const wanted =
+          kind === 'json-hooks'
+            ? step.kind === 'json-hooks'
+            : step.kind === 'own-file' && step.guardOnly;
+        if (!wanted) continue;
+        const located = locateStep(step, scope, roots);
+        if (located.path !== undefined && located.manual === undefined) paths.add(located.path);
+      }
+    }
+    return [...paths];
+  };
+
+  for (const path of installedFiles('json-hooks')) {
+    const text = readIfExists(path);
+    if (text === undefined) continue;
+    let hooks: Record<string, unknown> | undefined;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      const hooksValue =
+        typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)['hooks']
+          : undefined;
+      hooks =
+        typeof hooksValue === 'object' && hooksValue !== null && !Array.isArray(hooksValue)
+          ? (hooksValue as Record<string, unknown>)
+          : undefined;
+    } catch {
+      hooks = undefined;
+    }
+    if (hooks === undefined) continue;
+    const installed = hooks;
+    const oursUnder = (event: string): readonly unknown[] =>
+      Array.isArray(installed[event])
+        ? (installed[event] as unknown[]).filter((entry) => isOursEntry(entry))
+        : [];
+    const hasOurs = (event: string): boolean => oursUnder(event).length > 0;
+    /**
+     * One of ours under `event` that runs this kind of command. Read through the
+     * parser, not through a substring: `map` and `lint` share the `SessionStart` key,
+     * so what tells them apart is the command each entry runs — and the two spellings
+     * that command can take (`smelt map .` and `node "<bin>" map .`) are exactly what
+     * one recogniser owning both directions exists to keep straight.
+     */
+    const hasOursRunning = (event: string, kind: HookCommand['kind']): boolean =>
+      oursUnder(event).some((entry) =>
+        hookEntryCommands(entry).some((command) => parseHookCommand(command)?.kind === kind),
+      );
+    if (!MANAGED_EVENTS.some((event) => hasOurs(event))) continue;
+    anyOurs = true;
+    guard ||= GUARD_EVENTS.some((event) => hasOurs(event));
+    statsOnStop ||= hasOurs(LIFECYCLE_EVENTS.stats);
+    mapOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.map, 'map');
+    lintOnStart ||= hasOursRunning(LIFECYCLE_EVENTS.lint, 'lint');
+  }
+
+  for (const path of installedFiles('guard-only')) {
+    const text = readIfExists(path);
+    if (text !== undefined && text.includes(OURS_TOKEN)) {
+      anyOurs = true;
+      guard = true;
+    }
+  }
+
+  return anyOurs ? { guard, statsOnStop, mapOnStart, lintOnStart } : defaults;
 }
