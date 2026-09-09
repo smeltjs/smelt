@@ -660,6 +660,14 @@ export interface PruneReportInput {
   readonly storePath: string;
   /** The cut-off the user typed — `30d`, echoed rather than re-derived from a Date. */
   readonly olderThan: string;
+  /**
+   * Which spelling of the cut-off this run used: `'flag'` for `--older-than`,
+   * `'config'` for `store.retention.olderThan`. A receipt for a deletion answers "who
+   * chose this number" as well as "what went", and the two answers look identical on
+   * the command line — the header says which, so a prune that took more than expected
+   * can be traced to the file that said so.
+   */
+  readonly olderThanSource: 'flag' | 'config';
   /** Whether `--keep-retrieved` was in force, so the report can say what spared a blob. */
   readonly keepRetrieved: boolean;
 }
@@ -678,14 +686,16 @@ export interface PruneReportInput {
  * hashes will say.
  */
 export function formatPruneReport(
-  { report, storePath, olderThan, keepRetrieved }: PruneReportInput,
+  { report, storePath, olderThan, olderThanSource, keepRetrieved }: PruneReportInput,
   lava: Palette = PLAIN,
 ): string {
   const lines: string[] = [];
   lines.push(
     `${lava.paint('brand', `${CLI_NAME} store prune`)}${report.dryRun ? ' --dry-run' : ''}  ` +
       `${lava.paint('path', storePath)}  ` +
-      `older than ${olderThan}${keepRetrieved ? ', keeping retrieved' : ''}`,
+      `older than ${olderThan}` +
+      `${olderThanSource === 'config' ? ` (${CONFIG_FILE_NAME}: store.retention)` : ''}` +
+      `${keepRetrieved ? ', keeping retrieved' : ''}`,
   );
   lines.push(
     `scanned ${count(report.scanned, 'blob')}  ` +

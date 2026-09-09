@@ -36,6 +36,20 @@ function directoryStoreCwd(): { cwd: string; storePath: string } {
   return { cwd, storePath: join(cwd, '.smelt-store') };
 }
 
+/** A scratch cwd whose config also writes down the age a prune should cut at. */
+function retentionCwd(retention: Record<string, unknown>): { cwd: string; storePath: string } {
+  const cwd = mkdtempSync(join(tmpdir(), 'smelt-cli-prune-ret-'));
+  cwds.push(cwd);
+  writeFileSync(
+    join(cwd, 'smelt.config.json'),
+    `${JSON.stringify({
+      smeltConfig: 1,
+      store: { kind: 'directory', path: '.smelt-store', retention },
+    })}\n`,
+  );
+  return { cwd, storePath: join(cwd, '.smelt-store') };
+}
+
 /** A scratch cwd whose config names a memory store — the one prune must refuse. */
 function memoryStoreCwd(): string {
   const cwd = mkdtempSync(join(tmpdir(), 'smelt-cli-prune-mem-'));
@@ -189,11 +203,14 @@ describe('smelt store refuses what it cannot honestly do', () => {
     expect(wrong.stderr).toContain('"clear" is not it');
   });
 
-  it('needs --older-than, and says why there is no default', async () => {
+  it('needs an age from somewhere, and names both places it can be written', async () => {
     const { cwd } = directoryStoreCwd();
     const { code, stderr } = await run(['store', 'prune'], cwd);
     expect(code).toBe(EXIT.usage);
-    expect(stderr).toContain('needs --older-than');
+    // Both spellings, because with neither present the user has two ways to fix it and
+    // the refusal that named only one used to send them back for the other.
+    expect(stderr).toContain('--older-than');
+    expect(stderr).toContain('store.retention');
     expect(stderr).toContain('stop being reversible');
     expect(stderr).toContain('<n>d, <n>h or <n>w');
   });
@@ -278,6 +295,97 @@ describe('smelt store refuses what it cannot honestly do', () => {
     expect(stderr).toContain('needs a persistent store');
     // And it created nothing while refusing.
     expect(readdirSync(cwd)).toEqual([]);
+  });
+});
+
+describe('store.retention is the cut-off written down, and the flag still wins', () => {
+  it('prunes at the configured age when no flag was typed, and says where it came from', async () => {
+    const { cwd, storePath } = retentionCwd({ olderThan: '7d' });
+    const old = agedBlob(storePath, 'bytes elided a month ago', 30);
+    const fresh = agedBlob(storePath, 'bytes elided today', 0);
+
+    const { code, stdout } = await run(['store', 'prune'], cwd);
+    expect(code).toBe(EXIT.ok);
+    expect(stdout).toContain('older than 7d');
+    // The receipt names the file, because a prune that took more than expected has to
+    // be traceable to whichever of the two spellings chose the number.
+    expect(stdout).toContain('smelt.config.json: store.retention');
+    expect(stdout).toContain(old);
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([fresh]);
+  });
+
+  it('carries the provenance in the envelope too', async () => {
+    const { cwd, storePath } = retentionCwd({ olderThan: '7d' });
+    agedBlob(storePath, 'bytes elided a month ago', 30);
+
+    const { stdout } = await run(['store', 'prune', '--json'], cwd);
+    const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
+    expect(envelope.olderThan).toBe('7d');
+    expect(envelope.olderThanSource).toBe('config');
+  });
+
+  it('lets --older-than override the configured age, and says the flag won', async () => {
+    const { cwd, storePath } = retentionCwd({ olderThan: '1d' });
+    const old = agedBlob(storePath, 'a fortnight old', 14);
+
+    const { stdout } = await run(['store', 'prune', '--older-than', '365d', '--json'], cwd);
+    const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
+    expect(envelope.olderThan).toBe('365d');
+    expect(envelope.olderThanSource).toBe('flag');
+    // The configured 1d would have taken it. The flag the user typed did not.
+    expect(envelope.prune.evicted).toEqual([]);
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([old]);
+  });
+
+  it('spares retrieved hashes when the config says so, without the flag', async () => {
+    const { cwd, storePath } = retentionCwd({ olderThan: '1d', keepRetrieved: true });
+    const asked = agedBlob(storePath, 'bytes retrieved once', 30);
+    const ignored = agedBlob(storePath, 'bytes nobody wanted', 30);
+    expect((await run(['retrieve', asked], cwd)).code).toBe(EXIT.ok);
+
+    const { stdout } = await run(['store', 'prune', '--json'], cwd);
+    const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
+    expect(envelope.keepRetrieved).toBe(true);
+    expect(envelope.prune.evicted.map((one) => one.hash)).toEqual([ignored]);
+  });
+
+  it('keeps sparing when the flag supplies the age and the config supplies the mercy', async () => {
+    // `--keep-retrieved` has no negative spelling, so the two are OR-ed: typing an age
+    // must not silently delete more than the written-down policy asked for.
+    const { cwd, storePath } = retentionCwd({ olderThan: '365d', keepRetrieved: true });
+    const asked = agedBlob(storePath, 'bytes retrieved once', 30);
+    const ignored = agedBlob(storePath, 'bytes nobody wanted', 30);
+    expect((await run(['retrieve', asked], cwd)).code).toBe(EXIT.ok);
+
+    const { stdout } = await run(['store', 'prune', '--older-than', '1d', '--json'], cwd);
+    const envelope = JSON.parse(stdout) as CliPruneJsonEnvelope;
+    expect(envelope.olderThanSource).toBe('flag');
+    expect(envelope.keepRetrieved).toBe(true);
+    expect(envelope.prune.evicted.map((one) => one.hash)).toEqual([ignored]);
+  });
+
+  it('still refuses a memory store, retention or no retention', async () => {
+    const cwd = memoryStoreCwd();
+    const { code, stderr } = await run(['store', 'prune'], cwd);
+    expect(code).toBe(EXIT.usage);
+    expect(stderr).toContain('store prune needs a persistent store');
+  });
+
+  it('changes nothing about what runs on its own: a written-down age prunes nothing', async () => {
+    // The whole doctrine in one test. A config with a retention, a store full of
+    // ancient blobs, and every other verb in the CLI run over it — nothing goes until
+    // somebody types the verb.
+    const { cwd, storePath } = retentionCwd({ olderThan: '1h' });
+    const ancient = agedBlob(storePath, 'a blob from a year ago', 365);
+
+    await run(['stats'], cwd);
+    await run(['retrieve', ancient], cwd);
+    await run(['doctor'], cwd);
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([ancient]);
+
+    const { code } = await run(['store', 'prune'], cwd);
+    expect(code).toBe(EXIT.ok);
+    expect(readdirSync(join(storePath, 'blobs'))).toEqual([]);
   });
 });
 

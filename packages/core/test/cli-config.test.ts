@@ -156,6 +156,31 @@ describe('a malformed config is a usage error, never silently ignored', () => {
       { smeltConfig: 1, store: { kind: 'cloud' } },
       { smeltConfig: 1, store: { kind: 'directory' } },
       { smeltConfig: 1, store: { kind: 'memory', path: 'x' } },
+      { smeltConfig: 1, store: { kind: 'memory', retention: { olderThan: '30d' } } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: {} } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: { olderThan: '30' } } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: { olderThan: '0d' } } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: { olderThan: '30m' } } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: { olderThan: '' } } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: { olderThan: 30 } } },
+      {
+        smeltConfig: 1,
+        store: { kind: 'directory', path: 's', retention: { olderThan: '200000000d' } },
+      },
+      {
+        smeltConfig: 1,
+        store: { kind: 'directory', path: 's', retention: { olderThan: '30d', keep: true } },
+      },
+      {
+        smeltConfig: 1,
+        store: {
+          kind: 'directory',
+          path: 's',
+          retention: { olderThan: '30d', keepRetrieved: 'yes' },
+        },
+      },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: 'forever' } },
+      { smeltConfig: 1, store: { kind: 'directory', path: 's', retention: [] } },
       { smeltConfig: 1, rerank: { kind: 'psychic' } },
       { smeltConfig: 1, rerank: { kind: 'module' } },
       { smeltConfig: 1, rerank: { kind: 'module', path: '' } },
@@ -184,6 +209,94 @@ describe('a malformed config is a usage error, never silently ignored', () => {
     expect(stderr).toMatch(/--budget is required/);
     expect(stderr).toContain('defaultBudgetBytes');
     expect(stderr).toContain('smelt init');
+  });
+});
+
+describe('store.retention — a written-down cut-off, never a schedule', () => {
+  /**
+   * The key that supplies `smelt store prune`'s number when the user did not type one.
+   * What is pinned here is the parse: the age is held to the same grammar the flag is,
+   * an absent block is absent rather than a default, and a retention on a memory store
+   * is refused rather than accepted as a setting that can never apply.
+   */
+
+  it('parses the block and defaults nothing it was not given', () => {
+    const parsed = parseConfig(
+      JSON.stringify({
+        smeltConfig: 1,
+        store: { kind: 'directory', path: '.smelt/store', retention: { olderThan: '30d' } },
+      }),
+      'x.json',
+    );
+    expect(parsed.store).toStrictEqual({
+      kind: 'directory',
+      path: '.smelt/store',
+      retention: { olderThan: '30d' },
+    });
+  });
+
+  it('carries keepRetrieved when it is written down', () => {
+    const parsed = parseConfig(
+      JSON.stringify({
+        smeltConfig: 1,
+        store: {
+          kind: 'directory',
+          path: 's',
+          retention: { olderThan: '2w', keepRetrieved: true },
+        },
+      }),
+      'x.json',
+    );
+    expect(parsed.store).toStrictEqual({
+      kind: 'directory',
+      path: 's',
+      retention: { olderThan: '2w', keepRetrieved: true },
+    });
+  });
+
+  it('holds the age to the same grammar the flag is held to', () => {
+    for (const age of ['30d', '12h', '2w', '1h']) {
+      expect(() =>
+        parseConfig(
+          JSON.stringify({
+            smeltConfig: 1,
+            store: { kind: 'directory', path: 's', retention: { olderThan: age } },
+          }),
+          'x.json',
+        ),
+      ).not.toThrow();
+    }
+    // And the refusal shows that grammar, exactly as `--older-than` does — one
+    // spelling of "how old is old enough", refused the same way in both places.
+    expect(() =>
+      parseConfig(
+        JSON.stringify({
+          smeltConfig: 1,
+          store: { kind: 'directory', path: 's', retention: { olderThan: '30 days' } },
+        }),
+        'x.json',
+      ),
+    ).toThrow(/<n>d, <n>h or <n>w/);
+  });
+
+  it('refuses a retention on a memory store rather than keeping a setting that cannot apply', () => {
+    expect(() =>
+      parseConfig(
+        JSON.stringify({
+          smeltConfig: 1,
+          store: { kind: 'memory', retention: { olderThan: '30d' } },
+        }),
+        'x.json',
+      ),
+    ).toThrow(/"memory" takes no other keys/);
+  });
+
+  it('leaves the store shape alone when no retention is written', () => {
+    const parsed = parseConfig(
+      JSON.stringify({ smeltConfig: 1, store: { kind: 'directory', path: 's' } }),
+      'x.json',
+    );
+    expect(parsed.store).toStrictEqual({ kind: 'directory', path: 's' });
   });
 });
 

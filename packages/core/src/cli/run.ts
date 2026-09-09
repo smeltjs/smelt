@@ -54,7 +54,7 @@ export type { ResolvedStoreRun } from './subcommands/retrieve.ts';
 export { CLI_STATS_JSON_FORMAT } from './subcommands/stats.ts';
 export type { CliStatsJsonEnvelope } from './subcommands/stats.ts';
 export { CLI_PRUNE_JSON_FORMAT } from './subcommands/store.ts';
-export type { CliPruneJsonEnvelope, StoreInvocation } from './subcommands/store.ts';
+export type { CliPruneJsonEnvelope, CutoffSource, StoreInvocation } from './subcommands/store.ts';
 export { CLI_AGENTS_JSON_FORMAT, resolveAgentsRun } from './subcommands/agents.ts';
 export type { CliAgentsJsonEnvelope, ResolvedAgentsRun } from './subcommands/agents.ts';
 

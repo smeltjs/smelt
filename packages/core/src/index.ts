@@ -72,6 +72,8 @@ export type {
   PruneOptions,
   PruneReport,
 } from './store-dir.ts';
+export { CUTOFF_HELP, readCutoff } from './store-cutoff.ts';
+export type { CutoffReading } from './store-cutoff.ts';
 export * from './types.ts';
 export {
   CLI_JSON_FORMAT,
@@ -138,6 +140,7 @@ export type {
   LoadedConfig,
   SmeltConfig,
   SmeltConfigRerank,
+  SmeltConfigRetention,
   SmeltConfigStore,
 } from './config.ts';
 export {
