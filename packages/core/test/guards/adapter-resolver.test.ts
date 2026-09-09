@@ -122,12 +122,19 @@ describe('an opt-in adapter is looked for where the consumer could have installe
 
     expect(missing.found).toBe(false);
     if (missing.found) return;
-    for (const named of [configDir, missing.ownDir, missing.install]) {
+    expect(missing.why).toContain(missing.install);
+    // Both directories must be named as places that were *searched*, which is not the
+    // same as appearing anywhere in the sentence: the install command carries the
+    // config directory inside it, so a message that dropped "smelt looked beside …"
+    // would still mention that path. The command is cut out before the check, so what
+    // is left is the part that actually says where smelt looked.
+    const places = missing.why.split(missing.install).join('');
+    for (const named of [configDir, missing.ownDir]) {
       expect(
-        missing.why,
-        'the refusal does not name every place smelt looked and the command that fixes ' +
-          'it. A refusal naming one directory is how a user installs into the wrong one ' +
-          'and is refused again for the same reason.',
+        places,
+        'the refusal does not say it looked in every place it looked. A refusal naming ' +
+          'one directory is how a user installs into the wrong one and is refused ' +
+          'again for the same reason.',
       ).toContain(named);
     }
   });

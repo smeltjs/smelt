@@ -825,46 +825,42 @@ name. Every failure is a refusal that names what is missing — the path, the `t
 kind needs, the environment variable, the uninstalled package — never a quiet fall back
 to an unranked run.
 
+**Install the adapter beside the config that asks for it.** smelt looks in the directory
+holding your `smelt.config.json` first and in its own install second, so a `~/smelt.config.json`
+works with a `smelt` from Homebrew or `npm -g` — install into the directory that owns the
+config:
+
+```sh
+npm install --prefix ~ @smeltjs/rerank-voyage    # for ~/smelt.config.json
+npm install @smeltjs/rerank-voyage               # for a config at your project root
+```
+
+If it is in neither place, the refusal names both of them and the exact command for
+yours.
+
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
 returns is spared** from the cut — a selection, not a ranking of everything, so apply your
-own cut-off (`topK`, a `.slice`). It can only spare, never cut, so the worst a bad answer
-can do is cost you bytes.
-
-**And it spares only as far as your budget reaches.** The list you return is also an
-_order_: smelt walks it best score first and spares while the output still fits the budget
-you asked for, stopping at the first region that would not. So the head of your list is
-what survives a tight run, and `topK` is a **cap** rather than a quantity — smelt never
-fills it, and if the best-ranked region alone would break the budget, nothing is spared at
-all. A plan that fits beats a plan that does not, and a reranker cannot cut, so the only
-lever left is not sparing. The rule in one line: a K smelt invents is refused; a budget you
-typed is honoured.
-
-Stopping is deliberate rather than packing: a lower-ranked region might have fitted in the
-headroom left behind, and taking it would re-rank your answer by size instead of by
-relevance. What you get back is a **prefix of your own ranking**, which is the version you
-can reconstruct from the report. And if the planner could not meet your budget in the first
-place, your reranker is **not called at all** — nothing could have been spared, so nothing
-of your source is sent anywhere to find that out; the report line says so.
+own cut-off (`topK`, a `.slice`). Returning all of them keeps all of them, and the run
+emits its input unchanged. It can only spare, never cut, so the worst a bad answer can do
+is cost you bytes — and bytes are already reported, including when a reranker turns an
+in-budget run into an over-budget one.
 
 A stage that throws — a timeout, a 401, a stub you have not filled in — is reported as the
 refusal it is (`RerankStageError`, the CLI's refused exit code, an `isError` result from
 `smelt_file`), never as a crash in smelt.
 
 Every run that reranks says so, on a line of its own beneath the focus line — this is its
-shape, not a measurement; every count is tallied per run and never estimated:
+shape, not a measurement; the two counts are tallied per run and never estimated:
 
 ```
-rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept, <bytes> B back)
-rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept, <bytes> B back)   stopped at the budget: the stage offered <returned>
+rerank  voyage/rerank-2.5  (<candidates> candidates, <kept> kept)
 ```
 
-The second shape is the one to read closely: your `topK` came back with more regions than
-the budget could afford, and the clause says so rather than leaving a number smaller than
-the one you configured with no explanation beside it. The same facts ride in the `--json`
-envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
-and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
-set — presence only, never the value.
+The same three facts ride in the `--json` envelope (`result.rerank`) and in
+`smelt_file`'s report block, and `smelt doctor` says whether your key variable is set and
+where the adapter resolved from (`adapter from config dir`, `adapter from smelt's own
+install`, or `adapter not installed:` with the command) — presence only, never the value.
 
 Writing your own stage is unchanged:
 
@@ -1105,11 +1101,6 @@ separate package installed by hand. The environment variable read is the one you
 names — there is no key smelt reads that you did not write down. A stage may only spare
 regions from the cut, never cut more, and a stage that throws is reported as the refusal
 it is, never as a quiet unranked run.
-
-`topK` is a cap under the budget, not a quantity: smelt walks what the stage returns
-best score first and spares while the output still fits the budget, so a `topK` of 8 can
-come back as 3 kept. The report line names the wall the walk hit, and the `--json`
-receipt carries it as `result.rerank.stopped` (`budget`, `cap` or `exhausted`).
 
 ## MCP
 
@@ -1450,9 +1441,8 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   produced. The escalation is stated where every consumer of a plan already reads a
   rule from — the CLI report's rule column, the `--json` envelope, the per-rule
   ledger — never inferred from which pass happened to run. The lexical planner's
-  context ladder is the sibling of this idea, the **Rerank budget rung** is the third
-  reader of the same question, and `src/plan/budget.ts` is the arithmetic all three
-  share.
+  context ladder is the sibling of this idea, and `src/plan/budget.ts` is the
+  arithmetic they share.
 - **Unit** (structural, `unitsOf` in `src/plan/structural.ts`): one root-level sibling
   the structural planner can match or collapse — a top-level declaration plus its
   attached comment/attribute prefix. **Root children only, one level, a stated
@@ -1530,56 +1520,22 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
 - **Rerank slot**: where a `RerankStage` actually bites — `src/rerank/protect.ts`,
   between the planner's decision and the cut. The **candidates** are the planner's own
   proposed elisions (the regions actually at stake), the **query** is the run's focus
-  terms joined, and **what the stage returns is what smelt spares** — as far as the
-  budget reaches: those entries are dropped from the plan, so they survive into the
-  output as if a focus term had matched them. The returned list is a _selection_ and a
-  _ranking_: not everything the stage was given, and ordered, because the slot walks it
-  score-descending (ties in the order the candidates were sent) and stops at the first
-  region that would push the predicted output past `budgetBytes`. A stage can only spare,
-  never add, and it can no longer spend past the ceiling — a plan that fitted still fits.
-  See the **Rerank budget rung** below for the ruling. No candidates, no query, or a plan
-  whose own predicted output is already over budget, and the stage is not called at all —
-  the last of those because a plan that does not fit affords no spare, so asking would
-  send the caller's source to a third party for an answer refused before it arrived.
-  Every way a stage can fail — including throwing, which a hosted one ordinarily does, and
-  scoring an entry with something that is not a finite number — comes back as a
-  `RerankStageError`, never as an unhandled crash. What it did comes back as a **RerankAttribution**
-  (`{adapter, model?, candidates, returned?, kept?, sparedBytes?, stopped?, skipped?}`)
-  on `SmeltResult`, which the stderr report, the `--json` envelope and
+  terms joined, and **what the stage returns is what smelt spares**: those entries are
+  dropped from the plan, so they survive into the output as if a focus term had matched
+  them. The returned list is a _selection_, not a ranking of everything — a stage that
+  returns every candidate spares every candidate, and the run emits its input unchanged
+  and exits 0, which is the one implementation mistake here that fails silently. A stage
+  can only spare, never add, so a run may come back **over budget**, reported in the words
+  a too-large focus window already earns. No candidates or no query and the stage is not
+  called at all; every way a stage can fail — including throwing, which a hosted one
+  ordinarily does — comes back as a `RerankStageError`, never as an unhandled crash. What
+  it did comes back as a **RerankAttribution** (`{adapter, model?, candidates, kept,
+skipped?}`) on `SmeltResult`, which the stderr report, the `--json` envelope and
   `smelt_file`'s report block all render from — one value, three surfaces, no front door
   counting anything itself. `candidates` is always the measured size of the candidate set
   and `skipped` names the missing precondition when the stage was not called, so a receipt
   never carries a count nobody took. _Avoid_: "rerank filters", "rerank cuts" — it only
   ever keeps.
-- **Rerank budget rung**: the walk inside the rerank slot that decides how many of a
-  stage's answers a run can afford — `spareWithinBudget` in `src/rerank/protect.ts`, the
-  same shape as the planners' rungs and priced by the same `src/plan/budget.ts`
-  (`predictOutputBytes`, `savingBytes`), so the slot and the planners cannot disagree
-  about what a marker costs. The doctrine, in one line: **a K smelt invents is refused; a
-  budget the user typed is honoured.** `topK` stays the **cap the caller wrote** — smelt
-  never fills it, raises it, or adds a ceiling of its own — and the budget is a ceiling
-  the caller also wrote, on the one number the library exists to control. If the
-  best-ranked region alone breaks the budget, **nothing is spared**: a plan that fits
-  beats a plan that does not, and the stage cannot cut, so the only lever left is not
-  sparing. The walk stops at the first region that does not fit rather than skipping on
-  to a smaller one — accepting that this can leave headroom a lower-ranked region would
-  have used. Packing it would re-rank the stage's answer by size (a relevance decision the
-  slot has no standing to make) and would cost the property that makes the outcome
-  readable: what smelt spares is a **prefix of the stage's own order**, so a reader with
-  the ranking and the budget can re-derive exactly which regions survived and why the next
-  one did not. When the plan is over budget before the stage is even asked, the run is a
-  **skip** (`skipped: 'plan-over-budget'`) rather than a stop: nothing ran, so nothing only
-  a run can measure is reported. Three fields report the runs that did happen, present
-  exactly when the stage ran: `returned` (how many it asked for), `sparedBytes` (what the
-  spares put back — the regions restored, less the markers that no longer land) and
-  `stopped` — `'budget'` (the next region would not fit; the only outcome where `kept` is
-  below `returned`), `'cap'` (every returned region was spared and the stage returned
-  fewer than it was offered — its own cut-off bound the run) or `'exhausted'` (the walk
-  ran off the end of the list with the budget still holding and no cut-off to blame:
-  either every candidate came back, or none did). Guarded by
-  `test/guards/rerank-budget.test.ts`. _Avoid_: calling `topK` a quantity — it is a cap;
-  calling the budget stop a cap — it is smelt's ruling, not the user's; and calling the
-  over-budget skip a stop — the stage never ran.
 - **Rerank opt-in**: the `rerank` block in `smelt.config.json` (ADR-0004), and the only
   smelt setting that can send a caller's source to a third party. Two kinds: `module`
   (an ESM file of the consumer's own, resolved against the config file, default-exporting
@@ -1588,15 +1544,39 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   config says. `loadRerankStage` (`src/rerank/load.ts`) is the one loader for both front
   doors; every failure is a usage error naming the missing thing (the path, the `topK`
   this kind requires, the environment **variable**, the uninstalled package) and never a
-  silent fall back to an unranked run. There is no `SMELT_RERANK_API_KEY` and no
-  environment variable smelt reads that a config did not name. _Avoid_: "the rerank flag"
-  (there is none), "enable reranking".
+  silent fall back to an unranked run. Where an adapter package is looked for belongs to
+  the **AdapterResolver** below, not to the loader. There is no `SMELT_RERANK_API_KEY`
+  and no environment variable smelt reads that a config did not name. _Avoid_: "the
+  rerank flag" (there is none), "enable reranking".
 - **Opt-in rerank bucket**: `OPT_IN_RERANK_PACKAGES` in `src/net/policy.ts` — adapter
   packages a config block may **load** at runtime and no smelt module may **import**.
-  The name is data here and nowhere else in `src`; `load.ts` hands it to `import()`, so
-  the Law 1 walk finds no edge, and both packages' `classify()` rule an import of it
-  **forbidden** rather than unclassified. The rule in one line: _smelt may know this
+  The name is data here and nowhere else in `src`; `resolve.ts` turns it into a `file:`
+  URL and `load.ts` hands _that_ to `import()`, so the Law 1 walk finds no edge, and
+  both packages' `classify()` rule an import of it **forbidden** rather than
+  unclassified. The rule in one line: _smelt may know this
   package's name; smelt may not depend on it._
+- **AdapterResolver**: `resolveAdapter` in `src/rerank/resolve.ts` — the one module that
+  decides **where** an opt-in adapter package is looked for. The seam is
+  `resolveAdapter(name, configPath, {ownRequire?})`, and it answers with a value rather
+  than an exception: a found adapter carries its `url` and the `from` that says which of
+  the two places answered; an unfound one carries the `configDir`, the `ownDir`, the
+  `install` command and the `why` that names all three. It owns three things. **The
+  order**: the directory holding `smelt.config.json` first (`createRequire(configPath)`,
+  so `~/node_modules` beside a user-scope config and a project's own `node_modules` are
+  one rule), smelt's own install second. **The refusal**: one message naming both places
+  tried and `npm install --prefix <configDir> <name>`, the command that puts the package
+  in the directory asked first. **The shape of the answer**: a `file:` URL, so the
+  specifier at every `import()` stays a value and the Law 1 walk still finds no edge to
+  an adapter — this is the seam that could have quietly undone the arrangement
+  `net/policy.ts` writes down, so it is guarded beside it. Why it exists: smelt resolved
+  the adapter from its own location, which for a Homebrew keg or an `npm -g` prefix is a
+  directory nobody installs into, and then named `npm install <pkg>`, which installs
+  into neither place it had searched. Both kinds use it — `voyage` with the package name
+  from `net/policy.ts`, `module` for a **bare** specifier that names no file beside the
+  config (a relative or absolute path keeps the path rule the schema promises). It is
+  asked by `smelt doctor` too, which is why it refuses without throwing: a report line,
+  not an exception. _Avoid_: "where smelt is installed" as a synonym for where an adapter is —
+  the whole point is that they are two directories.
 - **guard-kit**: the guards' shared machine — `packages/guard-kit`, test-only,
   `private: true`, never published and never more than a devDependency. It owns the
   import-graph **walker** (`walkImportGraph`, `assertNoNetwork`) that both packages'
@@ -1863,12 +1843,12 @@ See "How to prove a guard can fail" below.
 The one adapter that _does_ reach the network — `@smeltjs/rerank-voyage` — is a separate
 package a consumer installs themselves, and the rulings name it as **forbidden** rather
 than merely unvetted. Its name lives in `net/policy.ts` as data
-(`OPT_IN_RERANK_PACKAGES`), `rerank/load.ts` hands that value to `import()` when a
-consumer's own `rerank` config block asks for it, and three mutations prove the
-distinction is real: a static import of the adapter in either package goes red, and so
-does respelling the loader's dynamic import with a string literal. That last one is the
-important one — it changes nothing about the running code, and everything about whether
-the adapter is in the graph.
+(`OPT_IN_RERANK_PACKAGES`), `rerank/resolve.ts` turns that value into a `file:` URL and
+`rerank/load.ts` hands _that_ to `import()` when a consumer's own `rerank` config block
+asks for it, and three mutations prove the distinction is real: a static import of the
+adapter in either package goes red, and so does respelling the loader's dynamic import
+with a string literal. That last one is the important one — it changes nothing about
+the running code, and everything about whether the adapter is in the graph.
 
 ### Law 2 — every elision is explainable
 
@@ -1958,8 +1938,9 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | File                                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `packages/core/src/types.ts`                | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `RerankAttribution`, `DistillStage`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `packages/core/src/rerank/protect.ts`       | The rerank **slot**, and its budget rung: between the planner's decision and the cut. The candidates are the planner's own proposed elisions; what a stage returns is what is spared, never added — best-first, and only while the predicted output still fits `budgetBytes` (`plan/budget.ts`, the arithmetic the planners' own rungs use). A K smelt invents is refused; a budget the user typed is honoured. Every way a stage can fail, throwing included, becomes a `RerankStageError`.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `packages/core/src/rerank/protect.ts`       | The rerank **slot**: between the planner's decision and the cut. The candidates are the planner's own proposed elisions; what a stage returns is what is spared, never added — and every way it can fail, throwing included, becomes a `RerankStageError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `packages/core/src/rerank/load.ts`          | A `rerank` config block to a live stage. `undefined` in, `undefined` out; the opt-in adapter package is loaded by computed specifier and imported by nothing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `packages/core/src/rerank/resolve.ts`       | The **adapter resolver**: where an opt-in adapter package is looked for. The config file's own directory first, smelt's own install second, and otherwise one refusal naming both places and `npm install --prefix <configDir> <name>`. Resolves and never imports — what comes back is a `file:` URL, so the specifier at every `import()` stays a value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `packages/core/src/errors.ts`               | Every error is a `SmeltError`, so callers can tell "the library said no" from "something broke".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `packages/core/src/hash.ts`                 | 16 hex chars of sha256. Short because the hash goes in every marker and the model pays for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `packages/core/src/detect.ts`               | Extension → language. `'unknown'` is a first-class answer, not a failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -2030,6 +2011,7 @@ digit for the tally appears anywhere in this document.
 
 | Guard                                                   | What it guards                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/core/test/guards/adapter-resolver.test.ts`    | Where an opt-in rerank adapter is looked for: the config file's own directory first, smelt's own install second, and one refusal naming both places plus `npm install --prefix <configDir> <name>`. A user-scope config with a global `smelt` used to search a Homebrew keg and then name a command that installs somewhere neither — the resolver asking its own location twice, dropping the fallback, naming one place, or losing the `--prefix` all go red. What comes back is a `file:` URL, never the package name, which is the Law 1 half of the same value.                                                                                                                              |
 | `packages/core/test/guards/agents-lint.test.ts`         | Every claim `smelt agents` makes about somebody's instruction files. Each rule fires on its own fixture and no other rule is quietly doing the work; `dead-path` resolves against the real tree, counted call by call at the reader; the budget is the user's and there is no default; a mirror is not a level in the merged sum; every finding carries a published rule id, an explanation and an attribution; `--strict` is the only thing that turns a finding into a failure; and `split` neither overwrites without a per-file yes nor mints the finding it then reports.                                                                                                                    |
 | `packages/core/test/guards/auto-strategy.test.ts`       | The `auto` strategy's two promises: every plan it returns carries the id of the planner that actually ran (never `auto/v1`), and a grammar that will not load comes back as `GrammarUnavailableError` rather than as line windows. The selector relabelling the plan it delegated, and the selector degrading into a `catch`-and-fall-back, both go red.                                                                                                                                                                                                                                                                                                                                          |
 | `packages/core/test/guards/bench-results.test.ts`       | The harness's honesty: `RESULTS.md` rows carry date + corpus commit + tier (and model where required), stay append-only, never say "up to"; network shapes confined to `tier2.mjs`/`tier3.mjs`; `bench/` never enters the published `files` list.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -3113,17 +3095,12 @@ default install — nothing is loaded, nothing is imported and nothing is called
 doctor` prints the opt-in and whether that variable is set (presence only, never the
 value), and every run that reranks says so on its own report line, in the `--json`
 envelope and in the `smelt_file` report block. The stage may only **spare** regions the
-planner had already decided to cut, and only as far as the caller's own `budgetBytes`
-reaches: the slot walks the stage's ranking best-first and stops at the first region that
-would not fit, so a bad answer costs at most the bytes the budget already allowed. `topK`
-is the cap the caller wrote and smelt still invents none; the budget is the ceiling the
-caller also wrote, and a stage's opinion does not outrank it. The gap that leaves — a
-`topK` of 8 that yielded 3 — is reported rather than left to be guessed at: the
-attribution carries what the stage asked for, what the spares put back in bytes, and
-which of the three walls the walk hit. Every way a stage can fail, including the throw a
-hosted reranker performs on a timeout or a 401, arrives as a `RerankStageError`: a
-refusal, rendered as one, rather than a plain `Error` the CLI would call an internal bug
-and the MCP handler would crash past.
+planner had already decided to cut, so the worst a bad answer can do is cost bytes — and
+bytes are already reported, including the case where a reranker turns an in-budget run
+into an over-budget one. Every way a stage can fail, including the throw a hosted
+reranker performs on a timeout or a 401, arrives as a `RerankStageError`: a refusal,
+rendered as one, rather than a plain `Error` the CLI would call an internal bug and the
+MCP handler would crash past.
 
 **An example reranker in the repository.** Still out, and Decision 5 is unchanged — but
 `packages/rerank-voyage` is not that. An `examples/` file importing an HTTP client either
