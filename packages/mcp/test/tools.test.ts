@@ -382,14 +382,17 @@ describe('smelt_file — the rerank opt-in', () => {
        };\n`,
     );
     const client = await connect(dir);
+    // Roomy enough to afford the one region the stage asks back. The budget rung's own
+    // behaviour is pinned in the core; what this asserts is that the attribution the
+    // slot produced reaches the block a model reads.
     const result = await call(client, SMELT_FILE_TOOL_NAME, {
       text: fixtureText(),
-      budgetBytes: 1500,
+      budgetBytes: 3500,
       focus: ['handleRequest'],
     });
     expect(result.isError).toBe(false);
     expect(result.texts[1]).toMatch(
-      /rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept\)/,
+      /rerank {2}module\/\.\/stage\.mjs {2}\(\d+ candidates, 1 kept, [\d,]+ B back\)/,
     );
   });
 

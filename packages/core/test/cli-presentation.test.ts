@@ -183,7 +183,7 @@ function result(rerank: SmeltResult['rerank']): SmeltResult {
   };
 }
 
-describe('the report says why a configured reranker did not run', () => {
+describe('the report says what a configured reranker did, and why it stopped', () => {
   const report = (rerank: SmeltResult['rerank']): string =>
     formatReport({
       result: result(rerank),
@@ -192,10 +192,54 @@ describe('the report says why a configured reranker did not run', () => {
       inputText: 'kept',
     });
 
-  it('names the adapter and the two measured numbers when it ran', () => {
-    expect(report({ adapter: 'voyage', model: 'rerank-2.5', candidates: 23, kept: 8 })).toContain(
-      'rerank  voyage/rerank-2.5  (23 candidates, 8 kept)',
+  it('names the adapter and the measured numbers when it ran', () => {
+    expect(
+      report({
+        adapter: 'voyage',
+        model: 'rerank-2.5',
+        candidates: 23,
+        returned: 8,
+        kept: 8,
+        sparedBytes: 3010,
+        stopped: 'cap',
+      }),
+    ).toContain('rerank  voyage/rerank-2.5  (23 candidates, 8 kept, 3,010 B back)');
+  });
+
+  it('states the budget stop and how many the stage had offered', () => {
+    // The line a `topK` of 8 that yielded 3 has to print. Without the clause the reader
+    // sees a number smaller than the one they configured and no reason for it, and the
+    // most natural guess — "the ranker only found three relevant regions" — is wrong.
+    const line = report({
+      adapter: 'voyage',
+      model: 'rerank-2.5',
+      candidates: 23,
+      returned: 8,
+      kept: 3,
+      sparedBytes: 1204,
+      stopped: 'budget',
+    });
+    expect(line).toContain(
+      'rerank  voyage/rerank-2.5  (23 candidates, 3 kept, 1,204 B back)' +
+        '   stopped at the budget: the stage offered 8',
     );
+  });
+
+  it('prints no stop clause when the stage’s own answer ended the walk', () => {
+    // `cap` and `exhausted` are the outcomes where `kept` already IS the whole answer,
+    // so a clause would restate the counts beside it on every run.
+    for (const stopped of ['cap', 'exhausted'] as const) {
+      const line = report({
+        adapter: 'voyage',
+        candidates: 4,
+        returned: 4,
+        kept: 4,
+        sparedBytes: 90,
+        stopped,
+      });
+      expect(line).toContain('rerank  voyage  (4 candidates, 4 kept, 90 B back)\n');
+      expect(line).not.toContain('stopped at');
+    }
   });
 
   it('states the precondition it could not supply when it did not', () => {
@@ -209,6 +253,24 @@ describe('the report says why a configured reranker did not run', () => {
     expect(report({ adapter: 'voyage', candidates: 12, kept: 0, skipped: 'no-query' })).toContain(
       'rerank  voyage  (12 candidates, 0 kept)   not run: this run named no focus terms to rank against',
     );
+    // The third: the planner could not fit this input, so no answer could have been
+    // used and none was asked for. No bytes of the caller's source left the machine.
+    expect(
+      report({ adapter: 'voyage', candidates: 9, kept: 0, skipped: 'plan-over-budget' }),
+    ).toContain(
+      'rerank  voyage  (9 candidates, 0 kept)   not run: the planner’s own plan is over ' +
+        'budget, so nothing could be spared',
+    );
+  });
+
+  it('omits the offered count rather than printing one it does not have', () => {
+    // This pipeline never produces `stopped` without `returned`; a hand-built
+    // attribution can. Falling back to `kept` would render "the stage offered 3" over a
+    // run where it offered eight — a fabricated number in the one line that exists to
+    // explain a real one.
+    const line = report({ adapter: 'voyage', candidates: 5, kept: 0, stopped: 'budget' });
+    expect(line).toContain('rerank  voyage  (5 candidates, 0 kept)   stopped at the budget');
+    expect(line).not.toContain('offered');
   });
 
   it('prints no rerank line at all when no stage was configured', () => {

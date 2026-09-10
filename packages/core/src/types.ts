@@ -456,7 +456,12 @@ export interface RerankCandidate {
   readonly text: string;
 }
 
-/** A reranked candidate, most relevant first. `score` is the stage's own scale. */
+/**
+ * A reranked candidate. `score` is the stage's own scale — smelt never compares one
+ * stage's scores with another's — but it is **an order**, and that order decides what
+ * survives: the slot walks a selection score-descending and stops at the budget. See
+ * {@link RerankStage.rerank}.
+ */
 export interface RerankedCandidate extends RerankCandidate {
   readonly score: number;
 }
@@ -488,19 +493,25 @@ export interface RerankStage {
    */
   readonly model?: string;
   /**
-   * Rank `candidates` against `query` and return **the selection to spare** — not a
-   * ranking of everything you were given.
+   * Rank `candidates` against `query` and return **the selection to spare**, best
+   * first — not a ranking of everything you were given.
    *
-   * This is the one thing about the contract a stage author must get right, and the one
-   * mistake here that fails silently. The candidates are the regions a planner has
-   * already decided to remove; every entry you return is a region smelt will therefore
-   * *not* remove. So returning all of them spares all of them: the run emits its input
-   * unchanged, under budget or not, and exits 0 with a report saying every candidate was
-   * kept. Nothing errors, because nothing is wrong — you asked for everything back.
+   * Two halves of the contract, and a stage author owns both.
    *
-   * Apply your own cut-off before returning: a hosted reranker's `top_k`, a
+   * **The list is a selection.** The candidates are the regions a planner has already
+   * decided to remove; every entry you return is a region smelt will therefore *not*
+   * remove. Apply your own cut-off before returning — a hosted reranker's `top_k`, a
    * `.slice(0, k)`, a threshold you chose. smelt applies none on top of yours, because a
    * K smelt invented would silently decide how much of the caller's context survives.
+   *
+   * **The order is load-bearing.** {@link RerankedCandidate.score} is your scale, and
+   * smelt reads it as a ranking: the slot walks your selection score-descending — ties
+   * in the order the candidates were handed to you — and spares while the run's byte
+   * budget still holds, stopping at the first entry that would not fit. So the head of
+   * your list is what survives a tight budget and the tail is what is cut anyway.
+   * Returning every candidate does **not** hand the caller their input back unchanged;
+   * it hands the budget the job of choosing, which is the one thing you were asked to
+   * do. {@link RerankAttribution.stopped} says which wall the walk hit.
    *
    * May make network calls — that is the consumer's choice, made in the consumer's code.
    * Throwing is fine and expected: smelt wraps whatever comes out in a
@@ -518,7 +529,9 @@ export interface RerankStage {
  *
  * Law 2 says every elision is explainable and Law 4 says no number is unmeasured. A
  * stage that reaches the network on the caller's behalf owes both: **which** ranker ran,
- * how many regions were at stake, and how many of them it saved from the cut. Every
+ * how many regions were at stake, how many of them it asked for, how many it got, what
+ * that cost in bytes, and — the fact a reader is owed the moment those last two differ —
+ * **why the sparing stopped where it did**. Every
  * surface renders this one value — the stderr report, the `--json` envelope (inside
  * `result`, so the receipt and the report cannot disagree) and the `smelt_file` report
  * block — so no front door assembles an attribution of its own.
@@ -540,15 +553,61 @@ export interface RerankAttribution {
    * was sent would be a count nobody took.
    */
   readonly candidates: number;
-  /** Of those, how many the stage returned and smelt therefore did **not** cut. */
+  /**
+   * Of those, how many smelt did **not** cut — the regions actually spared.
+   *
+   * At most {@link returned}, and less than it whenever the budget stopped the walk
+   * first. The two were the same number before the slot read the budget, which is why
+   * both are reported: `kept` alone cannot tell a stage that asked for three from a
+   * stage that asked for eight and was refused five.
+   */
   readonly kept: number;
   /**
-   * Present exactly when the stage was **not** called, naming the precondition it could
-   * not supply: `'no-candidates'` (the planner proposed nothing to cut) or `'no-query'`
-   * (the run named no focus terms, and a ranker with no query would be scoring against
-   * the empty string and calling the result relevance). Absent means the stage ran.
+   * How many regions the stage asked to spare — the size of the selection it returned,
+   * before the budget had its say. Present exactly when the stage ran.
+   *
+   * This is the stage's own cut-off made visible: a `topK` of 8 that came back with 8
+   * says the config bound the run, and `returned` above {@link kept} says the budget
+   * did. Neither is inferred from the config — the config is not read here — so the
+   * number is the answer that arrived and nothing else.
    */
-  readonly skipped?: 'no-candidates' | 'no-query';
+  readonly returned?: number;
+  /**
+   * The bytes the spares put back into the output, measured through the same
+   * `MarkerPricing` seam the planner priced its own plan with: for each spared region,
+   * the bytes it would have removed less the marker that will no longer land in its
+   * place. Present exactly when the stage ran; `0` when nothing was spared.
+   */
+  readonly sparedBytes?: number;
+  /**
+   * Why the walk over the stage's selection ended, present exactly when the stage ran:
+   *
+   * - `'budget'` — the next region would have pushed the output past the run's budget,
+   *   so the walk stopped there. This is the only outcome where {@link kept} is below
+   *   {@link returned}.
+   * - `'cap'` — every returned region was spared, and the stage returned fewer than it
+   *   was offered: its own cut-off bound the run, not the budget.
+   * - `'exhausted'` — the walk ran off the end of the stage's list with the budget still
+   *   holding, and there was no cut-off left to blame: either the stage returned every
+   *   candidate it was offered, or it returned none at all.
+   */
+  readonly stopped?: 'budget' | 'cap' | 'exhausted';
+  /**
+   * Present exactly when the stage was **not** called, naming the precondition it could
+   * not supply — and then {@link returned}, {@link sparedBytes} and {@link stopped} are
+   * all absent, because a call that never happened measured none of them:
+   *
+   * - `'no-candidates'` — the planner proposed nothing to cut.
+   * - `'no-query'` — the run named no focus terms, and a ranker with no query would be
+   *   scoring against the empty string and calling the result relevance.
+   * - `'plan-over-budget'` — the planner's own plan already predicts an output above the
+   *   run's budget, so no region could be spared whatever came back. Asking anyway would
+   *   send the caller's source to a third party for an answer that could not be used,
+   *   which is the one cost of a rerank that is not measured in bytes.
+   *
+   * Absent means the stage ran.
+   */
+  readonly skipped?: 'no-candidates' | 'no-query' | 'plan-over-budget';
 }
 
 /**

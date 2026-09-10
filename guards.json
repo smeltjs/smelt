@@ -1,6 +1,6 @@
 {
-  "guards": 44,
-  "mutations": 230,
+  "guards": 45,
+  "mutations": 233,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
@@ -117,6 +117,10 @@
     {
       "guard": "packages/core/test/guards/repo-map.test.ts",
       "count": 20
+    },
+    {
+      "guard": "packages/core/test/guards/rerank-budget.test.ts",
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/reversibility.test.ts",
