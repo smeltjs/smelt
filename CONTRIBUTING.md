@@ -265,6 +265,10 @@ Before pushing the tag:
 - [ ] The version in all three manifests is deliberate — `packages/core`,
       `packages/mcp` and `packages/rerank-voyage`, each versioned on its own. `0.0.0`
       is the placeholder; the first real publish picks a number and lives with it.
+- [ ] If you turned `## Unreleased` into the release heading, run
+      `pnpm generate:llms-txt` afterward. `llms-full.txt` inlines CHANGELOG.md's newest
+      release section, and the rename changes which section that is — the llms-txt
+      guard is red until the regenerated file is committed alongside it.
 - [ ] Every package this tag publishes has its trusted publisher registered already
       (step 1 below) — and a package publishing for the **first** time has had its
       first version published by hand, because npm has no Settings page to register on
