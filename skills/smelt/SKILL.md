@@ -91,8 +91,8 @@ harness. Run that; do not hand-edit the files doctor names.
 ## Keeping the store small
 
 Nothing is ever evicted on its own: no timer, no size cap, nothing on opening a store.
-Deleting elided bytes is one explicit command, and it refuses without an age you named.
-Plan it first, then run it:
+Deleting elided bytes is one explicit command, and it refuses unless an age was named —
+on the command line or, since 0.8.0, in the config. Plan it first, then run it:
 
     smelt store prune --older-than 30d --dry-run
     smelt store prune --older-than 30d
@@ -107,9 +107,12 @@ The age can be written down instead of retyped, inside the store block of
     "store": { "kind": "directory", "path": ".smelt/store",
                "retention": { "olderThan": "30d", "keepRetrieved": true } }
 
-That is a number, not a schedule: nothing prunes because it is there. `--older-than`
-overrides it, the prune report says which of the two chose the age, and with neither
-present the command still refuses.
+That is a number, not a schedule: nothing prunes because it is there. It supplies the
+default age; `--older-than` on the command line overrides it, and the prune report
+names which of the two chose the age. A configured `keepRetrieved: true` is added to
+`--keep-retrieved`, never overridden by its absence — a flag with no negative spelling
+cannot delete more than the config asked to spare. With no age on either the flag or in
+the config, the command still refuses.
 
 ## Reranking
 
@@ -124,6 +127,12 @@ separate package installed by hand. The environment variable read is the one you
 names — there is no key smelt reads that you did not write down. A stage may only spare
 regions from the cut, never cut more, and a stage that throws is reported as the refusal
 it is, never as a quiet unranked run.
+
+The adapter is looked for beside `smelt.config.json` first, smelt's own install
+second — so at machine scope (`~/smelt.config.json`), install it there, not into
+whatever project you happen to be standing in:
+
+    npm install --prefix "$HOME" @smeltjs/rerank-voyage
 
 `topK` is a cap under the budget, not a quantity: smelt walks what the stage returns
 best score first and spares while the output still fits the budget, so a `topK` of 8 can

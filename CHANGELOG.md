@@ -11,6 +11,21 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
+## Unreleased
+
+### Docs
+
+- **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**
+  "Keeping the store small" no longer reads as an unconditional refusal: `smelt store
+prune` refuses only when no age was named on the flag or in `store.retention` — the
+  config supplies the default, `--older-than` overrides it, and a configured
+  `keepRetrieved: true` is added to `--keep-retrieved` rather than overridden by its
+  absence. "Reranking" now names the one fact a machine-scope (`~/smelt.config.json`)
+  user needs: the adapter is looked for beside the config first, so
+  `npm install --prefix "$HOME" @smeltjs/rerank-voyage` is the install command that
+  reaches it, not a plain `npm install`. `scripts/generate-skill.mjs` renders both facts
+  from the built package, as it does everywhere else in the skill.
+
 ## 0.8.0 — 2026-09-10
 
 `@smeltjs/core@0.8.0` · `@smeltjs/mcp@0.7.0` (its own source is unchanged; the rerank
@@ -182,7 +197,7 @@ the reasoning is under Changed below.
   `pnpm generate:llms-txt` writes them; a hand edit is a red `pnpm verify`. Law 4 holds in
   the index as it does everywhere else: it states no measured figure and links
   `packages/core/bench/RESULTS.md` instead.
-- **The SkillPack now teaches the 0.7.0 surface.** Four sections joined it, still rendered
+- **The SkillPack now teaches the surface 0.7.0 introduced.** Four sections joined it, still rendered
   from the package rather than retyped: setting up (`smelt setup --yes` with
   `--scope user`, the repeatable `--harness` over the ids the registry carries, and the four
   toggles), checking the install (doctor's `wired (verified)` / `wired but inert` /
