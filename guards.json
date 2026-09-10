@@ -1,6 +1,6 @@
 {
   "guards": 46,
-  "mutations": 240,
+  "mutations": 244,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -24,7 +24,7 @@
     },
     {
       "guard": "packages/core/test/guards/config-writer.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/doctor.test.ts",
@@ -108,7 +108,7 @@
     },
     {
       "guard": "packages/core/test/guards/persistent-store.test.ts",
-      "count": 4
+      "count": 6
     },
     {
       "guard": "packages/core/test/guards/planner-registry.test.ts",
@@ -148,7 +148,7 @@
     },
     {
       "guard": "packages/core/test/guards/store-prune.test.ts",
-      "count": 6
+      "count": 7
     },
     {
       "guard": "packages/core/test/guards/structural-totality.test.ts",

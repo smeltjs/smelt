@@ -7,6 +7,7 @@ import { ENFORCEMENT_MODES } from './hooks/guard-core.ts';
 import type { EnforcementMode } from './hooks/guard-core.ts';
 import { isStrategy, STRATEGIES } from './plan/planners.ts';
 import type { Strategy } from './plan/planners.ts';
+import { CUTOFF_HELP, readCutoff } from './store-cutoff.ts';
 
 import { CLI_NAME } from './cli/shell.ts';
 
@@ -33,6 +34,39 @@ export const CONFIG_FILE_NAME = 'smelt.config.json';
 /** The schema version this build reads and writes. */
 export const CONFIG_VERSION = 1;
 
+/**
+ * The `store.retention` block — the age cut `smelt store prune` uses when the user did
+ * not type one, and **nothing else**.
+ *
+ * Read this beside Law 3 before changing it. Nothing in smelt prunes on a timer, on a
+ * size cap, or when a store is opened, and this key does not change that: it makes no
+ * deletion happen, schedules none, and is read by exactly one verb at exactly the
+ * moment a user types it. What it removes is the retyping of a number the user already
+ * decided on — the deletion stays explicit, the number may be written down.
+ *
+ * That is why it lives inside `store` rather than at the top level, and only on the
+ * `directory` kind: a retention on a memory store would be a policy about a store that
+ * has already forgotten everything by the time anyone could prune it, and the strict
+ * parse refuses it as an unknown key rather than accepting a setting that can never
+ * apply.
+ */
+export interface SmeltConfigRetention {
+  /**
+   * The age cut, in the same grammar `--older-than` takes: `<n>d`, `<n>h`, `<n>w`.
+   * Required — a retention block with no age is a block that says nothing, and there is
+   * no default age here for the same reason there is none on the flag.
+   */
+  readonly olderThan: string;
+  /**
+   * Spare every hash the journal shows was retrieved at least once, whatever its age —
+   * `--keep-retrieved`, written down. Absent means `false`. The flag and this key are
+   * OR-ed rather than overridden (see `resolveRetention` in
+   * `cli/subcommands/store.ts`): a flag with no negative spelling must not be able to
+   * delete *more* than the config asked for.
+   */
+  readonly keepRetrieved?: boolean;
+}
+
 /** Where the CLI's elision store lives between runs. */
 export type SmeltConfigStore =
   | { readonly kind: 'memory' }
@@ -40,6 +74,8 @@ export type SmeltConfigStore =
       readonly kind: 'directory';
       /** Resolved relative to the directory holding the config file, not the cwd. */
       readonly path: string;
+      /** The default cut-off `smelt store prune` reads. See {@link SmeltConfigRetention}. */
+      readonly retention?: SmeltConfigRetention;
     };
 
 /**
@@ -318,8 +354,21 @@ export function renderConfig(config: SmeltConfig): string {
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
 
+/** Key order inside the block: kind, then where it is, then how long it keeps. */
 function renderStore(store: SmeltConfigStore): SmeltConfigStore {
-  return store.kind === 'memory' ? { kind: 'memory' } : { kind: 'directory', path: store.path };
+  if (store.kind === 'memory') return { kind: 'memory' };
+  return {
+    kind: 'directory',
+    path: store.path,
+    ...(store.retention === undefined ? {} : { retention: renderRetention(store.retention) }),
+  };
+}
+
+function renderRetention(retention: SmeltConfigRetention): SmeltConfigRetention {
+  return {
+    olderThan: retention.olderThan,
+    ...(retention.keepRetrieved === undefined ? {} : { keepRetrieved: retention.keepRetrieved }),
+  };
 }
 
 function renderHooks(hooks: SmeltConfigHooks): SmeltConfigHooks {
@@ -364,11 +413,83 @@ function parseStore(
     if (typeof path !== 'string' || path === '') {
       throw bad(`"store" of kind "directory" needs a non-empty "path".`);
     }
-    const extra = Object.keys(fields).filter((key) => key !== 'kind' && key !== 'path');
-    if (extra.length > 0) throw bad(`"store" of kind "directory" takes only "kind" and "path".`);
-    return { kind: 'directory', path };
+    const extra = Object.keys(fields).filter((key) => !['kind', 'path', 'retention'].includes(key));
+    if (extra.length > 0) {
+      throw bad(
+        `"store" of kind "directory" takes only "kind", "path" and "retention", ` +
+          `got ${extra.map((k) => `"${k}"`).join(', ')}.`,
+      );
+    }
+    const retention = parseRetention(fields['retention'], bad);
+    return { kind: 'directory', path, ...(retention === undefined ? {} : { retention }) };
   }
   throw bad(`"store".kind must be "memory" or "directory", got ${JSON.stringify(kind)}.`);
+}
+
+/**
+ * The `store.retention` block, parsed as strictly as every other — and strictly because
+ * of what reads it.
+ *
+ * This is the only key in the file whose value ends up as the cut-off of the one
+ * command in smelt that unlinks bytes, so a spelling that parsed loosely is a spelling
+ * that could delete at 24× or 168× the age its author meant. The age is read through
+ * the shared cut-off grammar ({@link readCutoff}) — the same three units, the same "at
+ * least 1", the same representable-range bound `--older-than` is held to — so the file
+ * and the flag can never disagree about what `30d` is worth. A malformed one is refused
+ * here, at the moment the config is read, rather than at the moment a prune runs.
+ *
+ * **Reading the clock here is safe because the check is monotonic.** `readCutoff` refuses
+ * an age only when it reaches further back than a `Date` can go — `milliseconds > now +
+ * MAX_TIME_VALUE` — and that ceiling only *rises* as `now` does. So the accepted range
+ * can grow and never shrink: a config that parses today parses forever, and no committed
+ * file starts being refused because time passed. What the clock buys is that the range
+ * bound is enforced where the value is read rather than deferred to the moment a prune
+ * runs, which would leave a config sitting on disk carrying a cut-off the only
+ * byte-deleter in smelt refuses.
+ */
+function parseRetention(
+  value: unknown,
+  bad: (why: string) => CliUsageError,
+): SmeltConfigRetention | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw bad(`"store".retention must be an object like {"olderThan":"30d"}.`);
+  }
+  const fields = value as Record<string, unknown>;
+  const extra = Object.keys(fields).filter((key) => key !== 'olderThan' && key !== 'keepRetrieved');
+  if (extra.length > 0) {
+    throw bad(
+      `"store".retention takes only "olderThan" and "keepRetrieved", ` +
+        `got ${extra.map((k) => `"${k}"`).join(', ')}.`,
+    );
+  }
+  const olderThan = fields['olderThan'];
+  if (typeof olderThan !== 'string' || olderThan === '') {
+    throw bad(
+      `"store".retention needs an "olderThan" age — ${CUTOFF_HELP}. A retention block ` +
+        `with no age says nothing, and there is no default age here for the same reason ` +
+        `--older-than has none.`,
+    );
+  }
+  const reading = readCutoff(olderThan, Date.now());
+  if (!reading.ok) {
+    throw bad(
+      reading.why === 'grammar'
+        ? `"store".retention.olderThan ${JSON.stringify(olderThan)} is not an age smelt ` +
+            `can read — ${CUTOFF_HELP}.`
+        : `"store".retention.olderThan ${JSON.stringify(olderThan)} reaches further back ` +
+            `than a date can go, so there is no instant to compare a blob against. At ` +
+            `most ${reading.furthest}.`,
+    );
+  }
+  const keepRetrieved = fields['keepRetrieved'];
+  if (keepRetrieved !== undefined && typeof keepRetrieved !== 'boolean') {
+    throw bad(`"store".retention.keepRetrieved must be true or false.`);
+  }
+  return {
+    olderThan,
+    ...(keepRetrieved === undefined ? {} : { keepRetrieved }),
+  };
 }
 
 function parseHooks(

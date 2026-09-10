@@ -660,8 +660,23 @@ export interface PruneReportInput {
   readonly storePath: string;
   /** The cut-off the user typed — `30d`, echoed rather than re-derived from a Date. */
   readonly olderThan: string;
+  /**
+   * Which spelling of the cut-off this run used: `'flag'` for `--older-than`,
+   * `'config'` for `store.retention.olderThan`. A receipt for a deletion answers "who
+   * chose this number" as well as "what went", and the two answers look identical on
+   * the command line — the header says which, so a prune that took more than expected
+   * can be traced to the file that said so.
+   */
+  readonly olderThanSource: 'flag' | 'config';
   /** Whether `--keep-retrieved` was in force, so the report can say what spared a blob. */
   readonly keepRetrieved: boolean;
+  /**
+   * What put it in force — the flag, the config, or both. The header attributes the
+   * sparing whenever the config had a hand in it, because "this kept blobs I never
+   * asked it to keep" is the question a receipt has to be able to answer; a flag the
+   * user typed themselves needs no attribution.
+   */
+  readonly keepRetrievedSource: 'flag' | 'config' | 'both' | 'none';
 }
 
 /**
@@ -678,14 +693,31 @@ export interface PruneReportInput {
  * hashes will say.
  */
 export function formatPruneReport(
-  { report, storePath, olderThan, keepRetrieved }: PruneReportInput,
+  {
+    report,
+    storePath,
+    olderThan,
+    olderThanSource,
+    keepRetrieved,
+    keepRetrievedSource,
+  }: PruneReportInput,
   lava: Palette = PLAIN,
 ): string {
+  const configured = `${CONFIG_FILE_NAME}: store.retention`;
+  const mercy = !keepRetrieved
+    ? ''
+    : keepRetrievedSource === 'config'
+      ? `, keeping retrieved (${configured})`
+      : keepRetrievedSource === 'both'
+        ? `, keeping retrieved (--keep-retrieved, and ${configured})`
+        : ', keeping retrieved';
   const lines: string[] = [];
   lines.push(
     `${lava.paint('brand', `${CLI_NAME} store prune`)}${report.dryRun ? ' --dry-run' : ''}  ` +
       `${lava.paint('path', storePath)}  ` +
-      `older than ${olderThan}${keepRetrieved ? ', keeping retrieved' : ''}`,
+      `older than ${olderThan}` +
+      `${olderThanSource === 'config' ? ` (${configured})` : ''}` +
+      mercy,
   );
   lines.push(
     `scanned ${count(report.scanned, 'blob')}  ` +

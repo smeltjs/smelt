@@ -100,7 +100,9 @@ What an agent on 0.7.0 should actually do:
   or `wired but missing`, and exits 3 when something is behind — with the repair command
   named. Re-run `smelt setup`; never hand-edit what doctor names.
 - **`smelt store prune --older-than 30d --dry-run`**, then the same line without
-  `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own.
+  `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own. The
+  age can be written down — `"store": { ..., "retention": { "olderThan": "30d" } }` —
+  instead of retyped; the verb still has to be typed, and `--older-than` still wins.
 - **Reranking is opt-in and you write it down** — there is no default reranker, nothing is
   loaded unless a `rerank` key in your `smelt.config.json` says so, and the environment
   variable read is the one that config names
@@ -646,6 +648,10 @@ Three things that look like bugs and are not:
   later `smelt retrieve` of a pruned hash says `EvictedHashError` with the date rather
   than "it was never elided", and the counters do not move — `elisionsStored` keeps
   counting what went, so a prune cannot flatter the expansion rate. `--dry-run` first.
+  The age may be written down — `store.retention.olderThan`, with an optional
+  `keepRetrieved`, inside the `store` block of `smelt.config.json`. The deletion may
+  not: a retention schedules nothing, `--older-than` overrides it, the prune report says
+  which of the two chose the number, and with neither present the verb refuses.
 - **Cache-prefix hygiene** — `findPrefixDivergence` and `detectCacheBreakers` report the
   byte offset where two prompt prefixes diverge and the silent cache-breakers worth
   fixing (timestamps/UUIDs in system prompts, unsorted JSON keys, varying tool sets).

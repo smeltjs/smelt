@@ -134,6 +134,17 @@ export type DoctorConfig = Pick<InstalledConfig, 'present' | 'malformed'> & {
      */
     readonly blobs?: number;
     readonly bytes?: number;
+    /**
+     * The cut-off `smelt store prune` would use with no `--older-than`, exactly as the
+     * config spells it — present only when `store.retention` is configured.
+     *
+     * Doctor reports it for the same reason it reports the reranker key: it is a number
+     * in a file that changes what a command does, and "is that set here, and to what?"
+     * must be answerable without running the command. Reporting it is emphatically not
+     * a schedule — nothing prunes because this is written down — and the line says the
+     * age, never that anything will happen.
+     */
+    readonly retention?: { readonly olderThan: string; readonly keepRetrieved: boolean };
   };
 };
 
@@ -318,6 +329,14 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
           ...(parsed.store?.kind === 'directory' ? { path: parsed.store.path } : {}),
           ...(dirExists === undefined ? {} : { dirExists }),
           ...(size === undefined ? {} : { blobs: size.blobs, bytes: size.bytes }),
+          ...(parsed.store?.kind === 'directory' && parsed.store.retention !== undefined
+            ? {
+                retention: {
+                  olderThan: parsed.store.retention.olderThan,
+                  keepRetrieved: parsed.store.retention.keepRetrieved === true,
+                },
+              }
+            : {}),
         },
       };
       if (parsed.store?.kind === 'directory' && dirExists === false) {
@@ -756,7 +775,16 @@ function describeStore(config: DoctorConfig): string {
     config.store.blobs === undefined || config.store.bytes === undefined
       ? ''
       : ` — ${formatStoreSize(config.store.blobs, config.store.bytes)}`;
+  // The retention is stated as the cut-off a prune *would* use, never as a plan: this
+  // key schedules nothing, and a doctor line that read like a countdown would describe
+  // an eviction policy smelt does not have.
+  const retention =
+    config.store.retention === undefined
+      ? ''
+      : `, prune cut-off ${config.store.retention.olderThan}${
+          config.store.retention.keepRetrieved ? ' keeping retrieved' : ''
+        } when --older-than is omitted`;
   return `directory at ${config.store.path ?? ''} (${
     config.store.dirExists ? 'present' : 'MISSING'
-  })${size}`;
+  })${size}${retention}`;
 }

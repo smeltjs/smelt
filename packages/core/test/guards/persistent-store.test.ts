@@ -25,8 +25,17 @@ import type { GuardMutation } from './_mutations.ts';
  * two-process concurrency test lives in `test/store-dir.test.ts`; this guard stays
  * cheap because `pnpm mutate` runs it repeatedly.
  *
- * Mutations: `pnpm mutate` disables the verify-on-read branch and drops the journal
- * append in `store-dir.ts`; this file must go red both times.
+ * It also pins the **one fold**. The counters, the per-rule ledger and the store's own
+ * size come out of a single traversal (`survey()`), because `smelt stats` — which the
+ * Stop hook runs at the end of every session — used to walk the same two files three
+ * times to answer them. Collapsing three reads into one is the kind of change that
+ * loses an answer silently: the numbers that survive still look right, and the one that
+ * went quiet reads as "no rule cut anything", which is indistinguishable from a store
+ * nobody used.
+ *
+ * Mutations: `pnpm mutate` disables the verify-on-read branch, drops the journal
+ * append, and drops the ledger out of the fold in `store-dir.ts`; this file must go red
+ * every time.
  */
 
 const roots: string[] = [];
@@ -211,6 +220,60 @@ describe('the persistent store keeps Law 3 across restarts', () => {
     expect(reopened.stats().elisionsStored).toBe(50);
   });
 
+  it('answers the counters, the ledger and the size from one traversal', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    const asked = store.put('material the model came back for', {
+      rule: 'head-tail',
+      explanation: 'x',
+    });
+    store.put('material nobody wanted', { rule: 'sibling-collapse', explanation: 'x' });
+    store.retrieve(asked);
+
+    const survey = store.survey();
+    // All three, out of the same pass. A fold that dropped the ledger would leave the
+    // counters looking perfectly right while `smelt stats` reported that no rule ever
+    // cut anything — the same output a store nobody has used produces.
+    expect(survey.ledger).toStrictEqual([
+      { rule: 'head-tail', stored: 1, retrieved: 1 },
+      { rule: 'sibling-collapse', stored: 1, retrieved: 0 },
+    ]);
+    expect(survey.counters.elisionsStored).toBe(2);
+    expect(survey.counters.uniqueRetrieved).toBe(1);
+    expect(survey.size.blobs).toBe(2);
+
+    // And the three published interfaces are views over it, never a second reading
+    // that could disagree with the first.
+    expect(store.ledger()).toStrictEqual(survey.ledger);
+    expect(store.rawCounters()).toStrictEqual(survey.counters);
+    expect(store.stats()).toMatchObject(survey.counters);
+
+    // Reading is still not counting: the survey journals nothing, so watching the
+    // expansion rate cannot move it.
+    expect(store.survey().counters).toStrictEqual(survey.counters);
+  });
+
+  it('answers the ledger from the journal alone, so the per-run path pays no blob scan', () => {
+    const root = newRoot();
+    const store = new DirectoryElisionStore(root);
+    store.put('material the model came back for', { rule: 'head-tail', explanation: 'x' });
+    store.put('material nobody wanted', { rule: 'sibling-collapse', explanation: 'x' });
+    const expected = store.ledger();
+    expect(expected).toHaveLength(2);
+
+    // `smelter.ts` asks for the ledger on *every* smelt run, to hand planners
+    // `PlanInput.ruleHistory`. Every fact in it comes out of `retrievals.log`, so a
+    // ledger routed through the whole survey would make each run readdir blobs/ and
+    // stat every file in it to answer a question about a log — the entire cost of the
+    // survey spent on none of its answers, and an answer that stays right the whole
+    // time, which is why only a test that takes the directory away can see it.
+    rmSync(join(root, 'blobs'), { recursive: true, force: true });
+
+    expect(store.ledger()).toStrictEqual(expected);
+    // Non-vacuous: the directory really is gone, and a scan really would have failed.
+    expect(() => store.survey()).toThrow();
+  });
+
   it('sweeps a temp file a dead process leaked, and leaves a live one alone', () => {
     const root = newRoot();
     mkdirSync(join(root, 'tmp'), { recursive: true });
@@ -258,6 +321,22 @@ export const MUTATIONS: GuardMutation[] = [
     find: '    return this.peek(hash) !== undefined;',
     replace: '    return this.#readBlob(hash) !== undefined;',
     why: 'has() back to an existence check that skips the hash — a corrupt blob answers true and then throws StoreCorruptionError on the next line, so the consumer that checked first was told a lie by the call whose job was to prevent that throw',
+  },
+  {
+    id: 'stats-fold-drops-the-ledger',
+    file: 'store-dir.ts',
+    find: '      ledger: ruleLedger(journal.puts, journal.hits),',
+    replace: '      ledger: [],',
+    why: 'the one traversal stops answering one of its three questions — the counters still look right and `smelt stats` reports that no rule ever cut anything, which is exactly what a store nobody used reports, so the per-rule half of Law 3\u2019s honesty goes quiet with no error anywhere',
+  },
+  {
+    id: 'ledger-scans-the-blobs',
+    file: 'store-dir.ts',
+    find:
+      '    const journal = this.#foldJournal();\n' +
+      '    return ruleLedger(journal.puts, journal.hits);',
+    replace: '    return this.survey().ledger;',
+    why: 'the ledger goes back through the whole survey — the answer is still right, so nothing fails, but `smelter.ts` asks for the ledger on EVERY smelt run and each one now readdirs blobs/ and stats every file in it to answer a question about a log. A silent per-run cost with no wrong output is exactly the regression a correctness test cannot see',
   },
   {
     id: 'law3-dir-store-stale-temp-not-swept',

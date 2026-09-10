@@ -264,11 +264,14 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
   'older-than': {
     label: '--older-than <age>',
     body: () => [
-      'Required by prune: the age cut, as <n>d, <n>h or <n>w',
-      '(whole numbers, at least 1). Blobs last written before it',
-      'are evicted. There is no default — a cut-off',
-      `${CLI_NAME} invented would decide which of your elisions stop`,
-      'being reversible.',
+      'The age cut prune deletes at, as <n>d, <n>h or <n>w (whole',
+      'numbers, at least 1). Blobs last written before it are',
+      `evicted. Required, unless store.retention.olderThan in`,
+      `${CONFIG_FILE_NAME} supplies one — this flag wins over that,`,
+      'and the report says which was used. There is still no',
+      `built-in default: a cut-off ${CLI_NAME} invented would decide`,
+      'which of your elisions stop being reversible, at an age',
+      'nobody chose. An age you wrote down is one you chose.',
     ],
   },
   'keep-retrieved': {
@@ -276,7 +279,11 @@ export const FLAG_HELP: Readonly<Record<FlagName, FlagHelp>> = {
     body: () => [
       'Spare any hash the journal shows was retrieved at',
       'least once, however old it is: material the model has',
-      'asked for once it may ask for again.',
+      'asked for once it may ask for again. There is no negative',
+      `spelling, so a store.retention.keepRetrieved in`,
+      `${CONFIG_FILE_NAME} is added to this flag and never overridden`,
+      'by its absence — typing an age must not delete more than',
+      'the file already asked to keep.',
     ],
   },
   'dry-run': {

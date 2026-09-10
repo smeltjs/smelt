@@ -48,7 +48,11 @@ const FULL: SmeltConfig = {
   smeltConfig: CONFIG_VERSION,
   defaultBudgetBytes: 4000,
   strategy: 'structural',
-  store: { kind: 'directory', path: '.smelt/store' },
+  store: {
+    kind: 'directory',
+    path: '.smelt/store',
+    retention: { olderThan: '30d', keepRetrieved: true },
+  },
   hooks: { thresholdBytes: 2048, enforcement: 'rewrite' },
   agents: { budgetBytes: 2000 },
   rerank: { kind: 'voyage', model: 'rerank-2.5', apiKeyEnv: 'VOYAGE_API_KEY', topK: 8 },
@@ -64,6 +68,24 @@ const CONFIGS: readonly (readonly [string, SmeltConfig])[] = [
   [
     'directory store',
     { smeltConfig: CONFIG_VERSION, store: { kind: 'directory', path: 'elsewhere/store' } },
+  ],
+  [
+    'directory store with a retention',
+    {
+      smeltConfig: CONFIG_VERSION,
+      store: { kind: 'directory', path: 'elsewhere/store', retention: { olderThan: '2w' } },
+    },
+  ],
+  [
+    'directory store with a retention that spares retrieved hashes',
+    {
+      smeltConfig: CONFIG_VERSION,
+      store: {
+        kind: 'directory',
+        path: 'elsewhere/store',
+        retention: { olderThan: '12h', keepRetrieved: false },
+      },
+    },
   ],
   ['empty hooks block', { smeltConfig: CONFIG_VERSION, hooks: {} }],
   ['hooks threshold only', { smeltConfig: CONFIG_VERSION, hooks: { thresholdBytes: 1 } }],
@@ -131,7 +153,11 @@ describe('config.ts owns both directions: parseConfig(renderConfig(c)) === c', (
       rerank: { kind: 'voyage', model: 'rerank-2.5', apiKeyEnv: 'VOYAGE_API_KEY', topK: 8 },
       agents: { budgetBytes: 2000 },
       hooks: { enforcement: 'rewrite', thresholdBytes: 2048 },
-      store: { kind: 'directory', path: '.smelt/store' },
+      store: {
+        kind: 'directory',
+        path: '.smelt/store',
+        retention: { olderThan: '30d', keepRetrieved: true },
+      },
       strategy: 'structural',
       defaultBudgetBytes: 4000,
       smeltConfig: CONFIG_VERSION,
@@ -154,6 +180,11 @@ describe('config.ts owns both directions: parseConfig(renderConfig(c)) === c', (
       CONFIG_PATH,
     );
     expect(injected.store).toStrictEqual({ kind: 'directory', path: '.smelt/store' });
+    // And the store block the wizard carried keeps its retention: a verb that rewrote
+    // the file must not drop the cut-off somebody wrote down in it.
+    expect(parseConfig(renderConfigWithHooks(FULL, FULL.hooks!), CONFIG_PATH).store).toStrictEqual(
+      FULL.store,
+    );
     expect(injected.hooks).toStrictEqual({ enforcement: 'deny' });
   });
 });
@@ -202,6 +233,13 @@ describe('planners.ts owns the default strategy', () => {
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'retention-written-but-not-read',
+    file: 'config.ts',
+    find: "    const retention = parseRetention(fields['retention'], bad);\n",
+    replace: '    const retention = undefined;\n',
+    why: 'the reader stops carrying `store.retention` off the disk — the writer still emits it, so the round trip comes back with the cut-off gone and `smelt store prune` refuses for want of an age the user can see in their own config file, which is the write-only key this guard exists to make impossible',
+  },
   {
     id: 'config-writer-field-dropped',
     file: 'config.ts',

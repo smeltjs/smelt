@@ -17,7 +17,7 @@ USAGE
   smelt hooks remove [--harness <id>] [--scope <where>] [--yes]
   smelt agents lint [dir] [--strict] [--json]
   smelt doctor [--scope <where>] [--json]
-  smelt store prune --older-than <age> [--keep-retrieved] [--dry-run] [--json]
+  smelt store prune [--older-than <age>] [--keep-retrieved] [--dry-run] [--json]
   smelt --reconstruct <result.json>
   smelt --reconstruct < result.json
   smelt init
@@ -159,10 +159,19 @@ DOCTOR
 STORE
   smelt store prune is the only command that deletes an elision, and the only
   eviction smelt has: nothing prunes on a timer, on a size cap, or when a
-  store is opened. You name the age cut — --older-than 30d, 12h or 2w, no
-  default — and every blob last written before it is evicted, unless
-  --keep-retrieved spares the hashes the journal shows were asked for back.
-  --dry-run prints the same report and frees nothing.
+  store is opened. You name the age cut — --older-than 30d, 12h or 2w — and
+  every blob last written before it is evicted, unless --keep-retrieved spares
+  the hashes the journal shows were asked for back. --dry-run prints the same
+  report and frees nothing.
+
+  The age may be written down instead of typed every time:
+  "store": { "kind": "directory", "path": ".smelt/store",
+             "retention": { "olderThan": "30d", "keepRetrieved": true } }
+  --older-than wins over it, the report names which one it used, and with
+  neither present the verb refuses: the deletion stays explicit, only the
+  number may be written down. There is no built-in age, because an age
+  smelt invented would decide which of your elisions stop being
+  reversible.
 
   Each eviction is journalled first and deleted second, so nothing goes
   unrecorded: a later smelt retrieve of an evicted hash exits 3 with
@@ -215,14 +224,21 @@ OPTIONS
                        and each harness file goes to that harness's own documented
                        user-level location; one that documents none is reported skipped,
                        never guessed.
-  --older-than <age>   store only. Required by prune: the age cut, as <n>d, <n>h or <n>w
-                       (whole numbers, at least 1). Blobs last written before it
-                       are evicted. There is no default — a cut-off
-                       smelt invented would decide which of your elisions stop
-                       being reversible.
+  --older-than <age>   store only. The age cut prune deletes at, as <n>d, <n>h or <n>w (whole
+                       numbers, at least 1). Blobs last written before it are
+                       evicted. Required, unless store.retention.olderThan in
+                       smelt.config.json supplies one — this flag wins over that,
+                       and the report says which was used. There is still no
+                       built-in default: a cut-off smelt invented would decide
+                       which of your elisions stop being reversible, at an age
+                       nobody chose. An age you wrote down is one you chose.
   --keep-retrieved     store only. Spare any hash the journal shows was retrieved at
                        least once, however old it is: material the model has
-                       asked for once it may ask for again.
+                       asked for once it may ask for again. There is no negative
+                       spelling, so a store.retention.keepRetrieved in
+                       smelt.config.json is added to this flag and never overridden
+                       by its absence — typing an age must not delete more than
+                       the file already asked to keep.
   --dry-run            store only. List what would be evicted and free nothing. The
                        report is otherwise identical, so the two runs compare
                        field for field.

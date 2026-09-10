@@ -110,7 +110,9 @@ What an agent on 0.7.0 should actually do:
   or `wired but missing`, and exits 3 when something is behind — with the repair command
   named. Re-run `smelt setup`; never hand-edit what doctor names.
 - **`smelt store prune --older-than 30d --dry-run`**, then the same line without
-  `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own.
+  `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own. The
+  age can be written down — `"store": { ..., "retention": { "olderThan": "30d" } }` —
+  instead of retyped; the verb still has to be typed, and `--older-than` still wins.
 - **Reranking is opt-in and you write it down** — there is no default reranker, nothing is
   loaded unless a `rerank` key in your `smelt.config.json` says so, and the environment
   variable read is the one that config names
@@ -656,6 +658,10 @@ Three things that look like bugs and are not:
   later `smelt retrieve` of a pruned hash says `EvictedHashError` with the date rather
   than "it was never elided", and the counters do not move — `elisionsStored` keeps
   counting what went, so a prune cannot flatter the expansion rate. `--dry-run` first.
+  The age may be written down — `store.retention.olderThan`, with an optional
+  `keepRetrieved`, inside the `store` block of `smelt.config.json`. The deletion may
+  not: a retention schedules nothing, `--older-than` overrides it, the prune report says
+  which of the two chose the number, and with neither present the verb refuses.
 - **Cache-prefix hygiene** — `findPrefixDivergence` and `detectCacheBreakers` report the
   byte offset where two prompt prefixes diverge and the silent cache-breakers worth
   fixing (timestamps/UUIDs in system prompts, unsorted JSON keys, varying tool sets).
@@ -1117,6 +1123,16 @@ Read the dry run before the real one. A pruned hash is gone, and a later
 `smelt retrieve` on it refuses and says when it was pruned rather than pretending the
 bytes were never there.
 
+The age can be written down instead of retyped, inside the store block of
+`smelt.config.json`:
+
+    "store": { "kind": "directory", "path": ".smelt/store",
+               "retention": { "olderThan": "30d", "keepRetrieved": true } }
+
+That is a number, not a schedule: nothing prunes because it is there. `--older-than`
+overrides it, the prune report says which of the two chose the age, and with neither
+present the command still refuses.
+
 ## Reranking
 
 There is no default reranker and never will be. Nothing is loaded, imported or called
@@ -1192,8 +1208,10 @@ codebase-design glossary.
   `smelt stats`) from pure shell, not only through the `smelt_retrieve` tool.
 - **Prune** (`smelt store prune`): the only eviction in smelt, and the reason a store
   that deletes can still satisfy Law 3. Explicit (a user typed the verb; nothing prunes
-  on a timer, a size cap, or when a store is opened), bounded by a cut-off that user
-  named (`--older-than <n>d|h|w`, no default), journalled **before** the bytes go
+  on a timer, a size cap, or when a store is opened), bounded by a **Cut-off** that user
+  named — `--older-than <n>d|h|w`, or `store.retention.olderThan` in
+  `smelt.config.json`, the flag winning and the receipt naming which — journalled
+  **before** the bytes go
   (`evict "<hash>" "<date>"`, `fsync`ed, then the unlink), and counted: `elisionsStored`
   keeps counting what was evicted, so pruning cannot raise the **Expansion rate** by
   shrinking its own denominator, and the **Ledger** is untouched — the rule did make
@@ -1206,6 +1224,26 @@ codebase-design glossary.
   differs, because only the error is read by a person deciding what went wrong. `has()`
   answers `false` — a boolean has no room for a reason. _Avoid_: eviction policy, GC,
   LRU, TTL.
+- **Cut-off**: the age a Prune deletes at, as a user spells it — `30d`, `12h`, `2w`
+  (`readCutoff` in `src/store-cutoff.ts`, one grammar for both places it can be
+  written). There is no default cut-off and never will be: one smelt invented would
+  decide which of somebody's elisions stop being reversible, at an age nobody chose.
+  What a user may do is **write theirs down** — `store.retention: { olderThan,
+keepRetrieved? }` inside a directory store — which is a number in a file, not a
+  schedule: it makes no deletion happen, and the verb is still typed. The two spellings
+  are a merge (`resolveRetention`), the flag wins, `--keep-retrieved` is OR-ed rather
+  than overridden because a flag with no negative spelling must not delete more than the
+  file asked for, and the receipt carries the provenance (`olderThanSource`). _Avoid_:
+  retention policy, expiry, TTL.
+- **Survey** (`DirectoryElisionStore.survey()`): the whole reading of a store directory
+  from one blob scan and one journal fold — the counters, the **Ledger** and the size on
+  disk. Not a cache and not a new fact: `stats()` and `rawCounters()` are views over it,
+  and a store still remembers nothing between calls, which is what makes two processes
+  over one directory always agree. It exists because `smelt stats` (the Stop hook's, at
+  every session end) walked the same two files three times to print one report.
+  `ledger()` deliberately is **not** a view over it: every fact in the Ledger comes out
+  of the journal, and it is the one of the three that `smelter.ts` asks for on every
+  smelt run, so it goes through the journal half alone and never scans `blobs/`.
 - **Ledger**: the per-rule half of the same honesty — for each `ElisionReason.rule`,
   how many distinct cuts it made in a store and how many of them were retrieved
   (`RuleLedgerEntry { rule, stored, retrieved }`). The rule is persisted at put time by
@@ -1983,6 +2021,11 @@ Two design consequences worth understanding before you change them:
   mattering, at a moment they did not choose, with no record of what went. So the only
   eviction in smelt is `smelt store prune`: a verb a user types, against a cut-off that
   user names, which journals `evict "<hash>" "<date>"` **before** it unlinks anything.
+  The cut-off may be **written down** — `store.retention.olderThan` in
+  `smelt.config.json`, which `--older-than` overrides and the receipt attributes — and
+  that is not a hole in the ruling: the doctrine is about the deletion, not the number.
+  A key in the user's own file schedules nothing, is read by one verb at the moment that
+  user types it, and with neither spelling present the verb still refuses.
   Two consequences make it compatible with this law rather than an exception to it. A
   later `retrieve` of an evicted hash throws `EvictedHashError` — "you pruned it on
   <date>", never `UnknownHashError`'s "it was never elided" — so the model can still tell
@@ -2030,7 +2073,8 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/src/detect.ts`               | Extension → language. `'unknown'` is a first-class answer, not a failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `packages/core/src/lang/`                   | One `LanguageProfile` per language — extensions, grammar wasm, marker leader, pins, structural node kinds, repo-map tag kinds. The registry is `Record<LanguageId, LanguageProfile>`, so totality is a compile error; every exported set is a derived view.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `packages/core/src/store.ts`                | `MemoryElisionStore`: content-addressed, dedupes, refuses hash collisions, counts retrievals.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `packages/core/src/store-dir.ts`            | `DirectoryElisionStore`: the persistent store — one file per content hash, atomic no-clobber writes, verify-on-read, counters in an append-only journal. See "The persistent store" below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `packages/core/src/store-dir.ts`            | `DirectoryElisionStore`: the persistent store — one file per content hash, atomic no-clobber writes, verify-on-read, counters in an append-only journal. `survey()` answers the counters, the ledger and the size from one blob scan plus one journal fold, and `stats()`/`rawCounters()` are views over it; `ledger()` takes the journal half alone, because `smelter.ts` asks for it on every run and no fact in it lives in `blobs/`. See "The persistent store" below.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `packages/core/src/store-cutoff.ts`         | The age cut-off grammar (`<n>d`/`<n>h`/`<n>w`) and its one reader — shared by `--older-than` and `store.retention.olderThan`, so a flag and a config key cannot disagree about what `30d` is worth. Reads a spelling; words no refusal, because the two callers do not refuse alike.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `packages/core/src/stats.ts`                | `retrieveStats()` — the one derivation of the honesty arithmetic (`expansionRate`, `allElisionsRetrieved`) from a store's raw counters. Stores supply counts; they never derive the metric.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `packages/core/src/retrieve.ts`             | `createRetrieveTool()` — the `smelt_retrieve` tool a consumer hands its model. Not MCP- or SDK-specific on purpose.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `packages/core/src/apply.ts`                | `applyPlan()` (the only function that removes anything), `reconstruct()` (Law 3 as an equation), `MARKER_FORMAT_VERSION` — the wire surface, frozen — and `markerPricing()`, the one place a marker's byte cost is computed. No judgement at all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |

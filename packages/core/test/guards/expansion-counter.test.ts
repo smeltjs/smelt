@@ -438,14 +438,14 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'cli-stats-counts-as-retrieval',
     file: 'cli/subcommands/stats.ts',
-    find: '    const stats = readCounters({ store });',
+    find: '    const survey = surveyStore({ store });',
     replace:
       '    try {\n' +
       "      store.retrieve('0000000000000000');\n" +
       '    } catch {\n' +
       '      // the observer just journalled a miss\n' +
       '    }\n' +
-      '    const stats = readCounters({ store });',
+      '    const survey = surveyStore({ store });',
     why: 'reading the stats journals a retrieval of its own — watching the metric moves it, so the count inflates with every look',
   },
 ];

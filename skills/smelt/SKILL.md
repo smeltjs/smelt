@@ -101,6 +101,16 @@ Read the dry run before the real one. A pruned hash is gone, and a later
 `smelt retrieve` on it refuses and says when it was pruned rather than pretending the
 bytes were never there.
 
+The age can be written down instead of retyped, inside the store block of
+`smelt.config.json`:
+
+    "store": { "kind": "directory", "path": ".smelt/store",
+               "retention": { "olderThan": "30d", "keepRetrieved": true } }
+
+That is a number, not a schedule: nothing prunes because it is there. `--older-than`
+overrides it, the prune report says which of the two chose the age, and with neither
+present the command still refuses.
+
 ## Reranking
 
 There is no default reranker and never will be. Nothing is loaded, imported or called

@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
 import { DirectoryElisionStore } from '@guard/store-dir';
+import { storeCommand } from '@guard/cli/subcommands/store';
 
 import type { GuardMutation } from './_mutations.ts';
 
@@ -31,9 +32,15 @@ import type { GuardMutation } from './_mutations.ts';
  *   4. **The counters do not flatter themselves.** `elisionsStored` counts what was
  *      evicted, so pruning cannot raise the expansion rate by shrinking its own
  *      denominator.
+ *   5. **The cut-off is whichever one the user wrote, and the receipt says which.**
+ *      `store.retention.olderThan` lets a user write the age down instead of retyping
+ *      it; a prune that read the flag and ignored the file would delete at an age its
+ *      own config denies, and one that could not say which spelling won would leave a
+ *      surprised user with no way to find out.
  *
- * Mutations: `pnpm mutate` breaks each of the four in `store-dir.ts`; this file must go
- * red every time.
+ * Mutations: `pnpm mutate` breaks each of these in the module that owns it — the four
+ * eviction properties in `store-dir.ts`, the precedence in `cli/subcommands/store.ts`;
+ * this file must go red every time.
  */
 
 const roots: string[] = [];
@@ -66,6 +73,12 @@ function errorName(fn: () => unknown): string {
 }
 
 const WEEK_AGO = (): Date => new Date(Date.now() - 7 * DAY);
+
+/** The config a `ConfigSource` hands the verb, as `loadNearestConfig` would. */
+const configured = (store: unknown) => (): { path: string; config: never } => ({
+  path: '/repo/smelt.config.json',
+  config: { smeltConfig: 1, store } as never,
+});
 
 describe('the only eviction in smelt is the one a user asked for', () => {
   it('evicts what the cut-off reaches and nothing else', () => {
@@ -220,6 +233,77 @@ describe('the only eviction in smelt is the one a user asked for', () => {
   });
 });
 
+describe('the cut-off is the one the user wrote down, and the receipt names it', () => {
+  it('reads a configured retention as the default cut-off, and says the config chose it', () => {
+    const resolved = storeCommand.resolve(
+      { mode: 'store', action: 'prune', keepRetrieved: false, dryRun: false, json: false },
+      configured({ kind: 'directory', path: 'store', retention: { olderThan: '30d' } }),
+    );
+    // A written-down age is read. A prune that ignored it would refuse for want of a
+    // number the user can see in their own config file.
+    expect(resolved.olderThan).toBe('30d');
+    expect(resolved.olderThanMs).toBe(30 * DAY);
+    expect(resolved.olderThanSource).toBe('config');
+  });
+
+  it('lets the typed cut-off win, and says the flag chose it', () => {
+    const resolved = storeCommand.resolve(
+      {
+        mode: 'store',
+        action: 'prune',
+        olderThan: '2w',
+        olderThanMs: 14 * DAY,
+        keepRetrieved: false,
+        dryRun: false,
+        json: false,
+      },
+      configured({ kind: 'directory', path: 'store', retention: { olderThan: '1h' } }),
+    );
+    expect(resolved.olderThan).toBe('2w');
+    expect(resolved.olderThanSource).toBe('flag');
+  });
+
+  it('refuses when neither spelling carries one — there is no built-in age', () => {
+    expect(() =>
+      storeCommand.resolve(
+        { mode: 'store', action: 'prune', keepRetrieved: false, dryRun: false, json: false },
+        configured({ kind: 'directory', path: 'store' }),
+      ),
+    ).toThrow(/--older-than/);
+    expect(() =>
+      storeCommand.resolve(
+        { mode: 'store', action: 'prune', keepRetrieved: false, dryRun: false, json: false },
+        configured({ kind: 'directory', path: 'store' }),
+      ),
+    ).toThrow(/store\.retention\.olderThan/);
+  });
+
+  it('never lets a typed age delete more than the written-down policy allowed', () => {
+    // `--keep-retrieved` has no negative spelling, so the two are OR-ed. The other
+    // reading — the winning leg supplies both — would make typing an age silently
+    // unlink blobs the config had spared.
+    const resolved = storeCommand.resolve(
+      {
+        mode: 'store',
+        action: 'prune',
+        olderThan: '1d',
+        olderThanMs: DAY,
+        keepRetrieved: false,
+        dryRun: false,
+        json: false,
+      },
+      configured({
+        kind: 'directory',
+        path: 'store',
+        retention: { olderThan: '365d', keepRetrieved: true },
+      }),
+    );
+    expect(resolved.keepRetrieved).toBe(true);
+    // And the receipt can say the file did it, not the command line.
+    expect(resolved.keepRetrievedSource).toBe('config');
+  });
+});
+
 describe('nothing evicts on its own', () => {
   it('opens, puts, retrieves and reads stats over an ancient store without deleting a byte', () => {
     const root = newRoot();
@@ -244,6 +328,13 @@ describe('nothing evicts on its own', () => {
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'prune-ignores-configured-retention',
+    file: 'cli/subcommands/store.ts',
+    find: '  if (retention !== undefined) {',
+    replace: '  if (false as boolean) {',
+    why: 'the written-down cut-off stops being read — `smelt store prune` with a `store.retention.olderThan` in the config refuses for want of an age the user can see in their own file, which is the write-only key the config round trip and this precedence exist together to make impossible',
+  },
   {
     id: 'prune-accepts-an-unreadable-cut-off',
     file: 'store-dir.ts',
@@ -275,7 +366,7 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'prune-shrinks-the-expansion-denominator',
     file: 'store-dir.ts',
-    find: '    for (const hash of evicted) if (!onDisk.has(hash)) elisionsStored += 1;',
+    find: '    for (const hash of journal.evicted) if (!onDisk.has(hash)) elisionsStored += 1;',
     replace: '',
     why: 'elisionsStored stops counting evicted hashes — the same numerator over a smaller denominator, so a prune raises the expansion rate for free and a store where three of four elisions were never asked for back reports that every one of them was',
   },

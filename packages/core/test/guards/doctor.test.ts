@@ -335,6 +335,41 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
+  it('states a configured retention as the cut-off a prune would use, never as a plan', () => {
+    const cwd = scratch('store-retention');
+    try {
+      const storeDir = join(cwd, SETUP_RECIPE.store.defaultDir);
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          store: {
+            kind: 'directory',
+            path: SETUP_RECIPE.store.defaultDir,
+            retention: { olderThan: '30d', keepRetrieved: true },
+          },
+        })}\n`,
+      );
+      const store = new DirectoryElisionStore(storeDir);
+      const hash = store.put('a blob no reading may touch');
+
+      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      expect(receipt.config.store.retention).toStrictEqual({
+        olderThan: '30d',
+        keepRetrieved: true,
+      });
+      const prose = doctor(cwd, '9.9.9', false).stdout;
+      expect(prose).toContain('prune cut-off 30d');
+      expect(prose).toContain('when --older-than is omitted');
+      // Reporting a retention is not applying one. Doctor read the key and the store
+      // still holds every byte it held — the line describes a number in a file, not an
+      // eviction anybody scheduled.
+      expect(store.retrieve(hash)).toBe('a blob no reading may touch');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('reads a missing store directory without creating it — doctor never writes', () => {
     const cwd = scratch('store-absent');
     try {

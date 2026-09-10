@@ -1,7 +1,7 @@
 import { CliUsageError } from '../../errors.ts';
-import { openStore } from '../../ops/inputs.ts';
-import { readCounters, readLedger } from '../../ops/verbs.ts';
-import { readStoreSize } from '../../store-dir.ts';
+import { surveyStore } from '../../ops/verbs.ts';
+import { retrieveStats } from '../../stats.ts';
+import { DirectoryElisionStore } from '../../store-dir.ts';
 import type { RetrieveStats, RuleLedgerEntry } from '../../types.ts';
 import { stdoutPalette } from '../lava.ts';
 import { formatStatsReport } from '../report.ts';
@@ -16,9 +16,15 @@ import type { ConfigSource, Subcommand } from './subcommand.ts';
 /**
  * `smelt stats` — the store's counters, without touching them.
  *
- * Reading stats does NOT count as a retrieval: `stats()` folds the journal and scans
+ * Reading stats does NOT count as a retrieval: the store folds the journal and scans
  * the blobs, journaling nothing, so watching the expansion rate can never move it —
  * an observer that inflated its own metric would make the honest signal dishonest.
+ *
+ * It reads the store **once**. The three things this report is made of — the counters,
+ * the ledger and the store's own size on disk — used to be three separate walks of the
+ * same two files, which is a whole traversal of somebody's store per line of output,
+ * paid at the end of every session because the Stop hook runs this command. `survey()`
+ * answers all three from one pass; nothing about the numbers moved.
  *
  * The plain form is a report for a person — the store, the expansion rate with a bar,
  * the counters, and the ledger as a table (`cli/report.ts` renders it, like every other
@@ -107,11 +113,16 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
   },
 
   run(resolved: ResolvedStatsRun, io: CliIo): number {
-    const store = openStore({ kind: 'directory', path: resolved.store.storePath });
-    const stats = readCounters({ store });
-    // The directory store always keeps a ledger; the `?? []` is the type's escape
-    // hatch for a custom store, never a case this verb reaches.
-    const ledger = readLedger({ store }) ?? [];
+    // Constructed here rather than through `openStore`, for the reason `store prune`
+    // gives: a survey is a DirectoryElisionStore capability, not an ElisionStore one.
+    // `resolveStoreRun` has already refused everything that is not a directory.
+    const store = new DirectoryElisionStore(resolved.store.storePath);
+    // One traversal, three answers. `retrieveStats` derives the honesty arithmetic
+    // from the counters, exactly as the store's own `stats()` does — the derivation
+    // has one home and this verb is not it.
+    const survey = surveyStore({ store });
+    const stats = retrieveStats(survey.counters);
+    const ledger = survey.ledger;
 
     if (resolved.json) {
       const statsEnvelope: CliStatsJsonEnvelope = { format: CLI_STATS_JSON_FORMAT, stats, ledger };
@@ -119,17 +130,17 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
       return EXIT.ok;
     }
 
-    // The store's own size, off disk, beside the counters it keeps. Read rather than
-    // asked for: `readStoreSize` opens nothing, so the header cannot author the
-    // directory it describes — and `bytesStored` (the counter) stays the counter.
-    const size = readStoreSize(resolved.store.storePath);
+    // The store's own size, off the same scan that produced the counters — two
+    // numbers about the disk beside the counters, and `bytesStored` (the counter)
+    // stays the counter. `blobs` is what is there now; `elisionsStored` is everything
+    // ever put, evicted included, and the report shows both.
     io.stdout(
       formatStatsReport(
         {
           stats,
           ledger,
           storePath: resolved.store.storePath,
-          ...(size === undefined ? {} : { size }),
+          size: survey.size,
         },
         stdoutPalette(io),
       ),
