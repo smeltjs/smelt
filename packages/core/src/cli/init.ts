@@ -5,6 +5,7 @@ import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
 import { DEFAULT_STRATEGY, STRATEGIES } from '../plan/planners.ts';
 import type { Strategy } from '../plan/planners.ts';
 import { STRUCTURAL_LANGUAGES } from '../plan/structural.ts';
+import { installCommand } from '../rerank/resolve.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 
 import { countedFiles, doneBlock, palette } from './lava.ts';
@@ -660,9 +661,15 @@ async function confirmAndWrite(
     // The two things the wizard deliberately did not do for them: install the adapter
     // and supply a key. Printed at the moment they matter, and the key is named, never
     // read and never written.
+    //
+    // The install command names **this** directory, because that is where the config
+    // being written lives and where a run will look first. A bare `npm install <pkg>`
+    // installs into whatever directory the reader's shell is in, which for a user-scope
+    // config (`smelt init` in `$HOME`) is somewhere smelt never searches — the wizard
+    // would be handing out a command that cannot work.
     io.output(
       `\nThe voyage reranker needs two things this wizard will not do for you:\n` +
-        `  npm install ${RERANK_VOYAGE_PACKAGE}\n` +
+        `  ${installCommand(RERANK_VOYAGE_PACKAGE, dir)}\n` +
         `  export ${VOYAGE_DEFAULT_KEY_ENV}=...   (smelt reads the variable, never stores the key)\n` +
         `Until both are in place, a run that would rerank refuses and says which is missing.\n` +
         `\`${CLI_NAME} doctor\` reports whether ${VOYAGE_DEFAULT_KEY_ENV} is set.\n`,

@@ -815,6 +815,26 @@ name. Every failure is a refusal that names what is missing — the path, the `t
 kind needs, the environment variable, the uninstalled package — never a quiet fall back
 to an unranked run.
 
+**Install the adapter beside the config that asks for it.** smelt looks in the directory
+holding your `smelt.config.json` first and in its own install second, so a `~/smelt.config.json`
+works with a `smelt` from Homebrew or `npm -g` — install into the directory that owns the
+config:
+
+```sh
+npm install --prefix ~ @smeltjs/rerank-voyage    # for ~/smelt.config.json
+npm install @smeltjs/rerank-voyage               # for a config at your project root
+```
+
+If it is in neither place, the refusal names both of them and the exact command for
+yours. Reading the config's directory is the same trust you already gave that file: a
+`smelt.config.json` chooses code smelt imports the moment it uses the `module` kind, and
+nothing is loaded from either directory unless the config carries a `rerank` block —
+nor does anything leave your machine until the environment variable it names is set.
+
+An adapter's `exports` map must reach its entry under `default` or `require` (smelt asks
+through `createRequire`). One that answers only `import` is reported as _installed and
+unreachable_ rather than missing, because installing it again would change nothing.
+
 **What a stage is asked, and what it may do.** When the planner has decided which regions
 to remove, the stage is handed _those regions_ and your focus terms, and **whatever it
 returns is spared** from the cut — a selection, not a ranking of everything, so apply your
@@ -854,7 +874,12 @@ the budget could afford, and the clause says so rather than leaving a number sma
 the one you configured with no explanation beside it. The same facts ride in the `--json`
 envelope (`result.rerank`, which also names `stopped` as `budget`, `cap` or `exhausted`)
 and in `smelt_file`'s report block, and `smelt doctor` says whether your key variable is
-set — presence only, never the value.
+set and where the adapter resolved from (`adapter from config dir`, `adapter from smelt's
+own install`, `adapter not installed:` with the command, or `adapter installed beside
+smelt.config.json but not loadable`, which also says smelt's own install was not tried and
+why) — presence only, never the value. It reads the `module` kind by the same rule
+the loader uses, so a config naming a package rather than a file is not reported as a
+missing file.
 
 Writing your own stage is unchanged:
 

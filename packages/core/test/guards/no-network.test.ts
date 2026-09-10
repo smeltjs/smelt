@@ -106,7 +106,18 @@ describe('Law 1 — zero network', () => {
       minEdges: 15,
       // The modules with the most dangerous surface must be in the walk, by name: the
       // policy itself, the grammar loader, and the CLI's argument handling.
-      mustVisit: ['index.ts', 'net/policy.ts', 'plan/grammar.ts', 'cli/args.ts', 'cli/run.ts'],
+      mustVisit: [
+        'index.ts',
+        'net/policy.ts',
+        'plan/grammar.ts',
+        // The other `createRequire` in the tree, beside the grammar loader: it turns an
+        // adapter package's name into a path, and a walk that stopped reaching it would
+        // stop watching the module whose whole job is to keep the adapter's name out of
+        // an `import()`.
+        'rerank/resolve.ts',
+        'cli/args.ts',
+        'cli/run.ts',
+      ],
     },
     messages: {
       violation: 'Law 1 violation: smelt v1 makes zero network calls',
@@ -208,9 +219,9 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'law1-opt-in-reranker-import-spelled-literally',
     file: 'rerank/load.ts',
-    find: 'await import(RERANK_VOYAGE_PACKAGE)',
+    find: 'await import(adapter.url)',
     replace: "await import('@smeltjs/rerank-voyage')",
-    why: 'the loader spelling its dynamic import with a literal instead of the policy constant — behaviourally identical, and the difference is the entire honesty of the arrangement: a literal is an edge the walk follows and a bundler resolves, so the adapter would be back in the graph while nothing about the running code changed',
+    why: 'the loader spelling its dynamic import with a literal instead of the URL the adapter resolver handed it — behaviourally identical on the machine that wrote it, and the difference is the entire honesty of the arrangement: a literal is an edge the walk follows and a bundler resolves, so the adapter would be back in the graph while nothing about the running code changed',
   },
   {
     id: 'law1-node-https-import',

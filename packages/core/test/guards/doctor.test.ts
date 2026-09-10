@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -237,12 +245,29 @@ describe('smelt doctor reads installed state back', () => {
 
       const missing = doctor(cwd, '9.9.9', false, {});
       expect(missing.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY missing');
-      expect(receiptOf(doctor(cwd, '9.9.9', true, {}).stdout).rerank).toEqual({
+      const receiptMissing = receiptOf(doctor(cwd, '9.9.9', true, {}).stdout);
+      expect(receiptMissing.rerank).toMatchObject({
         kind: 'voyage',
         adapter: 'voyage/rerank-2.5',
         keyEnv: 'VOYAGE_API_KEY',
         keySet: false,
       });
+      // Exactly those four facts, plus exactly one of the two resolution facts —
+      // `adapterFrom` when the adapter is installed somewhere, `install` when it is
+      // not. Nothing else about the opt-in reaches a receipt people paste into issue
+      // trackers, and the list is closed rather than merely checked for the key.
+      // Which of the two shows up is a fact about the machine, and pnpm gives this
+      // process a `NODE_PATH` into the workspace store, so the not-installed half is
+      // pinned in the spawned-binary case below where a consumer's environment applies.
+      const resolutionFields = new Set(['adapterFrom', 'adapterProblem', 'adapterAt', 'install']);
+      const fields = Object.keys(receiptMissing.rerank ?? {}).toSorted();
+      expect(fields.filter((key) => !resolutionFields.has(key))).toEqual([
+        'adapter',
+        'keyEnv',
+        'keySet',
+        'kind',
+      ]);
+      expect(fields.some((key) => resolutionFields.has(key))).toBe(true);
 
       const present = doctor(cwd, '9.9.9', false, { VOYAGE_API_KEY: 'sk-super-secret' });
       expect(present.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY set');
@@ -642,6 +667,139 @@ describe('a hook file smelt owns whole is run too', () => {
 });
 
 describe('the installed binary answers doctor', () => {
+  it('reads the module kind by the loader’s rule: a file, or an installed package', () => {
+    // The reader and the loader must ask the same question. `rerank/resolve.ts` made
+    // `{"kind":"module","path":"my-reranker"}` loadable — a bare specifier is looked up
+    // as a package — while doctor still asked `existsSync` about a file of that name,
+    // so a config every run loads without complaint was reported as an orphan at exit 3.
+    // Spawned, and with `NODE_PATH` cleared, for the reason the case below is.
+    const bin = join(import.meta.dirname, '../../dist/cli/bin.js');
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'smelt-doctor-module-')));
+    try {
+      const write = (path: string): void =>
+        writeFileSync(
+          join(cwd, 'smelt.config.json'),
+          `${JSON.stringify({
+            smeltConfig: 1,
+            defaultBudgetBytes: 4000,
+            rerank: { kind: 'module', path },
+          })}\n`,
+        );
+      const read = (): DoctorReceipt => {
+        const run = spawnSync(process.execPath, [bin, 'doctor', '--json'], {
+          encoding: 'utf8',
+          cwd,
+          env: { ...process.env, NODE_PATH: '' },
+        });
+        return JSON.parse(run.stdout) as DoctorReceipt;
+      };
+
+      // A package beside the config, and no file of that name anywhere.
+      const home = join(cwd, 'node_modules', 'my-reranker');
+      mkdirSync(home, { recursive: true });
+      writeFileSync(
+        join(home, 'package.json'),
+        `${JSON.stringify({
+          name: 'my-reranker',
+          version: '1.0.0',
+          type: 'module',
+          main: 'i.js',
+        })}\n`,
+      );
+      writeFileSync(join(home, 'i.js'), `export default { id: 'x', rerank: async () => [] };\n`);
+
+      write('my-reranker');
+      const asPackage = read();
+      expect(
+        asPackage.rerank,
+        'a module kind naming an installed package was read as a missing file',
+      ).toMatchObject({ kind: 'module', moduleExists: true, adapterFrom: 'config' });
+      expect(asPackage.orphans.join('\n')).not.toContain('rerank');
+
+      // A relative path is never a package: the old reading, unchanged.
+      write('./gone.mjs');
+      const asMissingFile = read();
+      expect(asMissingFile.rerank?.moduleExists).toBe(false);
+      expect(asMissingFile.rerank?.adapterProblem).toBeUndefined();
+      expect(asMissingFile.orphans.join('\n')).toContain('gone.mjs');
+
+      // And a bare specifier that is no package either says so as one, with the
+      // command for the config's directory rather than `smelt init`.
+      write('not-a-package-anywhere');
+      const asMissingPackage = read();
+      expect(asMissingPackage.rerank?.adapterProblem).toBe('missing');
+      expect(asMissingPackage.rerank?.install).toBe(
+        `npm install --prefix "${cwd}" not-a-package-anywhere`,
+      );
+      expect(asMissingPackage.repair).toContain(
+        `npm install --prefix "${cwd}" not-a-package-anywhere`,
+      );
+
+      // And an installed copy beside the config that answers under neither `default`
+      // nor `require`: reported as installed-and-unloadable, with no repair command —
+      // there is none — and saying that smelt's own install was never consulted.
+      const blocked = join(cwd, 'node_modules', 'blocked-reranker');
+      mkdirSync(blocked, { recursive: true });
+      writeFileSync(
+        join(blocked, 'package.json'),
+        `${JSON.stringify({
+          name: 'blocked-reranker',
+          version: '1.0.0',
+          type: 'module',
+          exports: { '.': { import: './i.js' } },
+        })}\n`,
+      );
+      writeFileSync(join(blocked, 'i.js'), `export default { id: 'x', rerank: async () => [] };\n`);
+      write('blocked-reranker');
+      const asUnreachable = read();
+      expect(asUnreachable.rerank?.adapterProblem).toBe('unreachable');
+      expect(asUnreachable.rerank?.adapterAt).toBe('config');
+      expect(asUnreachable.rerank?.install).toBeUndefined();
+      expect(asUnreachable.orphans.join('\n')).toContain('NOT tried');
+      expect(asUnreachable.orphans.join('\n')).toContain('takes precedence');
+      expect(asUnreachable.repair.join('\n')).not.toContain('blocked-reranker');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('says WHERE the rerank adapter is, and names an install command that could work', () => {
+    // The one fact about the opt-in that could not be read without running a smelt:
+    // an adapter can be installed beside the config, beside smelt, or in neither, and
+    // only the last is a problem. `NODE_PATH` is cleared because pnpm points this
+    // process's at the workspace's virtual store, where every package in the
+    // repository — this adapter included — resolves from any directory at all; a
+    // consumer's machine has no such variable.
+    const bin = join(import.meta.dirname, '../../dist/cli/bin.js');
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'smelt-doctor-adapter-')));
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          defaultBudgetBytes: 4000,
+          rerank: { kind: 'voyage', topK: 8 },
+        })}\n`,
+      );
+      const run = spawnSync(process.execPath, [bin, 'doctor', '--json'], {
+        encoding: 'utf8',
+        cwd,
+        env: { ...process.env, NODE_PATH: '' },
+      });
+      const receipt = JSON.parse(run.stdout) as DoctorReceipt;
+
+      const install = `npm install --prefix "${cwd}" @smeltjs/rerank-voyage`;
+      expect(receipt.rerank?.install, `doctor said:\n${run.stdout}${run.stderr}`).toBe(install);
+      expect(receipt.rerank?.adapterProblem).toBe('missing');
+      expect(receipt.rerank?.adapterFrom).toBeUndefined();
+      expect(receipt.repair).toContain(install);
+      // And the value of the key never rides along, whichever half is reported.
+      expect(JSON.stringify(receipt)).not.toContain('sk-');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('`smelt doctor --json` over piped stdin parses as a receipt', () => {
     // Only a real process proves the read-only verb needs no wizard stream — piped
     // stdin that would starve a wizard is exactly what doctor must not care about.

@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -435,5 +436,53 @@ describe('the built package loads from CommonJS via require(esm)', () => {
       `require(esm) of the built package failed:\n${child.stderr}${child.stdout}`,
     ).toBe(0);
     expect(child.stdout).toBe('require-ok');
+  }, 15_000);
+});
+
+describe('an opt-in rerank adapter is resolved by a real loader', () => {
+  /**
+   * Whether a package is installed is a property of Node's resolver plus the
+   * environment it runs in, so it is asserted here rather than in-process — the same
+   * reason `require(esm)` is.
+   *
+   * And the environment is the point: pnpm runs the test process with a `NODE_PATH`
+   * aimed at the workspace's virtual store, which holds **every** package in this
+   * repository — this adapter included. So in-process, and in any child that inherits
+   * it, `require.resolve` answers yes from any directory whatsoever, and an "it is not
+   * installed" assertion would be about this developer's shell. The child below is
+   * given an empty `NODE_PATH`, which is what a consumer's machine has, for the same
+   * reason the colour variables are stripped above.
+   */
+  it('refuses naming both places tried and an install command for the config’s directory', async () => {
+    // `realpathSync`, because the child's cwd is the real path and the refusal quotes
+    // the directory it actually searched.
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'smelt-bin-rerank-')));
+    try {
+      writeFileSync(
+        join(cwd, 'smelt.config.json'),
+        `${JSON.stringify({
+          smeltConfig: 1,
+          defaultBudgetBytes: 4000,
+          rerank: { kind: 'voyage', topK: 4 },
+        })}\n`,
+      );
+      writeFileSync(join(cwd, 'input.txt'), 'filler line\n'.repeat(400));
+
+      const run = await runBin(['input.txt'], undefined, cwd, {
+        VOYAGE_API_KEY: 'k',
+        NODE_PATH: '',
+      });
+
+      expect(run.code).toBe(EXIT.usage);
+      // The bug this whole seam is about: the old refusal said `npm install <pkg>`,
+      // which installs into whatever directory the shell is in — never one of the two
+      // smelt searched. A user with a `$HOME` config and a global smelt could follow it
+      // forever.
+      expect(run.stderr).toContain('is not installed');
+      // The directory is quoted, so the command survives a path with a space in it.
+      expect(run.stderr).toContain(`npm install --prefix "${cwd}"`);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   }, 15_000);
 });
