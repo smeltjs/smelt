@@ -11,7 +11,25 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
-## Unreleased
+## 0.8.0 — 2026-09-10
+
+`@smeltjs/core@0.8.0` · `@smeltjs/mcp@0.7.0` (its own source is unchanged; the rerank
+attribution `smelt_file`'s report block renders comes from the core, so the three new
+fields reach the tool through the dependency) · `@smeltjs/rerank-voyage@0.1.1` (README
+only — the adapter contract is written down there now. Its peer range stays
+`>=0.7.0 <1`: the adapter names nothing this release adds)
+
+The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
+contract — is unchanged. The TypeScript API is not, in one place: `applyRerank`'s
+`RerankRequest` gains two required fields, `budgetBytes` and `pricing`, so a caller
+driving the rerank slot directly has a compile error to fix and a budget to hand it.
+
+**If you run a reranker, its output changes.** The slot now spares only as far as the
+run's byte budget reaches, so a `topK` that used to decide how large the output got is a
+cap and no longer a quantity — and a plan already over budget before the stage is asked
+skips the stage entirely rather than sending your source out for an answer that would be
+refused on arrival. Both are deliberate, both are reported (`stopped`, `skipped`), and
+the reasoning is under Changed below.
 
 ### Added
 

@@ -88,7 +88,7 @@ the **marker block** `smelt setup` writes beside the enforcement hooks, and the
 **[SkillPack](skills/smelt/SKILL.md)**, which an agent's owner installs with
 `npx skills add smeltjs/smelt`. Neither is written uninvited.
 
-What an agent on 0.7.0 should actually do:
+What an agent on 0.8.0 should actually do:
 
 - **On Homebrew and upgrading from 0.6.0 or earlier, re-run `smelt setup`** — hooks written
   by those releases point at a Cellar path `brew upgrade` deletes.

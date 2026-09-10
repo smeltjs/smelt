@@ -1,6 +1,6 @@
 {
   "name": "@smeltjs/rerank-voyage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The opt-in Voyage AI reranker adapter for smelt. The one package in the workspace that reaches the network — install it only if you want that.",
   "license": "Apache-2.0",
   "author": "mong-x",
