@@ -106,6 +106,12 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
       { declaration: 'export function fileIsOursToRepair(', file: 'cli/merge-policy.ts' },
       { declaration: 'export function presetToggles(', file: 'cli/installed.ts' },
       { declaration: 'export async function runHooks(', file: 'cli/hooks.ts' },
+      // The consent discipline: one question, one label, one write mechanic — in the
+      // kit, never re-typed in a verb (review IV, REP-55).
+      { declaration: 'export async function askOverwrite(', file: 'cli/wizard.ts' },
+      { declaration: 'export function fileFate(', file: 'cli/wizard.ts' },
+      { declaration: 'export function listPlannedFiles(', file: 'cli/wizard.ts' },
+      { declaration: 'export function writePlannedFile(', file: 'cli/wizard.ts' },
     ];
     for (const { declaration, file } of owners) {
       // Read with strings and comments blanked: a doc comment naming a declaration —

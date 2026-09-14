@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import { GUIDE_URL } from '../agents/guide.ts';
 import { readInstructionSet } from '../agents/instructions.ts';
@@ -9,8 +9,17 @@ import type { SplitPlan } from '../agents/split.ts';
 import { CliUsageError } from '../errors.ts';
 import { readTree } from '../ops/inputs.ts';
 
-import { answerReader, CLI_NAME } from './shell.ts';
+import { CLI_NAME } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
+import {
+  askOverwrite,
+  confirmYesNo,
+  fileFate,
+  listPlannedFiles,
+  wizardAsk,
+  writePlannedFile,
+} from './wizard.ts';
+import type { Ask, PlannedFileLike } from './wizard.ts';
 
 /**
  * `smelt agents split` — the wizard, and nothing else.
@@ -91,23 +100,17 @@ export async function runAgentsSplit(io: AgentsSplitIo): Promise<number> {
       `first heading, plus a link to each moved section.\n\n`,
   );
 
-  const lines = answerReader(io.input);
-  const ask = async (prompt: string): Promise<string> => {
-    io.output(prompt);
-    const next = await lines.next();
-    if (next === undefined) {
-      throw new CliUsageError(
-        `${CLI_NAME} agents split: input ended before the wizard finished. ` +
-          `Files already confirmed and written stay; nothing further was written.`,
-      );
-    }
-    return next.trim();
-  };
+  const { ask, release } = wizardAsk(
+    io.input,
+    io.output,
+    `${CLI_NAME} agents split: input ended before the wizard finished. ` +
+      `Files already confirmed and written stay; nothing further was written.`,
+  );
 
   try {
     await confirmAndWrite(io, ask, root, plan);
   } finally {
-    await lines.release();
+    await release();
   }
 
   // Printed whether or not anything was written: the prompt is the half of the
@@ -118,13 +121,8 @@ export async function runAgentsSplit(io: AgentsSplitIo): Promise<number> {
 }
 
 /** A file the split would write, checked against what is on disk right now. */
-interface PlannedSplitFile {
-  readonly name: string;
-  readonly path: string;
-  readonly content: string;
-  readonly exists: boolean;
-  readonly unchanged: boolean;
-}
+/** One file the split would write — the kit's planned-file shape, checked against disk. */
+type PlannedSplitFile = PlannedFileLike;
 
 function planned(root: string, name: string, content: string): PlannedSplitFile {
   const path = join(root, name);
@@ -138,33 +136,23 @@ function planned(root: string, name: string, content: string): PlannedSplitFile 
   };
 }
 
-const fileLabel = (file: PlannedSplitFile): string => {
-  if (file.unchanged) return 'unchanged — nothing to write';
-  return file.exists ? 'exists — will ask before overwriting' : 'new';
-};
-
 async function confirmAndWrite(
   io: AgentsSplitIo,
-  ask: (prompt: string) => Promise<string>,
+  ask: Ask,
   root: string,
   plan: SplitPlan,
 ): Promise<void> {
   const files = plan.files.map((file) => planned(root, file.path, file.content));
 
-  io.output(
-    `About to write, into ${root}:\n` +
-      files.map((file) => `  ${file.name.padEnd(40)} (${fileLabel(file)})\n`).join('') +
-      `Nothing has been written yet.\n`,
-  );
+  io.output(`About to write, into ${root}:\n`);
+  listPlannedFiles(io.output, files, [], (file) => fileFate(file, 'ask'));
+  io.output(`Nothing has been written yet.\n`);
 
-  for (;;) {
-    const answer = await ask(`confirm (yes / no)> `);
-    if (answer === 'no') {
-      io.output(`Nothing was written.\n`);
-      return;
-    }
-    if (answer === 'yes') break;
-    io.output(`yes to write, no to leave everything untouched.\n`);
+  if (
+    (await confirmYesNo(ask, io.output, 'yes to write, no to leave everything untouched.')) === 'no'
+  ) {
+    io.output(`Nothing was written.\n`);
+    return;
   }
 
   for (const file of files) {
@@ -172,18 +160,14 @@ async function confirmAndWrite(
       io.output(`  ${file.name} — unchanged, not rewritten\n`);
       continue;
     }
-    if (file.exists) {
-      // The one hard rule, same as `smelt init` and `smelt hooks`: an existing file is
-      // never touched without an explicit per-file yes — not `y`, not Enter, a literal
-      // `yes`. The root instruction file is *always* on this branch, by construction.
-      const answer = await ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
-      if (answer !== 'yes') {
-        io.output(`  skipped ${file.name} — the existing file was not touched\n`);
-        continue;
-      }
+    // The one hard rule, shared through the kit with `smelt init` and `smelt hooks`:
+    // an existing file is never touched without an explicit per-file yes. The root
+    // instruction file is *always* on this branch, by construction.
+    if (file.exists && !(await askOverwrite(file.name, ask))) {
+      io.output(`  skipped ${file.name} — the existing file was not touched\n`);
+      continue;
     }
-    mkdirSync(dirname(file.path), { recursive: true });
-    writeFileSync(file.path, file.content);
+    writePlannedFile(file);
     io.output(`  wrote ${file.name}\n`);
   }
 }

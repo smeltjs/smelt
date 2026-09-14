@@ -5,7 +5,7 @@ import type { PlannedFile } from '../harness/plan.ts';
 import { CONFIG_FILE_NAME } from '../config.ts';
 import { fileIsOurs } from './installed.ts';
 import { CLI_NAME } from './shell.ts';
-import { writePlannedFile } from './wizard.ts';
+import { askOverwrite, writePlannedFile } from './wizard.ts';
 import type { Ask } from './wizard.ts';
 
 /**
@@ -153,16 +153,8 @@ export async function applyPlanFiles(
  */
 async function verdictFor(file: PlannedFile, consent: Consent): Promise<WriteVerdict> {
   const allowed =
-    consent.kind === 'policy' ? policyMayWrite(file) : await askOverwrite(file, consent.ask);
+    consent.kind === 'policy' ? policyMayWrite(file) : await askOverwrite(file.name, consent.ask);
   if (!allowed) return 'refused';
   if (file.ownership === 'merged') return 'merged';
   return fileIsOursToRepair(file) ? 'repaired' : 'overwritten';
-}
-
-/** The per-file consent question. */
-async function askOverwrite(file: PlannedFile, ask: Ask): Promise<boolean> {
-  // The one hard rule, same as `smelt init`: an existing file is never touched
-  // without an explicit per-file yes — not `y`, not Enter, a literal `yes`.
-  const answer = await ask(`  ${file.name} exists — overwrite it? (yes/no)> `);
-  return answer === 'yes';
 }

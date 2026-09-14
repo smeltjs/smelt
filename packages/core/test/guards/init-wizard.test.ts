@@ -119,10 +119,17 @@ describe('the init wizard writes only inside the directory it named', () => {
  */
 export const MUTATIONS: GuardMutation[] = [
   {
+    id: 'wizard-consent-accepts-anything-but-no',
+    file: 'cli/wizard.ts',
+    find: "  return answer === 'yes';",
+    replace: "  return answer !== 'no';",
+    why: 'the one consent question, in the kit every writing verb now reaches it through, satisfied by `y`, by Enter, by a typo — every verb would overwrite a hand-written file on an answer nobody meant as consent, and only the literal-yes rule the kit owns can refuse it',
+  },
+  {
     id: 'init-overwrite-without-consent',
     file: 'cli/init.ts',
-    find: "      if (answer !== 'yes') {",
-    replace: '      if (false) {',
+    find: '    if (write.exists && !(await askOverwrite(write.name, ask))) {',
+    replace: '    if (false) {',
     why: 'the per-file overwrite consent wired shut — `smelt init` would clobber a hand-written file after any answer, the helpful-looking break the never-overwrite rule exists to refuse',
   },
   {

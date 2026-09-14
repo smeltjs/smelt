@@ -163,8 +163,8 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'hooks-install-overwrite-without-consent',
     file: 'cli/merge-policy.ts',
-    find: "  return answer === 'yes';",
-    replace: '  return true;',
+    find: "    consent.kind === 'policy' ? policyMayWrite(file) : await askOverwrite(file.name, consent.ask);",
+    replace: "    consent.kind === 'policy' ? policyMayWrite(file) : true;",
     why: 'the per-file overwrite consent wired shut — `smelt hooks install` would clobber a hand-written CLAUDE.md or .claude/settings.json after any answer, the helpful-looking break the never-overwrite rule exists to refuse',
   },
 ];
