@@ -616,11 +616,13 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   the guide recommends) cannot drift at all.
 - **Finding** (`smelt agents lint`): what the lint noticed at one place, carrying an
   `ElisionReason` — the same stable `rule` id plus explanation an elision carries, for
-  the same reason. Eight rules, one registry — `AGENTS_RULES` in `src/agents/lint.ts`, a
+  the same reason. Nine rules, one registry — `AGENTS_RULES` in `src/agents/lint.ts`, a
   `Record` keyed by rule id like every other registry here, each entry naming its
   scope (`file`, `level`, `set`), its meaning and its finder; the explanation always ends
-  with an attributed fragment of the guide, so smelt's measurement and the guide's
-  opinion are never mistaken for each other. Findings are **advisory** — exit 0 —
+  with an attributed fragment of its source — the AGENTS.md guide for eight rules, and
+  for **`blanket-read`** (an unconditional "read A, B and C", review IV REP-59) OpenAI's
+  GPT-6 Astra notes, both quoted once in `guide.ts` — so smelt's measurement and a
+  source's opinion are never mistaken for each other. Findings are **advisory** — exit 0 —
   until `--strict`.
 - **Imperatives (heuristic)**: the count of instruction-looking lines, reported beside
   the byte total and never as a precise figure. It is a companion measurement, not a

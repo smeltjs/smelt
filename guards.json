@@ -1,6 +1,6 @@
 {
-  "guards": 46,
-  "mutations": 246,
+  "guards": 47,
+  "mutations": 258,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -8,7 +8,7 @@
     },
     {
       "guard": "packages/core/test/guards/agents-lint.test.ts",
-      "count": 12
+      "count": 14
     },
     {
       "guard": "packages/core/test/guards/auto-strategy.test.ts",
@@ -56,7 +56,7 @@
     },
     {
       "guard": "packages/core/test/guards/init-wizard.test.ts",
-      "count": 2
+      "count": 3
     },
     {
       "guard": "packages/core/test/guards/install-scope.test.ts",
@@ -88,7 +88,7 @@
     },
     {
       "guard": "packages/core/test/guards/module-seams.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/no-network.test.ts",
@@ -144,7 +144,7 @@
     },
     {
       "guard": "packages/core/test/guards/skill-pack.test.ts",
-      "count": 2
+      "count": 5
     },
     {
       "guard": "packages/core/test/guards/store-prune.test.ts",
@@ -181,6 +181,10 @@
     {
       "guard": "packages/mcp/test/guards/packaging.test.ts",
       "count": 3
+    },
+    {
+      "guard": "packages/mcp/test/guards/tool-surface.test.ts",
+      "count": 5
     },
     {
       "guard": "packages/rerank-voyage/test/guards/packaging.test.ts",

@@ -111,11 +111,12 @@ AGENTS
     forcing-language       "always", "never" or ALL-CAPS where a reason would do
     structure-dump         a drawn directory tree, or a run of bare path lines
     generated-boilerplate  the fingerprints an init script leaves (softest rule)
+    blanket-read           a "read A, B and C" with no when — every request pays
     language-rule          a code-style rule paid on every request, used on few
     mirror-drift           a CLAUDE.md or GEMINI.md diverged from its AGENTS.md
     restated-at-level      an instruction restated at a level and an ancestor
-  Every finding carries a stable rule id and a sentence citing the guide it
-  applies
+  Every finding carries a stable rule id and a sentence citing its source: the
+  AGENTS.md guide, or for blanket-read OpenAI's GPT-6 Astra notes
   (aihero.dev/a-complete-guide-to-agents-md). Findings exit 0; --strict makes
   any finding exit 1. There is no built-in size limit: set agents.budgetBytes
   in smelt.config.json and exceeding it exits 1, as every other smelt
