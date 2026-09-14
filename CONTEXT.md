@@ -100,6 +100,20 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
   one.
 - **The four laws**: zero network · every elision explainable · every elision reversible
   (and counted) · no unmeasured numbers. Reasoning in `docs/ARCHITECTURE.md`.
+- **Tool surface** (`packages/mcp/src/surface.ts`): everything the MCP server says to a
+  model before it has been asked anything — the five tool descriptions and the
+  `instructions` string — rendered once by `toolSurface()` as one value beside two
+  measured sizes in UTF-8 bytes: the **prose** (every description plus the instructions,
+  held under `TOOL_SURFACE_BUDGET_BYTES`) and the **payload** (the serialized
+  `tools/list` plus the instructions, schemas included, held under
+  `TOOL_LIST_BUDGET_BYTES`), both recounted by `test/guards/tool-surface.test.ts`. It is
+  the one context budget smelt spends on its own account in every session it is
+  registered in, and until it was measured the server's comment claimed the prose sat
+  "well under 2 KB" while it was 3,718 bytes. The ceilings are smelt's own budgets for
+  its own words, never a claim about a client's limit; the descriptions of
+  `smelt_retrieve` and `smelt_retrieve_batch` are the core's, verbatim — the surface adds
+  no tail to either — and the module imports only types, so the guard can execute a
+  mutant copy of it. _Avoid_: prompt, system prompt, tool metadata.
 
 ## Deepened modules
 

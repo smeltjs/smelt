@@ -9,7 +9,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import {
   budgetFault,
   budgetMalformed,
@@ -34,16 +34,16 @@ import {
   STRATEGIES,
   UnknownHashError,
 } from '@smeltjs/core';
-import type {
-  RetrieveBatchTool,
-  RetrievedBlock,
-  RetrieveTool,
-  Ruling,
-  Strategy,
-} from '@smeltjs/core';
+import type { RetrievedBlock, Ruling, Strategy } from '@smeltjs/core';
 
 import { resolveMcpStore } from './store.ts';
 import type { ResolvedMcpStore } from './store.ts';
+import {
+  REPO_MAP_TOOL_NAME,
+  SMELT_FILE_TOOL_NAME,
+  SMELT_STATS_TOOL_NAME,
+  toolSurface,
+} from './surface.ts';
 
 /**
  * The smelt MCP server: the same library the `smelt` CLI fronts, as five stdio tools.
@@ -68,9 +68,11 @@ import type { ResolvedMcpStore } from './store.ts';
  * names it), each stated once there and spelled in *this* surface's vocabulary here:
  * `"budgetBytes"` rather than `--budget`, `smelt_file` rather than `smelt <file>`.
  *
- * What stays this server's own is what genuinely is: the schemas, the descriptions, the
- * `isError` envelope — and one deliberate divergence from the CLI, kept here on
- * purpose. `smelt retrieve` refuses a memory store outright; this server accepts one,
+ * What stays this server's own is what genuinely is: the schemas, the `isError`
+ * envelope, and the tool surface — the five descriptions and the `instructions`
+ * string, rendered and *measured* once in `surface.ts`, because they are the one
+ * context budget smelt spends on its own account in every session — and one deliberate
+ * divergence from the CLI, kept here on purpose. `smelt retrieve` refuses a memory store outright; this server accepts one,
  * serves the whole session from it, and appends {@link ResolvedMcpStore.persistenceHint}
  * at the moment an unknown hash makes the difference bite. A resident process can
  * honestly serve a session-lifetime store; a fresh CLI process cannot.
@@ -97,35 +99,6 @@ export const SERVER_VERSION = (
     version: string;
   }
 ).version;
-
-/**
- * Tool names. `smelt_retrieve` is the core's frozen wire-surface name, re-exported;
- * `smelt_retrieve_batch` is its additive sibling, named once in the core beside it.
- */
-export const SMELT_FILE_TOOL_NAME = 'smelt_file';
-export const REPO_MAP_TOOL_NAME = 'repo_map';
-export const SMELT_STATS_TOOL_NAME = 'smelt_stats';
-export { RETRIEVE_BATCH_TOOL_NAME, RETRIEVE_TOOL_NAME } from '@smeltjs/core';
-
-/**
- * The `instructions` field of the initialize result. A hint, not a lever (clients MAY
- * surface it — see docs/research/2026-09-02-agent-enforcement.md §4), so it carries
- * the one fact a model cannot infer from the tool list alone: markers' in-band
- * `retrieve("hash")` maps to the `smelt_retrieve` tool here. Kept well under the 2 KB
- * cap Claude Code applies to descriptions + instructions.
- */
-export const SERVER_INSTRUCTIONS =
-  'smelt shrinks what enters your context without lying about what it removed. ' +
-  'Use smelt_file instead of reading a large file (or pasting a large blob) raw: it cuts ' +
-  'the text to a byte budget and replaces everything it removed with one-line markers like ' +
-  '`<<smelt/v1: collapsed 3 sibling functions (2224B) — retrieve("84998967370f38bc")>>`. ' +
-  'A marker\'s retrieve("hash") maps to the smelt_retrieve tool: call it with the hash to ' +
-  'get the exact original bytes back — nothing is deleted, and guessing at what a marker ' +
-  'hid is never correct; when several markers matter, smelt_retrieve_batch takes every ' +
-  'hash in one call and returns one block per hash. repo_map renders a ranked symbol map of a directory tree inside a ' +
-  'byte budget, for orienting in an unfamiliar repository. Retrievals are counted; ' +
-  'smelt_stats reads the counters (including the expansion rate — the fraction of hidden ' +
-  'content asked for back) without changing them.';
 
 /** Options for {@link createSmeltMcpServer}. */
 export interface SmeltMcpServerOptions {
@@ -278,165 +251,6 @@ function take<T>(ruling: Ruling<T>): T {
   return ruling.value;
 }
 
-/** The JSON Schema fragments the tool list advertises. */
-const BUDGET_SCHEMA = {
-  type: 'integer',
-  minimum: 1,
-  description:
-    'Output ceiling in UTF-8 bytes. Required — there is no default budget. Budgets are ' +
-    'bytes, permanently: bytes are the only unit computable locally for every model.',
-} as const;
-
-const FOCUS_SCHEMA = {
-  type: 'array',
-  items: { type: 'string' },
-  description:
-    'What the task is actually about — a symbol name, an error string, a grep pattern. ' +
-    'Matching regions survive; everything else is first to go.',
-} as const;
-
-function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool): Tool[] {
-  return [
-    {
-      name: SMELT_FILE_TOOL_NAME,
-      description:
-        'Shrink a file (or a blob of text) to a byte budget before it enters context, ' +
-        'without losing anything: the parts the task needs survive, and every removed ' +
-        'region is replaced by a one-line marker naming what went, how big it was, and a ' +
-        'hash that smelt_retrieve turns back into the exact original bytes. Use it ' +
-        'instead of reading a large file raw; for a small file, reading raw is cheaper ' +
-        'than a round trip. Returns two text blocks: the smelted text, then a report of ' +
-        'every elision (rule, lines, bytes, hash, explanation, and — for structural cuts — ' +
-        'the names of the declarations behind the marker, so you can decide what to ' +
-        'retrieve without retrieving it).',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          path: {
-            type: 'string',
-            description:
-              "File to read and smelt, resolved against the server's working directory. " +
-              'Pass exactly one of "path" or "text".',
-          },
-          text: {
-            type: 'string',
-            description:
-              'The blob itself — a grep result, a build log, a diff. Pass exactly one of ' +
-              '"path" or "text".',
-          },
-          budgetBytes: BUDGET_SCHEMA,
-          focus: FOCUS_SCHEMA,
-          producer: {
-            type: 'string',
-            description:
-              'The command whose output "text" is, e.g. "grep -C 3 foo src". When "focus" ' +
-              'is absent, the focus is derived from it exactly as the smelt hooks guard ' +
-              'derives it: a search pattern, only when the output also holds non-matching ' +
-              'lines (context flags). cat, diffs and logs name no term.',
-          },
-          strategy: {
-            type: 'string',
-            enum: [...STRATEGIES],
-            description:
-              '"structural" parses the file and collapses whole sibling declarations ' +
-              '(refused, never approximated, for languages without a bundled grammar); ' +
-              '"lexical" uses focus windows — right for logs, traces, and anything that ' +
-              'is not code; "json" cuts members and elements of a JSON document and ' +
-              '"diff" cuts files and hunks of a unified diff, each refusing any other ' +
-              'content; "auto" picks by content kind first (json, diff), then structural ' +
-              'for a language smelt has a grammar for and lexical for everything else, ' +
-              'and the report names whichever one ran. Defaults to the smelt.config.json ' +
-              'strategy, else "lexical".',
-          },
-        },
-        required: ['budgetBytes'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: RETRIEVE_TOOL_NAME,
-      // The core renders this description around a marker built by the real marker
-      // builder, so the example a model learns from can never drift from the wire
-      // format. Reused verbatim for the same reason the tool name is.
-      description: retrieveTool.description,
-      // And so is the schema. `RetrieveTool.inputSchema` is the core's own
-      // description of `hash in, exact bytes out` — already strict-mode shaped
-      // (`additionalProperties: false`, every property required) so a
-      // structured-outputs consumer can register it. A copy here would be a second
-      // schema for one contract, and nothing would report the day they disagreed:
-      // the library caller and the model would be reading different documents about
-      // the same call. `required` is copied because the SDK's `Tool` wants a mutable
-      // array; the shape is the core's, verbatim.
-      inputSchema: {
-        ...retrieveTool.inputSchema,
-        required: [...retrieveTool.inputSchema.required],
-      },
-    },
-    {
-      name: RETRIEVE_BATCH_TOOL_NAME,
-      // The core's description and schema again, for the same reason: one contract,
-      // one document. The batch tool is the single tool's additive sibling — an array
-      // where the other takes one string — and its result here is one text block per
-      // hash, each block's first line naming the hash it answers, because a batch
-      // must say which bytes belong to which marker; everything after that first line
-      // is the exact original bytes.
-      description:
-        `${batchTool.description} Returns one text block per hash, in the order asked: ` +
-        'the first line names the hash and its byte count, and everything after it is ' +
-        'the exact original bytes. A hash the store does not hold gets a block carrying ' +
-        'the refusal instead, and the other hashes still come back.',
-      inputSchema: {
-        ...batchTool.inputSchema,
-        required: [...batchTool.inputSchema.required],
-      },
-    },
-    {
-      name: REPO_MAP_TOOL_NAME,
-      description:
-        'A ranked symbol map of a whole directory tree, fitted to a byte budget by ' +
-        'construction — tree-sitter definition tags ranked by references (modelled on ' +
-        "Aider's repo map), every included symbol stating why it ranked. Use it to " +
-        'orient in an unfamiliar repository before opening files; it elides nothing and ' +
-        'stores nothing, so there is nothing to retrieve from it.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          dir: {
-            type: 'string',
-            description: "Directory to map, resolved against the server's working directory.",
-          },
-          budgetBytes: BUDGET_SCHEMA,
-          focus: FOCUS_SCHEMA,
-        },
-        required: ['dir', 'budgetBytes'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: SMELT_STATS_TOOL_NAME,
-      description:
-        "The store's retrieval counters, verbatim: elisionsStored, bytesStored, " +
-        'retrieveCalls, uniqueRetrieved, misses, expansionRate (the fraction of hidden ' +
-        'blobs asked for back — the honest signal of over-pruning) and ' +
-        'allElisionsRetrieved — then, as a second block, the per-rule ledger: for each ' +
-        'elision rule, how many cuts it made and how many were asked for back. Reading ' +
-        'stats is not a retrieval and never moves the counters.',
-      inputSchema: {
-        type: 'object',
-        properties: {},
-        // `required: []` rather than no `required` at all. This tool takes no
-        // arguments, so strict structured outputs — which wants every property
-        // required and the key present — is satisfied by stating the empty list, and a
-        // client registering in strict mode gets the one tool that needed nothing from
-        // it. The other tools have genuinely optional arguments and are a different
-        // question; this one was a missing key.
-        required: [],
-        additionalProperties: false,
-      },
-    },
-  ];
-}
-
 /**
  * Build the server: resolve the store once, register the five tools, and wire every
  * refusal to a tool-level error rather than a crash.
@@ -447,13 +261,18 @@ function buildToolList(retrieveTool: RetrieveTool, batchTool: RetrieveBatchTool)
 export function createSmeltMcpServer(options: SmeltMcpServerOptions = {}): SmeltMcpServer {
   const cwd = options.cwd ?? process.cwd();
   const resolved = resolveMcpStore(cwd);
-  const retrieveTool = createRetrieveTool(resolved.store);
-  const batchTool = createRetrieveBatchTool(resolved.store);
-  const tools = buildToolList(retrieveTool, batchTool);
+  // The surface is one measured value: every description and the instructions,
+  // rendered from the core's two retrieve tools and the strategy list. Its byte count
+  // is held under `TOOL_SURFACE_BUDGET_BYTES` by test/guards/tool-surface.test.ts.
+  const { tools, instructions } = toolSurface({
+    retrieveTool: createRetrieveTool(resolved.store),
+    batchTool: createRetrieveBatchTool(resolved.store),
+    strategies: STRATEGIES,
+  });
 
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
+    { capabilities: { tools: {} }, instructions },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));

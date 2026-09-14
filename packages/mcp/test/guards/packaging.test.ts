@@ -106,12 +106,12 @@ describe('the packed tarball is what a consumer can actually build against', () 
 });
 
 describe("the served smelt_retrieve schema is the core's, not a copy of it", () => {
-  const source = readSource('server.ts');
+  const source = readSource('surface.ts');
 
   it('serves RetrieveTool.inputSchema rather than writing its own', () => {
     expect(
       source,
-      'server.ts no longer serves `retrieveTool.inputSchema`. The retrieve schema ' +
+      'surface.ts no longer serves `retrieveTool.inputSchema`. The retrieve schema ' +
         'belongs to @smeltjs/core, beside the `invoke` that reads it and the ' +
         'strict-mode rules its own guard pins; a copy here is a second document for ' +
         'one contract, and the day they disagree nothing reports it.',
@@ -122,10 +122,10 @@ describe("the served smelt_retrieve schema is the core's, not a copy of it", () 
     // A re-fork does not announce itself by deleting the reuse — it announces itself
     // by a hand-written schema appearing beside the tool name. This is that check.
     const retrieveEntry = source.slice(
-      source.indexOf('name: RETRIEVE_TOOL_NAME,'),
-      source.indexOf('name: REPO_MAP_TOOL_NAME,'),
+      source.indexOf('name: retrieveTool.name,'),
+      source.indexOf('name: batchTool.name,'),
     );
-    expect(retrieveEntry, 'the retrieve tool entry was not found in server.ts').not.toBe('');
+    expect(retrieveEntry, 'the retrieve tool entry was not found in surface.ts').not.toBe('');
     expect(
       retrieveEntry.includes('properties: {'),
       'the retrieve tool entry writes its own `properties` block — that is the copy ' +
@@ -145,14 +145,14 @@ describe("the served smelt_retrieve schema is the core's, not a copy of it", () 
  * a check this guard cannot make, because a `kind: 'src'` mutation points `@guard/*`
  * at a bare copy of `src` with no `node_modules` beside it, and actually executing
  * `createSmeltMcpServer` reaches into `@smeltjs/core`, which that copy cannot
- * resolve. Every other check in this guard reads `server.ts` as text for the same
+ * resolve. Every other check in this guard reads `surface.ts` as text for the same
  * reason; this one keeps the pairing.
  */
 describe('smelt_stats is strict-mode shaped in its own source, not only when it happens to be served', () => {
   it('states required: [] beside additionalProperties: false on the smelt_stats entry', () => {
-    const source = readSource('server.ts');
+    const source = readSource('surface.ts');
     const entry = source.slice(source.indexOf('name: SMELT_STATS_TOOL_NAME,'));
-    expect(entry, 'the smelt_stats tool entry was not found in server.ts').not.toBe('');
+    expect(entry, 'the smelt_stats tool entry was not found in surface.ts').not.toBe('');
     expect(
       /required:\s*\[\s*\]\s*,[\s\S]{0,80}additionalProperties:\s*false\s*,/.test(entry),
       'smelt_stats no longer states `required: []` beside `additionalProperties: false` ' +
@@ -164,7 +164,7 @@ describe('smelt_stats is strict-mode shaped in its own source, not only when it 
 export const MUTATIONS: GuardMutation[] = [
   {
     id: 'mcp-retrieve-schema-reforked',
-    file: 'server.ts',
+    file: 'surface.ts',
     find:
       '      inputSchema: {\n' +
       '        ...retrieveTool.inputSchema,\n' +
@@ -188,7 +188,7 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     id: 'mcp-smelt-stats-schema-loses-strict-mode',
-    file: 'server.ts',
+    file: 'surface.ts',
     find: '        required: [],\n        additionalProperties: false,\n      },\n    },\n  ];\n}',
     replace: '        required: [],\n      },\n    },\n  ];\n}',
     why: 'smelt_stats losing additionalProperties: false in its own source — the one tool that takes no arguments at all stops being strict-mode registrable, and the source-level pin (paired with the live protocol check in test/tools.test.ts) must notice',

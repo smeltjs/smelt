@@ -1124,6 +1124,20 @@ HTTP transports never enter the import graph — is guard-enforced in its own pa
 `smelt_file` honours the same `rerank` opt-in the CLI does, by handing the config block
 to the core's loader; the server imports no adapter of its own, and its guard says so.
 
+**The tool surface is measured.** The five descriptions and the `instructions` string
+travel to the model on every `initialize` and `tools/list`, relevant or not — the one
+context budget smelt spends on its own account. `packages/mcp/src/surface.ts` renders
+them once, as one value beside two byte counts — the prose (descriptions plus
+instructions) and the whole serialized `tools/list` payload, schemas included — from the
+core's two retrieve tools (their descriptions verbatim, no server-side tail) and the
+strategy list, and `test/guards/tool-surface.test.ts` holds the prose under
+`TOOL_SURFACE_BUDGET_BYTES` and the payload under `TOOL_LIST_BUDGET_BYTES`, each with a
+recount the module cannot flatter. The module imports only types, and the guard pins
+that, so the mutation runner's bare copy of `src` can be executed, not only grepped.
+Before the guard existed the server's own comment claimed the prose sat "well under
+2 KB"; measured, it was 3,718 bytes — Law 4, broken in the one package that ships prose
+to a model on every session.
+
 ### The opt-in reranker adapter
 
 [`@smeltjs/rerank-voyage`](../packages/rerank-voyage/) is the **one package in this

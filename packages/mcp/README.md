@@ -44,6 +44,14 @@ that a marker's `retrieve("hash")` maps to the `smelt_retrieve` tool. The marker
 and the `smelt_retrieve` contract are the frozen wire surface — stable from 0.1,
 treated as 1.0.
 
+Every description and the instructions are sent on every session, so they are treated
+as the byte budget they are: `src/surface.ts` renders them once and measures them — the
+prose, and the whole serialized tool list with its schemas — and
+`test/guards/tool-surface.test.ts` holds the two totals under `TOOL_SURFACE_BUDGET_BYTES`
+and `TOOL_LIST_BUDGET_BYTES`.
+The descriptions of `smelt_retrieve` and `smelt_retrieve_batch` are `@smeltjs/core`'s,
+verbatim — this server adds no words to either.
+
 ## Wiring it into a harness
 
 `smelt setup` and `smelt hooks install` write this registration automatically for
