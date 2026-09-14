@@ -231,7 +231,7 @@ export const MUTATIONS: GuardMutation[] = [
   },
   {
     id: 'hook-command-spawns-a-named-program',
-    file: 'harness/hook-command.ts',
+    file: 'harness/hook-probe.ts',
     find: 'spawnSync(process.execPath, [script], {',
     replace: "spawnSync('node', [script], {",
     why: 'the probe spawning a program by name instead of this very node — `node:child_process` is on the Law 1 allowlist under exactly that narrower ruling, and a name resolved through PATH is a program smelt did not choose and nobody classified',

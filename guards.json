@@ -1,6 +1,6 @@
 {
   "guards": 47,
-  "mutations": 253,
+  "mutations": 254,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -88,7 +88,7 @@
     },
     {
       "guard": "packages/core/test/guards/module-seams.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/no-network.test.ts",

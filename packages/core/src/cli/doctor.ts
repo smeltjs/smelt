@@ -2,8 +2,9 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { probeHookCommand, probeOwnFile } from '../harness/hook-command.ts';
-import type { HookCommand, HookProbe } from '../harness/hook-command.ts';
+import type { HookCommand } from '../harness/hook-command.ts';
+import { probeHookCommand, probeOwnFile } from '../harness/hook-probe.ts';
+import type { HookProbe } from '../harness/hook-probe.ts';
 import { hasShim } from '../harness/profile.ts';
 import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
