@@ -9,6 +9,7 @@ import type {
   RerankStage,
   RerankedCandidate,
 } from '../types.ts';
+import type { MarkerScheme } from '../apply.ts';
 
 /**
  * WHERE A RERANKER ACTUALLY BITES — the stage's slot in the pipeline, implemented.
@@ -102,12 +103,12 @@ export interface RerankRequest {
    */
   readonly budgetBytes: number;
   /**
-   * The pricing seam the plan was made with, so the slot prices a spared marker's
-   * disappearance the way `applyPlan` will price its arrival. Handed across the seam
-   * rather than rebuilt here: a slot that built its own would be the second opinion on
-   * marker cost the {@link MarkerPricing} seam exists to prevent.
+   * The marker scheme the plan was made with, so the slot prices a spared marker's
+   * disappearance the way `applyPlan` will price its arrival — the same `pricing`, from
+   * the same value. Handed across the seam rather than rebuilt here: a slot that built
+   * its own would be the second opinion on marker cost the scheme exists to prevent.
    */
-  readonly pricing: MarkerPricing;
+  readonly scheme: MarkerScheme;
 }
 
 /** The plan after the stage had its say, and the attribution every surface renders. */
@@ -129,7 +130,8 @@ export interface RerankOutcome {
  *   past its envelope. See {@link RerankStageError}.
  */
 export async function applyRerank(request: RerankRequest): Promise<RerankOutcome> {
-  const { stage, plan, text, query, budgetBytes, pricing } = request;
+  const { stage, plan, text, query, budgetBytes } = request;
+  const { pricing } = request.scheme;
   const identity = {
     adapter: stage.id,
     ...(stage.model === undefined ? {} : { model: stage.model }),

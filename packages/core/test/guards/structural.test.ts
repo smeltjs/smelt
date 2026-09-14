@@ -827,8 +827,8 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'smelter-pricing-ignores-custom-marker',
     file: 'smelter.ts',
-    find: '        pricing: markerPricing(language, config.marker),',
-    replace: '        pricing: markerPricing(language),',
+    find: '      const scheme = markerScheme(language, config.marker);',
+    replace: '      const scheme = markerScheme(language);',
     why: "createSmelter pricing built without config.marker — the planner prices the ~105-byte default while applyPlan renders the caller's far larger marker, so cuts the real marker outweighs get planned and the shipped custom-builder path grows its output with no error anywhere",
   },
   {
@@ -1046,8 +1046,8 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'apply-default-marker-ignores-language',
     file: 'apply.ts',
-    find: '  const buildMarker = options.marker ?? markerForLanguage(plan.language);',
-    replace: '  const buildMarker = options.marker ?? defaultMarker;',
+    find: '  const buildMarker = options.scheme?.build ?? markerForLanguage(plan.language);',
+    replace: '  const buildMarker = options.scheme?.build ?? defaultMarker;',
     why: 'bare applyPlan reverted to the bare marker — the documented planStructural → applyPlan composition would land `<<smelt/v1…>>` in a python survivor and break its parse',
   },
 ];

@@ -1,4 +1,4 @@
-import { applyPlan, markerForLanguage, markerPricing, reconstruct } from './apply.ts';
+import { applyPlan, markerScheme, reconstruct } from './apply.ts';
 import type { ApplyOptions, MarkerBuilder } from './apply.ts';
 import { detectLanguage } from './detect.ts';
 import { SmeltError } from './errors.ts';
@@ -122,10 +122,8 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
   const store = config.store ?? new MemoryElisionStore();
   // A constructed instance wins over a strategy name; the registry serves the names.
   const planner: Planner = config.planner ?? PLANNERS[config.strategy ?? DEFAULT_STRATEGY](config);
-  const applyOptions: ApplyOptions = {
-    ...(config.marker === undefined ? {} : { marker: config.marker }),
-    ...(config.measure === undefined ? {} : { measure: config.measure }),
-  };
+  const applyOptions: ApplyOptions =
+    config.measure === undefined ? {} : { measure: config.measure };
 
   return {
     store,
@@ -143,16 +141,18 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
         );
       }
       const language = options.language ?? detectLanguage(options.path);
+      // The marker scheme, minted once — here, and nowhere else in the shipped pipeline
+      // — and threaded to the planner (its pricing), the rerank slot (the same pricing)
+      // and applyPlan (its builder). One value, so a marker's cost and its bytes cannot
+      // disagree: a caller-supplied `config.marker` prices with its own rendering (a
+      // longer custom marker makes small cuts unprofitable, and the planner must see
+      // that), otherwise the language's leader-wrapped default.
+      const scheme = markerScheme(language, config.marker);
       const input: PlanInput = {
         text,
         language,
         budgetBytes,
-        // The MarkerPricing seam, constructed centrally — here, and nowhere else in
-        // the shipped pipeline — from the exact builder the applyPlan call below will
-        // use: a caller-supplied `config.marker` prices with its own rendering (a
-        // longer custom marker makes small cuts unprofitable, and the planner must
-        // see that), otherwise the language's leader-wrapped default.
-        pricing: markerPricing(language, config.marker),
+        pricing: scheme.pricing,
         ...(options.focus === undefined ? {} : { focus: options.focus }),
         // The ledger, the same way: read off the store this smelter cuts into, here and
         // nowhere else, when the store keeps one. Opt-in data for a planner that wants
@@ -179,15 +179,14 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
               text,
               query: (options.focus ?? []).join(' '),
               budgetBytes,
-              pricing: input.pricing,
+              scheme,
             });
       const plan = reranked?.plan ?? planned;
-      // The marker follows the *result's* language: it lands behind the language's
-      // line-comment leader (see MARKER_LINE_COMMENT_LEADERS), because a bare marker
-      // line breaks the survivor's syntax in every grammar tested. A caller-supplied
-      // marker builder always wins.
-      const marker = config.marker ?? markerForLanguage(plan.language);
-      const result = applyPlan(text, plan, store, { ...applyOptions, marker });
+      // The same scheme the plan was priced with builds every marker: behind the
+      // language's line-comment leader (see MARKER_LINE_COMMENT_LEADERS), because a
+      // bare marker line breaks the survivor's syntax in every grammar tested, or with
+      // the caller's own builder, which always wins.
+      const result = applyPlan(text, plan, store, { ...applyOptions, scheme });
       return reranked === undefined ? result : { ...result, rerank: reranked.attribution };
     },
   };

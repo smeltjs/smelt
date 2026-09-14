@@ -1,9 +1,9 @@
-import { ContentKindError, MissingMarkerPricingError } from '../errors.ts';
-import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
+import { ContentKindError } from '../errors.ts';
+import type { ElisionPlan, PlanInput, PlannedElision, Planner } from '../types.ts';
 import { focusMatcher } from './focus.ts';
 import type { FocusOptions } from './focus.ts';
 
-import { savingBytes } from './budget.ts';
+import { requirePricing, savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
 import { utf8OffsetIndex } from './offsets.ts';
 
@@ -59,7 +59,7 @@ interface Unit {
  * @throws {ContentKindError} when the text does not parse as a JSON object or array.
  */
 export function planJson(input: PlanInput, options: JsonPlannerOptions = {}): ElisionPlan {
-  const pricing = requirePricing(input);
+  const pricing = requirePricing(input, JSON_PLANNER_ID);
   if (probeKind(input.text) !== 'json') {
     throw new ContentKindError(
       `smelt: the json planner was asked to plan text that does not parse as a JSON ` +
@@ -115,12 +115,6 @@ function* flatten(units: readonly Unit[]): Generator<Unit> {
     yield unit;
     if (unit.children !== undefined) yield* flatten(unit.children);
   }
-}
-
-function requirePricing(input: PlanInput): MarkerPricing {
-  const pricing: MarkerPricing | undefined = input.pricing;
-  if (pricing === undefined) throw new MissingMarkerPricingError(JSON_PLANNER_ID);
-  return pricing;
 }
 
 /* ------------------------------------------------------------------------------------

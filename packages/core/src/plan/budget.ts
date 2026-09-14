@@ -1,4 +1,5 @@
-import type { MarkerPricing, PlannedElision } from '../types.ts';
+import { MissingMarkerPricingError } from '../errors.ts';
+import type { MarkerPricing, PlanInput, PlannedElision } from '../types.ts';
 
 /**
  * What a plan will cost once its markers land — the arithmetic both planners do.
@@ -31,4 +32,16 @@ export function predictOutputBytes(
   pricing: MarkerPricing,
 ): number {
   return elisions.reduce((bytes, elision) => bytes - savingBytes(elision, pricing), inputBytes);
+}
+
+/**
+ * The runtime backstop for `PlanInput.pricing`, which TypeScript already requires: a
+ * JS caller who omits it gets {@link MissingMarkerPricingError} naming the planner,
+ * never a guessed cost. One function, since review IV (REP-53) — every shipped planner
+ * used to carry its own copy of these three lines.
+ */
+export function requirePricing(input: PlanInput, plannerId: string): MarkerPricing {
+  const pricing: MarkerPricing | undefined = input.pricing;
+  if (pricing === undefined) throw new MissingMarkerPricingError(plannerId);
+  return pricing;
 }

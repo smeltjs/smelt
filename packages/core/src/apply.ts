@@ -119,31 +119,50 @@ export function markerForLanguage(
 const PLACEHOLDER_HASH = '0'.repeat(HASH_LENGTH);
 
 /**
- * The one adapter behind the {@link MarkerPricing} seam.
+ * The marker scheme: the builder `applyPlan` will emit markers with, and the pricing
+ * that measures exactly those markers — minted together, so they cannot disagree.
  *
  * Marker cost is this module's fact: `applyPlan` renders the marker, so only this
- * module can price it without guessing. The pricing is built from the **exact builder
- * `applyPlan` will use** — the same resolution, in the same order: a caller-supplied
- * builder (`SmelterConfig.marker` / `ApplyOptions.marker`) wins wholesale, otherwise
- * the language's leader-wrapped default via {@link markerForLanguage}.
+ * module can price it without guessing. Until review IV (REP-53) the builder and the
+ * pricing were resolved separately — "a supplied builder wins, else the language's
+ * leader" written three times, with `apply.ts` documenting that pricing with one builder
+ * and emitting with another produces cuts that grow the output, silently, and then
+ * leaving the pairing to callers. The smelter priced against the *detected* language
+ * and built against the *plan's*; they agreed because every planner echoes its input
+ * language, which is an accident no type recorded. One value carries both now.
  *
  * The custom-builder leg is load-bearing, not a convenience: a caller who installs a
  * longer `MarkerBuilder` changes what every elision costs, and a planner still pricing
  * the *default* marker would keep planning elisions the real marker makes
- * unprofitable — cuts that grow the output, silently. Pricing with the builder's own
- * rendering closes that hole: `costBytes` measures the marker *that builder* would
- * emit, byte for byte.
- *
- * `createSmelter` (and through it, the CLI) calls this centrally, once per smelt call;
- * a caller driving `planLexical`/`planStructural` directly builds its own and puts it
- * on the {@link PlanInput}.
+ * unprofitable. `pricing.costBytes` measures the marker `build` would emit, byte for
+ * byte — `test/guards/marker-format.test.ts` breaks the pairing and watches the output
+ * grow.
  */
-export function markerPricing(
+export interface MarkerScheme {
+  /** Renders the marker `applyPlan` will put where the bytes were. */
+  readonly build: MarkerBuilder;
+  /** Prices exactly what {@link build} renders. The {@link MarkerPricing} seam planners read. */
+  readonly pricing: MarkerPricing;
+}
+
+/**
+ * Mint the scheme for a language: a caller-supplied builder wins wholesale, otherwise
+ * the language's leader-wrapped {@link defaultMarker} via {@link markerForLanguage}.
+ * `createSmelter` (and through it the CLI and the MCP server) mints one per smelt call
+ * and threads it to the planner, the rerank slot and `applyPlan`; a caller driving
+ * `planLexical`/`planStructural` directly mints its own and puts `.pricing` on the
+ * {@link PlanInput} and the scheme on {@link ApplyOptions}.
+ */
+export function markerScheme(
   language: DetectedLanguage = 'unknown',
-  markerBuilder?: MarkerBuilder,
-): MarkerPricing {
-  // The same resolution applyPlan performs: a supplied builder wins wholesale.
-  const build = markerBuilder ?? markerForLanguage(language);
+  override?: MarkerBuilder,
+): MarkerScheme {
+  const build = override ?? markerForLanguage(language);
+  return { build, pricing: pricingFor(build) };
+}
+
+/** The pricing of one builder: the bytes of the marker it renders, hash length pinned. */
+function pricingFor(build: MarkerBuilder): MarkerPricing {
   return {
     costBytes: (reason, elidedBytes) =>
       Buffer.byteLength(
@@ -158,15 +177,30 @@ export function markerPricing(
   };
 }
 
+/**
+ * The pricing half of {@link markerScheme}, for a caller that only plans. The scheme is
+ * the pairing the smelter threads end to end; a caller that mints pricing alone and
+ * later applies with a bare `applyPlan` owns that pairing, and the guard that watches
+ * it is `test/guards/marker-format.test.ts`.
+ */
+export function markerPricing(
+  language: DetectedLanguage = 'unknown',
+  markerBuilder?: MarkerBuilder,
+): MarkerPricing {
+  return markerScheme(language, markerBuilder).pricing;
+}
+
 export interface ApplyOptions {
   /**
-   * Overrides the marker builder. The default follows the *plan's* language —
-   * {@link markerForLanguage} — so the documented composition
+   * The scheme the plan was priced with — its `build` is the marker every elision
+   * gets. Supply the one you handed the planner; then the marker's cost and its bytes
+   * are the same fact. Absent, the builder follows the *plan's* language
+   * ({@link markerForLanguage}), so the documented composition
    * `planStructural → applyPlan` lands a `# `-led marker in python without the caller
-   * wiring it, the same as `createSmelter` does. A bare {@link defaultMarker} in a
-   * python survivor is exactly the parse-breaking failure the leader exists to prevent.
+   * wiring it. A bare {@link defaultMarker} in a python survivor is exactly the
+   * parse-breaking failure the leader exists to prevent.
    */
-  readonly marker?: MarkerBuilder;
+  readonly scheme?: MarkerScheme;
   /** A consumer-supplied counter. See {@link Measure}; the budget stays in bytes. */
   readonly measure?: Measure;
 }
@@ -174,8 +208,9 @@ export interface ApplyOptions {
 /**
  * Turn a plan into text.
  *
- * This is the only function in smelt that removes anything, and it contains no
- * judgement at all: it validates the plan, stores every removed run, substitutes
+ * This is the only function in smelt that removes anything, and it makes one
+ * judgement — which marker a language gets, when no scheme is handed in; everything
+ * else is mechanism: it validates the plan, stores every removed run, substitutes
  * markers, and records where each marker landed. All the deciding happens in a
  * {@link Planner}, which is why a plan can be reviewed before a byte moves.
  *
@@ -189,7 +224,7 @@ export function applyPlan(
   store: ElisionStore,
   options: ApplyOptions = {},
 ): SmeltResult {
-  const buildMarker = options.marker ?? markerForLanguage(plan.language);
+  const buildMarker = options.scheme?.build ?? markerForLanguage(plan.language);
   const input = Buffer.from(text, 'utf8');
 
   const ordered = plan.elisions.toSorted((a, b) => a.range.start - b.range.start);

@@ -17,8 +17,9 @@ import type { DetectedLanguage, ElisionReason, PlanInput } from '../src/types.ts
 import { FUNCTIONS_TS } from './structural-fixtures.ts';
 
 /**
- * The MarkerPricing seam: apply.ts is the one owner of marker cost, planners ask and
- * never guess. `markerPricing()` must price the exact marker `applyPlan` will render —
+ * The MarkerPricing seam — the pricing half of a MarkerScheme: apply.ts is the one owner
+ * of marker cost, planners ask and never guess. `markerPricing()` must price the exact
+ * marker the scheme's builder renders —
  * default builder, per-language comment leader, or a caller's custom builder — because
  * a planner working from any other number can plan an elision that grows the output.
  */
@@ -37,7 +38,7 @@ const expensive: MarkerBuilder = (info) => `${'#'.repeat(100_000)} ${info.explan
 /** A custom builder longer than the default, for the builder-wins-wholesale case. */
 const customLonger: MarkerBuilder = (info) => `!!ELIDED ${info.explanation}!!${'x'.repeat(200)}`;
 
-describe('markerPricing — the one adapter for marker cost', () => {
+describe('markerPricing — the pricing half of the scheme, the one adapter for marker cost', () => {
   it('prices the default marker byte-for-byte', () => {
     const pricing = markerPricing('unknown');
     const rendered = defaultMarker({ hash: HASH_STAND_IN, bytes: 1234, ...REASON });

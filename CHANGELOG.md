@@ -137,6 +137,20 @@ the runner rather than by hand.
   gains a case-sensitivity case and a mutation that folds case regardless.
   (Architecture review IV, REP-52.)
 
+- **The marker builder and its pricing are one value.** `apply.ts` documented that
+  pricing a plan with one marker builder and applying it with another produces "cuts
+  that grow the output, silently" — and then resolved the two apart in three places,
+  while `createSmelter` priced against the detected language and built the marker from
+  the plan's; they agreed because every planner echoes its input language, an accident
+  no type recorded. `markerScheme(language, override?)` now mints both together, the
+  smelter threads the one scheme to the planner, the rerank slot and `applyPlan`, and the
+  four copies of the `requirePricing` backstop are one function in `plan/budget.ts`. The
+  marker-format guard breaks the pairing and watches the output grow. **TypeScript API:**
+  `ApplyOptions.marker` is replaced by `ApplyOptions.scheme`, and `RerankRequest.pricing`
+  by `RerankRequest.scheme` (both `MarkerScheme`); `markerPricing()` remains as the
+  pricing half for a caller that only plans. Output is byte-identical. (Architecture
+  review IV, REP-53.)
+
 ### Docs
 
 - **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**

@@ -75,7 +75,7 @@ export interface ElisionPlan {
  * a marker that costs more than it removes grows the output; and budget prediction:
  * which ladder rung actually fits), and before this seam each planner rebuilt the
  * marker machinery privately to measure it — correct, but an inversion. Now
- * `markerPricing()` in `apply.ts` builds the one adapter from the exact builder
+ * `markerScheme()` in `apply.ts` mints the one adapter beside the exact builder
  * `applyPlan` will use, and planners ask it. They never guess, and they never render
  * a marker of their own.
  *
@@ -93,7 +93,7 @@ export interface MarkerPricing {
  *
  * Constructed centrally: `createSmelter` (and through it, the CLI) builds the one
  * `PlanInput` per call, including its {@link MarkerPricing} — a caller invoking
- * `planLexical`/`planStructural` directly builds `pricing` with `markerPricing()`
+ * `planLexical`/`planStructural` directly mints a scheme with `markerScheme()`
  * from `apply.ts`. A JS caller who omits it gets {@link MissingMarkerPricingError}
  * at plan time, not a guessed cost.
  */
@@ -110,7 +110,7 @@ export interface PlanInput {
   /**
    * What a marker costs. Required: a planner that guesses marker cost can plan an
    * elision that grows the output. See {@link MarkerPricing}; built by
-   * `markerPricing()` in `apply.ts` from the exact builder `applyPlan` will use.
+   * `markerScheme()` in `apply.ts`, beside the exact builder `applyPlan` will use.
    */
   readonly pricing: MarkerPricing;
   /**

@@ -10,7 +10,7 @@ import { EXIT, runCli } from '../src/cli/run.ts';
 import { loadRerankStage } from '../src/rerank/load.ts';
 import { applyRerank } from '../src/rerank/protect.ts';
 import { createSmelter } from '../src/smelter.ts';
-import { markerPricing } from '../src/apply.ts';
+import { markerScheme } from '../src/apply.ts';
 import { planLexical } from '../src/plan/lexical.ts';
 import { predictOutputBytes, savingBytes } from '../src/plan/budget.ts';
 import type { ElisionPlan, RerankCandidate, RerankStage, RerankedCandidate } from '../src/types.ts';
@@ -63,8 +63,9 @@ const TEXT = Array.from({ length: 60 }, (_unused, i) => `line ${String(i)} fille
   '\n',
 );
 
-/** The pricing every test here plans and spares with — one seam, as a run has one. */
-const PRICING = markerPricing('unknown');
+/** The scheme every test here plans and spares with — one value, as a run has one. */
+const SCHEME = markerScheme('unknown');
+const PRICING = SCHEME.pricing;
 
 /**
  * The slot, with the two facts the smelter carries across the seam. The default budget
@@ -72,10 +73,10 @@ const PRICING = markerPricing('unknown');
  * exactly as it did before the rung existed and cannot be bound by it.
  */
 function slot(
-  request: Omit<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'pricing'> &
-    Partial<Pick<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'pricing'>>,
+  request: Omit<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'scheme'> &
+    Partial<Pick<Parameters<typeof applyRerank>[0], 'budgetBytes' | 'scheme'>>,
 ): ReturnType<typeof applyRerank> {
-  return applyRerank({ budgetBytes: 1_000_000, pricing: PRICING, ...request });
+  return applyRerank({ budgetBytes: 1_000_000, scheme: SCHEME, ...request });
 }
 
 /** A real lexical plan over `TEXT`, so the candidates are the ones a run would see. */

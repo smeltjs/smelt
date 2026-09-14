@@ -1,6 +1,6 @@
 {
   "guards": 47,
-  "mutations": 263,
+  "mutations": 264,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -80,7 +80,7 @@
     },
     {
       "guard": "packages/core/test/guards/marker-format.test.ts",
-      "count": 3
+      "count": 4
     },
     {
       "guard": "packages/core/test/guards/mcp-registration.test.ts",

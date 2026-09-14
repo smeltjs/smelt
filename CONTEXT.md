@@ -299,14 +299,25 @@ doctor` can now say _verified_: `probeHookCommand` runs the command — for a gu
   `test/guards/module-seams.test.ts` pins both halves: the import edges, and the count
   of the declarations, because an import edge that is merely absent is satisfied by a
   copy.
+- **MarkerScheme** (`markerScheme(language, override?)` in `apply.ts`): the marker
+  builder `applyPlan` will emit with and the **MarkerPricing** that measures exactly
+  those markers, minted together as one value and threaded by `createSmelter` to the
+  planner (its `pricing`), the rerank slot (the same `pricing`, via
+  `RerankRequest.scheme`) and `applyPlan` (its `build`, via `ApplyOptions.scheme`).
+  Before review IV (REP-53) the two were resolved apart in three places, `apply.ts`
+  warned that pricing with one builder and emitting with another grows the output
+  silently, and the smelter priced against the detected language while building against
+  the plan's — agreeing because every planner echoes its input language, which no type
+  recorded. `test/guards/marker-format.test.ts` breaks the pairing and watches the
+  output grow. _Avoid_: marker config, marker options.
 - **MarkerPricing**: the seam through which planners ask what a marker will cost in
-  bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. Owned and
-  built by `apply.ts`: `markerPricing(language, marker)` is the one adapter, built from
-  the exact builder `applyPlan` will use (a caller's custom `MarkerBuilder` prices with
-  its own rendering, so a longer marker makes small cuts unprofitable and the planner
-  sees it). Planners never estimate independently; `createSmelter` and the CLI construct
-  the pricing centrally, and a JS caller who omits it gets `MissingMarkerPricingError`,
-  never a guessed cost.
+  bytes — `costBytes(reason, elidedBytes)`, required on every `PlanInput`. The pricing
+  half of a **MarkerScheme**; `markerPricing(language, marker)` remains for a caller
+  that only plans. A caller's custom `MarkerBuilder` prices with its own rendering, so
+  a longer marker makes small cuts unprofitable and the planner sees it. Planners never
+  estimate independently, and the runtime backstop for a JS caller who omits it —
+  `MissingMarkerPricingError`, never a guessed cost — is one function,
+  `requirePricing` in `plan/budget.ts`, since REP-53 (it was four copies).
 - **Subcommand**: the single adapter carrying every per-verb fact — the flags it owns
   (`readonly FlagName[]`), its `parse`, its `resolve`, its `run`, its `usage` block and
   the one sentence a refusal ends with. One file per verb in `src/cli/subcommands/`;

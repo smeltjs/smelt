@@ -1,7 +1,7 @@
 import { Parser } from 'web-tree-sitter';
 import type { Node, Tree } from 'web-tree-sitter';
 
-import { GrammarUnavailableError, MissingMarkerPricingError } from '../errors.ts';
+import { GrammarUnavailableError } from '../errors.ts';
 import type { LanguageStructure } from '../lang/profile.ts';
 import { profileFor, structuralLanguages } from '../lang/registry.ts';
 import type {
@@ -13,7 +13,7 @@ import type {
   Planner,
 } from '../types.ts';
 
-import { predictOutputBytes, savingBytes } from './budget.ts';
+import { predictOutputBytes, requirePricing, savingBytes } from './budget.ts';
 import { focusMatcher } from './focus.ts';
 import type { FocusOptions } from './focus.ts';
 import { loadGrammar } from './grammar.ts';
@@ -170,11 +170,8 @@ export async function planStructural(
   options: StructuralPlannerOptions = {},
 ): Promise<ElisionPlan> {
   const language = assertStructuralLanguage(input.language);
-  // The runtime backstop for JS callers: TypeScript makes `pricing` required, but a
-  // JS caller can omit it, and the honest answer is a named refusal rather than the
-  // planner quietly pricing markers itself — the inversion the seam removed.
-  const pricing: MarkerPricing | undefined = input.pricing;
-  if (pricing === undefined) throw new MissingMarkerPricingError(STRUCTURAL_PLANNER_ID);
+  // The backstop only: the plan below reads `input.pricing` where it prices.
+  requirePricing(input, STRUCTURAL_PLANNER_ID);
   const grammar = await loadGrammar(language);
 
   const parser = new Parser();
