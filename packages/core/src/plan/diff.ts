@@ -3,7 +3,7 @@ import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } f
 import { focusMatcher } from './focus.ts';
 import type { FocusOptions } from './focus.ts';
 
-import { predictOutputBytes, requirePricing, savingBytes } from './budget.ts';
+import { chooseUnderBudget, requirePricing, savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
 
 export const DIFF_PLANNER_ID = 'diff/v1';
@@ -168,9 +168,7 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
     ...fixed,
     ...matched.flatMap(({ file, hunk }) => windowsIn(file, hunk, context, matches, pricing)),
   ]);
-  const elisions =
-    attempts.find((plan) => predictOutputBytes(inputBytes, plan, pricing) <= input.budgetBytes) ??
-    attempts[attempts.length - 1]!;
+  const elisions = chooseUnderBudget(inputBytes, attempts, input.budgetBytes, pricing);
 
   return { planner: DIFF_PLANNER_ID, language: input.language, elisions };
 }

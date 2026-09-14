@@ -9,7 +9,12 @@ codebase-design glossary.
 - **Blob**: the text a caller hands to `smelt()` — a file, grep result, trace, log. smelt
   never fetches one itself.
 - **Budget**: a soft output ceiling in UTF-8 bytes. A target planners aim under, never a
-  silent guarantee; overrunning it is reported, not hidden.
+  silent guarantee; overrunning it is reported, not hidden. Its law — required, a whole
+  number, greater than zero, no default — is stated once, in `plan/budget.ts` beside the
+  arithmetic (`budgetRequired`, `budgetFault`, `budgetMalformed`, and `lawfulBudget`
+  applying all three as a value-or-refusal); the CLI, the MCP server, `createSmelter` and `buildRepoMap` all
+  refuse with that sentence, in their own knob's spelling. The ladder's selection rule —
+  first attempt that fits, else the tightest — is `chooseUnderBudget` there too.
 - **Elision**: a planned removal of a byte range, carrying an `ElisionReason` (stable
   `rule` id + human `explanation`). Applied elisions are reversible by construction.
 - **Marker**: the one-line stand-in `<<smelt/v1: … — retrieve("hash")>>` that replaces

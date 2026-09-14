@@ -6,6 +6,7 @@ import type { DiffPlannerOptions } from './plan/diff.ts';
 import type { JsonPlannerOptions } from './plan/json.ts';
 import type { LexicalPlannerOptions } from './plan/lexical.ts';
 import { DEFAULT_STRATEGY, PLANNERS } from './plan/planners.ts';
+import { lawfulBudget } from './plan/budget.ts';
 import type { Strategy } from './plan/planners.ts';
 import type { StructuralPlannerOptions } from './plan/structural.ts';
 import { applyRerank } from './rerank/protect.ts';
@@ -132,14 +133,15 @@ export function createSmelter(config: SmelterConfig = {}): Smelter {
     retrieve: (hash) => store.retrieve(hash),
     reconstruct: (result) => reconstruct(result, store),
     async smelt(text, options = {}) {
-      const budgetBytes = options.budgetBytes ?? config.defaultBudgetBytes;
-      if (budgetBytes === undefined) {
-        throw new SmeltError(
-          'smelt: no budget. Pass `budgetBytes` to smelt() or `defaultBudgetBytes` to ' +
-            'createSmelter(). There is no built-in default, because a budget smelt ' +
-            'invented would silently decide how much of your context to throw away.',
-        );
-      }
+      // The budget law, in the seam's words — the same sentence the CLI and the MCP
+      // server refuse with, from the one place it is stated (review IV, REP-54).
+      const budget = lawfulBudget(options.budgetBytes ?? config.defaultBudgetBytes, {
+        knob: '`budgetBytes`',
+        stake: 'your context to throw away',
+        advice: 'Pass `budgetBytes` to smelt() or `defaultBudgetBytes` to createSmelter().',
+      });
+      if (!budget.ok) throw new SmeltError(`smelt: ${budget.refusal}`);
+      const { budgetBytes } = budget;
       const language = options.language ?? detectLanguage(options.path);
       // The marker scheme, minted once — here, and nowhere else in the shipped pipeline
       // — and threaded to the planner (its pricing), the rerank slot (the same pricing)

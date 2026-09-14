@@ -1,6 +1,6 @@
 {
   "guards": 47,
-  "mutations": 264,
+  "mutations": 265,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -96,7 +96,7 @@
     },
     {
       "guard": "packages/core/test/guards/ops-seam.test.ts",
-      "count": 7
+      "count": 8
     },
     {
       "guard": "packages/core/test/guards/packaging.test.ts",

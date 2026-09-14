@@ -132,13 +132,13 @@ smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical
 
 ```
 smelt  packages/core/src/plan/lexical.ts  typescript  lexical/v1
-in 7,412 B → out 988 B   (-86.7%, 3 elisions)
+in 7,328 B → out 988 B   (-86.5%, 3 elisions)
 focus  planLexical
 
   rule          lines  bytes  hash              explanation
-  focus-window     48  2,058  854d4737e2cc3116  collapsed 48 lines with no match for the focu…
+  focus-window     48  2,057  9cabfea303a9dad2  collapsed 48 lines with no match for the focu…
   focus-window     11    756  c35d231379780e11  collapsed 11 lines with no match for the focu…
-  focus-window    122  3,940  79459ffb81056dd6  collapsed 122 lines with no match for the foc…
+  focus-window    119  3,857  2a00ebd8bd7e58df  collapsed 119 lines with no match for the foc…
 ```
 
 At the end of a session the store reports on itself — what it holds, the expansion rate,
@@ -155,7 +155,7 @@ smelt stats  /your/project/.smelt/store
   expansion  ████████████░░░░░░░░░░░░  50.0%   1 of 2 elisions asked for back
 
   elisionsStored            2
-  bytesStored           4,147
+  bytesStored           4,146
   retrieveCalls             1
   uniqueRetrieved           1
   misses                    0
@@ -1214,7 +1214,12 @@ codebase-design glossary.
 - **Blob**: the text a caller hands to `smelt()` — a file, grep result, trace, log. smelt
   never fetches one itself.
 - **Budget**: a soft output ceiling in UTF-8 bytes. A target planners aim under, never a
-  silent guarantee; overrunning it is reported, not hidden.
+  silent guarantee; overrunning it is reported, not hidden. Its law — required, a whole
+  number, greater than zero, no default — is stated once, in `plan/budget.ts` beside the
+  arithmetic (`budgetRequired`, `budgetFault`, `budgetMalformed`, and `lawfulBudget`
+  applying all three as a value-or-refusal); the CLI, the MCP server, `createSmelter` and `buildRepoMap` all
+  refuse with that sentence, in their own knob's spelling. The ladder's selection rule —
+  first attempt that fits, else the tightest — is `chooseUnderBudget` there too.
 - **Elision**: a planned removal of a byte range, carrying an `ElisionReason` (stable
   `rule` id + human `explanation`). Applied elisions are reversible by construction.
 - **Marker**: the one-line stand-in `<<smelt/v1: … — retrieve("hash")>>` that replaces
@@ -2392,7 +2397,11 @@ The middle was duplicated anyway. Some of it was shared correctly (`formatReport
 `PLANNERS` registry, `DirectoryElisionStore`, `loadNearestConfig`), but the law-carrying
 half was not. **Five laws, two implementations each:**
 
-1. a budget is a positive integer with no default;
+1. a budget is a positive integer with no default (since review IV, REP-54, this one is
+   stated beside the budget arithmetic in `plan/budget.ts` and re-exported through the
+   seam, because `createSmelter` and `buildRepoMap` — the two entry points a library
+   consumer calls — had each restated it in their own words; the ladder's selection
+   rule, once two copies, is `chooseUnderBudget` in the same file);
 2. an explicit strategy beats a configured one, and `lexical` fills last;
 3. a tree reader refuses a file, and names the verb that wanted one;
 4. a path is read, or the refusal names it;

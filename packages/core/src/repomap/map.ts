@@ -5,6 +5,7 @@ import { SmeltError } from '../errors.ts';
 import type { LanguageId } from '../types.ts';
 import { focusMatcher } from '../plan/focus.ts';
 import type { FocusMatcher, FocusOptions } from '../plan/focus.ts';
+import { lawfulBudget } from '../plan/budget.ts';
 
 import { TagsCache, tagsCacheKey } from './cache.ts';
 import { fsCall } from './io.ts';
@@ -275,14 +276,15 @@ export interface RepoMap {
  *   never a silent skip that would make the map quietly incomplete.
  */
 export async function buildRepoMap(options: RepoMapOptions): Promise<RepoMap> {
-  const { root, budgetBytes } = options;
-  if (!Number.isInteger(budgetBytes) || budgetBytes < 1) {
-    throw new SmeltError(
-      `smelt: budgetBytes must be a positive integer, got ${String(budgetBytes)}. ` +
-        `There is no default budget — a budget smelt invented would silently decide ` +
-        `how much of the map to throw away.`,
-    );
-  }
+  const { root } = options;
+  // The budget law, in the seam's words (review IV, REP-54) — `smelt map` and the
+  // `repo_map` tool refuse with the same sentence, from the same place.
+  const budget = lawfulBudget(options.budgetBytes, {
+    knob: '`budgetBytes`',
+    stake: 'the map to leave out',
+  });
+  if (!budget.ok) throw new SmeltError(`smelt: ${budget.refusal}`);
+  const { budgetBytes } = budget;
   const ignore = options.ignore ?? DEFAULT_REPO_IGNORE;
   const reader = options.reader ?? nodeFsReader();
   const cacheDir = options.cacheDir;

@@ -136,6 +136,20 @@ the runner rather than by hand.
   gains `caseSensitive` and honours it. Planner output is unchanged; the repo-map guard
   gains a case-sensitivity case and a mutation that folds case regardless.
   (Architecture review IV, REP-52.)
+- **The budget law is stated once, inside the library too.** `ops/inputs.ts` owned "a
+  budget is required, a whole number, greater than zero, with no default" for the two
+  front doors — and `createSmelter` and `buildRepoMap`, the two entry points a library
+  consumer actually calls, each restated it in their own prose, unwatched by the guard
+  that scans for exactly that. The law now lives beside the budget arithmetic in
+  `plan/budget.ts` (`budgetRequired`, `budgetFault`, `budgetMalformed`, plus
+  `lawfulBudget` applying them as a value-or-refusal), is re-exported through the ops seam unchanged, and the
+  two entry points refuse in its sentence: a smelter with no budget now says
+  "`budgetBytes` is required, in UTF-8 bytes …" instead of "no budget", and a smelter
+  given `0` or `1.5` now refuses where it used to plan. The ladder's selection rule —
+  the first attempt whose predicted output fits, else the tightest — was two copies and
+  is `chooseUnderBudget`; the structural planner's budget rung is a different shape and
+  keeps its own. The ops-seam guard names each law's one home and gains a mutation that
+  makes the ladder always take the tightest rung. (Architecture review IV, REP-54.)
 
 - **The marker builder and its pricing are one value.** `apply.ts` documented that
   pricing a plan with one marker builder and applying it with another produces "cuts

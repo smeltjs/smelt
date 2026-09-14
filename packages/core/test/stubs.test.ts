@@ -27,7 +27,7 @@ describe('stubs throw instead of returning a plausible wrong answer', () => {
   it('a smelter with no budget refuses to invent one', async () => {
     const smelter = createSmelter();
     await expect(smelter.smelt('some text')).rejects.toThrow(SmeltError);
-    await expect(smelter.smelt('some text')).rejects.toThrow(/no budget/);
+    await expect(smelter.smelt('some text')).rejects.toThrow(/is required, in UTF-8 bytes/);
   });
 
   it('every stub error is a SmeltError, so callers can tell "we said no" from "it broke"', () => {

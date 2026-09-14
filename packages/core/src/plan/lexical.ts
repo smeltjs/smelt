@@ -2,7 +2,7 @@ import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } f
 import { focusMatcher } from './focus.ts';
 import type { FocusMatcher, FocusOptions } from './focus.ts';
 
-import { markerBytes, predictOutputBytes, requirePricing } from './budget.ts';
+import { chooseUnderBudget, markerBytes, requirePricing } from './budget.ts';
 
 export const LEXICAL_PLANNER_ID = 'lexical/v1';
 
@@ -97,10 +97,7 @@ export function planLexical(input: PlanInput, options: LexicalPlannerOptions = {
       );
 
   const inputBytes = Buffer.byteLength(input.text, 'utf8');
-  const chosen =
-    attempts.find(
-      (elisions) => predictOutputBytes(inputBytes, elisions, pricing) <= input.budgetBytes,
-    ) ?? attempts[attempts.length - 1]!;
+  const chosen = chooseUnderBudget(inputBytes, attempts, input.budgetBytes, pricing);
 
   return {
     planner: LEXICAL_PLANNER_ID,

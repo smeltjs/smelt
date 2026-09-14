@@ -405,7 +405,11 @@ The middle was duplicated anyway. Some of it was shared correctly (`formatReport
 `PLANNERS` registry, `DirectoryElisionStore`, `loadNearestConfig`), but the law-carrying
 half was not. **Five laws, two implementations each:**
 
-1. a budget is a positive integer with no default;
+1. a budget is a positive integer with no default (since review IV, REP-54, this one is
+   stated beside the budget arithmetic in `plan/budget.ts` and re-exported through the
+   seam, because `createSmelter` and `buildRepoMap` — the two entry points a library
+   consumer calls — had each restated it in their own words; the ladder's selection
+   rule, once two copies, is `chooseUnderBudget` in the same file);
 2. an explicit strategy beats a configured one, and `lexical` fills last;
 3. a tree reader refuses a file, and names the verb that wanted one;
 4. a path is read, or the refusal names it;
