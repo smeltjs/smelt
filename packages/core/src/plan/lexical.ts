@@ -1,5 +1,7 @@
 import { MissingMarkerPricingError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
+import { focusMatcher } from './focus.ts';
+import type { FocusMatcher, FocusOptions } from './focus.ts';
 
 import { markerBytes, predictOutputBytes } from './budget.ts';
 
@@ -8,7 +10,7 @@ export const LEXICAL_PLANNER_ID = 'lexical/v1';
 /** How hard the head/tail strategy squeezes, in order, when the budget is not met. */
 const HEAD_TAIL_LADDER: readonly number[] = [1, 0.5, 0.25, 0.1, 0.05];
 
-export interface LexicalPlannerOptions {
+export interface LexicalPlannerOptions extends FocusOptions {
   /** Lines of context kept either side of a focus match. Shrinks under budget pressure. */
   readonly contextLines?: number;
   /** Never collapse a run shorter than this, however tempting. */
@@ -17,8 +19,6 @@ export interface LexicalPlannerOptions {
   readonly headLines?: number;
   /** With no focus terms: lines kept at the bottom. */
   readonly tailLines?: number;
-  /** Focus matching is substring, case-insensitive by default. */
-  readonly caseSensitive?: boolean;
 }
 
 interface Line {
@@ -74,29 +74,28 @@ export class LexicalPlanner implements Planner {
 export function planLexical(input: PlanInput, options: LexicalPlannerOptions = {}): ElisionPlan {
   const pricing = requirePricing(input);
   const lines = splitLines(input.text);
-  const focus = (input.focus ?? []).filter((term) => term.length > 0);
+  const focus = focusMatcher(input.focus, options);
   const minRunLines = options.minRunLines ?? 3;
 
-  const attempts: readonly (readonly PlannedElision[])[] =
-    focus.length > 0
-      ? ladder(options.contextLines ?? 4).map((context) =>
-          collapse(lines, keepByFocus(lines, focus, context, options.caseSensitive ?? false), {
-            minRunLines,
-            rule: 'focus-window',
-            pricing,
-          }),
-        )
-      : HEAD_TAIL_LADDER.map((shrink) =>
-          collapse(
+  const attempts: readonly (readonly PlannedElision[])[] = !focus.empty
+    ? ladder(options.contextLines ?? 4).map((context) =>
+        collapse(lines, keepByFocus(lines, focus, context), {
+          minRunLines,
+          rule: 'focus-window',
+          pricing,
+        }),
+      )
+    : HEAD_TAIL_LADDER.map((shrink) =>
+        collapse(
+          lines,
+          keepByHeadTail(
             lines,
-            keepByHeadTail(
-              lines,
-              Math.max(3, Math.round((options.headLines ?? 40) * shrink)),
-              Math.max(3, Math.round((options.tailLines ?? 20) * shrink)),
-            ),
-            { minRunLines, rule: 'head-tail', pricing },
+            Math.max(3, Math.round((options.headLines ?? 40) * shrink)),
+            Math.max(3, Math.round((options.tailLines ?? 20) * shrink)),
           ),
-        );
+          { minRunLines, rule: 'head-tail', pricing },
+        ),
+      );
 
   const inputBytes = Buffer.byteLength(input.text, 'utf8');
   const chosen =
@@ -146,18 +145,11 @@ function splitLines(text: string): readonly Line[] {
   return lines;
 }
 
-function keepByFocus(
-  lines: readonly Line[],
-  focus: readonly string[],
-  contextLines: number,
-  caseSensitive: boolean,
-): boolean[] {
-  const needles = caseSensitive ? focus : focus.map((t) => t.toLowerCase());
+function keepByFocus(lines: readonly Line[], focus: FocusMatcher, contextLines: number): boolean[] {
   const keep: boolean[] = Array.from({ length: lines.length }, () => false);
 
   for (let i = 0; i < lines.length; i += 1) {
-    const haystack = caseSensitive ? lines[i]!.text : lines[i]!.text.toLowerCase();
-    if (!needles.some((needle) => haystack.includes(needle))) continue;
+    if (!focus.matches(lines[i]!.text)) continue;
     const from = Math.max(0, i - contextLines);
     const to = Math.min(lines.length - 1, i + contextLines);
     for (let j = from; j <= to; j += 1) keep[j] = true;

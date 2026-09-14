@@ -1,5 +1,7 @@
 import { ContentKindError, MissingMarkerPricingError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
+import { focusMatcher } from './focus.ts';
+import type { FocusOptions } from './focus.ts';
 
 import { savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
@@ -10,10 +12,7 @@ export const JSON_PLANNER_ID = 'json/v1';
 /** The one rule this planner has. */
 export const MEMBER_COLLAPSE_RULE = 'member-collapse';
 
-export interface JsonPlannerOptions {
-  /** Focus matching is substring, case-insensitive by default. */
-  readonly caseSensitive?: boolean;
-}
+export interface JsonPlannerOptions extends FocusOptions {}
 
 /**
  * The JSON planner: **members are the units, not lines.**
@@ -73,15 +72,8 @@ export function planJson(input: PlanInput, options: JsonPlannerOptions = {}): El
   const units = root.children ?? [];
   const boundaries = [...flatten(units)].flatMap((unit) => [unit.start, unit.end]);
   const toByte = utf8OffsetIndex(input.text, boundaries);
-  const caseSensitive = options.caseSensitive ?? false;
-  const focus = (input.focus ?? []).filter((term) => term.length > 0);
-  const needles = caseSensitive ? focus : focus.map((term) => term.toLowerCase());
-
-  const matches = (unit: Unit): boolean => {
-    const raw = input.text.slice(unit.start, unit.end);
-    const haystack = caseSensitive ? raw : raw.toLowerCase();
-    return needles.some((needle) => haystack.includes(needle));
-  };
+  const focus = focusMatcher(input.focus, options);
+  const matches = (unit: Unit): boolean => focus.matches(input.text.slice(unit.start, unit.end));
 
   const elisions: PlannedElision[] = [];
   const collapse = (run: readonly Unit[]): void => {
@@ -102,7 +94,7 @@ export function planJson(input: PlanInput, options: JsonPlannerOptions = {}): El
     for (const unit of siblings) {
       // With a focus, a unit survives when its bytes carry a term; with none, the root
       // is kept as a skeleton and everything beneath it is fair game.
-      const kept = needles.length > 0 ? matches(unit) : depth === 0;
+      const kept = focus.empty ? depth === 0 : matches(unit);
       if (!kept) {
         run.push(unit);
         continue;
