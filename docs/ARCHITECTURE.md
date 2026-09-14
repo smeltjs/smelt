@@ -1093,7 +1093,14 @@ one agent loads one of them and summing all three would triple a cost nobody pay
   `forcing-language`, `structure-dump`, `generated-boilerplate` (the softest, and its
   own explanation says so), `language-rule`, `mirror-drift`, `restated-at-level`.
   Findings exit 0; `--strict` makes any of them exit 1 for CI, because rules about
-  somebody's house style are advisory until that somebody opts in.
+  somebody's house style are advisory until that somebody opts in. The rules are one
+  **registry** (`AGENTS_RULES`, a `Record` over the id union — the shape
+  `HARNESS_PROFILES`, `SUBCOMMANDS` and `PLANNERS` take), each entry carrying its id,
+  its one-sentence meaning, the scope it reads at (`file`, `level` or `set`) and its
+  finder; `lintAgents` is a fold over it, the report order is the key order, and the
+  id list is derived from the keys, never restated. Adding a rule is one entry and one
+  finder, and forgetting either is a compile error rather than a rule the help names
+  and nothing runs (review IV, REP-51).
 - **Resolve against the real tree.** `dead-path` and `dead-link` are the flagship and
   the reason to run this at all. Everyone else lints Markdown; the thing that rotted is
   the repository the Markdown describes. A renamed `src/auth/handlers.ts` does not make

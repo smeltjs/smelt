@@ -616,7 +616,9 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   the guide recommends) cannot drift at all.
 - **Finding** (`smelt agents lint`): what the lint noticed at one place, carrying an
   `ElisionReason` — the same stable `rule` id plus explanation an elision carries, for
-  the same reason. Eight rules, in `src/agents/lint.ts`; the explanation always ends
+  the same reason. Eight rules, one registry — `AGENTS_RULES` in `src/agents/lint.ts`, a
+  `Record` keyed by rule id like every other registry here, each entry naming its
+  scope (`file`, `level`, `set`), its meaning and its finder; the explanation always ends
   with an attributed fragment of the guide, so smelt's measurement and the guide's
   opinion are never mistaken for each other. Findings are **advisory** — exit 0 —
   until `--strict`.

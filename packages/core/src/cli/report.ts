@@ -1,5 +1,5 @@
 import { GUIDE, GUIDE_TITLE } from '../agents/guide.ts';
-import { overBudgetBytes } from '../agents/lint.ts';
+import { AGENTS_LINT_RULES, overBudgetBytes } from '../agents/lint.ts';
 import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
 import type { ResolvedFocus } from '../ops/verbs.ts';
 import type { RepoMap } from '../repomap/map.ts';
@@ -403,7 +403,9 @@ export function formatAgentsReport(
 
   if (report.findings.length === 0) {
     lines.push('');
-    lines.push('  no findings. Eight advisory rules ran and none matched — either the file is');
+    lines.push(
+      `  no findings. ${String(AGENTS_LINT_RULES.length)} advisory rules ran and none matched — either the file is`,
+    );
     lines.push('  in good shape, or a rule is asleep. `pnpm mutate` is how this repo tells the');
     lines.push('  difference about its own guards; a fixture per rule is how it tells it here.');
     return `${lines.join('\n')}\n`;
