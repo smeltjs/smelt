@@ -58,7 +58,8 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
   than overridden because a flag with no negative spelling must not delete more than the
   file asked for, and the receipt carries the provenance (`olderThanSource`). _Avoid_:
   retention policy, expiry, TTL.
-- **Survey** (`DirectoryElisionStore.survey()`): the whole reading of a store directory
+- **Survey** (`DirectoryElisionStore.survey()`, optional on the `ElisionStore` seam, and
+  the `surveyStore` op over any store): the whole reading of a store directory
   from one blob scan and one journal fold — the counters, the **Ledger** and the size on
   disk. Not a cache and not a new fact: `stats()` and `rawCounters()` are views over it,
   and a store still remembers nothing between calls, which is what makes two processes

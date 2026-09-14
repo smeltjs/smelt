@@ -24,8 +24,14 @@ import {
 } from './errors.ts';
 import { contentHash } from './hash.ts';
 import { retrieveStats, ruleLedger } from './stats.ts';
-import type { RawRetrieveCounters } from './stats.ts';
-import type { ElisionReason, ElisionStore, RetrieveStats, RuleLedgerEntry } from './types.ts';
+import type {
+  ElisionReason,
+  ElisionStore,
+  RawRetrieveCounters,
+  RetrieveStats,
+  RuleLedgerEntry,
+  StoreSurvey,
+} from './types.ts';
 
 /**
  * The format marker every store directory carries, and the one version this code
@@ -184,24 +190,7 @@ export function readStoreSize(root: string): { blobs: number; bytes: number } | 
   return { blobs, bytes };
 }
 
-/**
- * Everything one traversal of a store directory can answer: the counters, the per-rule
- * ledger, and the directory's own size. What {@link DirectoryElisionStore.survey}
- * returns, and the shape `smelt stats` renders.
- *
- * `size.blobs` and `counters.elisionsStored` are different numbers on purpose. The
- * first is what is on disk right now; the second is every distinct elision this store
- * has ever held, evicted ones included, because a prune that shrank the expansion
- * rate's denominator would flatter the metric over bytes the user deleted. They agree
- * in a store nobody has pruned, and a reader who needs "how much disk" wants the first
- * while a reader who needs "how much did smelt hide" wants the second.
- */
-export interface StoreSurvey {
-  readonly counters: RawRetrieveCounters;
-  readonly ledger: readonly RuleLedgerEntry[];
-  /** The same two integers {@link readStoreSize} answers, from the same scan. */
-  readonly size: { readonly blobs: number; readonly bytes: number };
-}
+export type { StoreSurvey } from './types.ts';
 
 /** See {@link MemoryElisionStoreOptions} in `store.ts` — same escape hatch, same reason. */
 export interface DirectoryElisionStoreOptions {

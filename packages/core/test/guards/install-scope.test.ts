@@ -169,9 +169,11 @@ describe('the marker block says which thing uses smelt', () => {
 });
 
 describe('doctor reads through the same resolver the writer wrote through', () => {
-  function doctor(scope: 'project' | 'user'): { code: number; receipt: DoctorReceipt } {
+  async function doctor(
+    scope: 'project' | 'user',
+  ): Promise<{ code: number; receipt: DoctorReceipt }> {
     let stdout = '';
-    const code = runDoctor(
+    const code = await runDoctor(
       { json: true, scope },
       { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9-test' },
     );
@@ -181,7 +183,7 @@ describe('doctor reads through the same resolver the writer wrote through', () =
   it('a machine install reads back as installed at user scope, and absent at project', async () => {
     await setup('user', 'claude-code');
 
-    const user = doctor('user');
+    const user = await doctor('user');
     expect(user.receipt.scope).toBe('user');
     expect(
       user.receipt.installed,
@@ -193,7 +195,7 @@ describe('doctor reads through the same resolver the writer wrote through', () =
 
     // Nothing of smelt's is in this project, and doctor says so rather than reporting
     // the machine's install as the project's.
-    const project = doctor('project');
+    const project = await doctor('project');
     expect(project.receipt.installed).toBe(false);
     expect(project.code).toBe(EXIT.ok);
   });
@@ -201,8 +203,8 @@ describe('doctor reads through the same resolver the writer wrote through', () =
   it('doctor never writes, at either scope', async () => {
     await setup('user', 'claude-code');
     const before = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
-    doctor('user');
-    doctor('project');
+    await doctor('user');
+    await doctor('project');
     expect(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).toBe(before);
     expect(readdirSync(dir)).toEqual([]);
   });
@@ -225,9 +227,9 @@ describe("an artefact's former home is still read, and still removed", () => {
   const TODAY = '.opencode/plugins/smelt-guard.js';
 
   /** `smelt doctor --json` in `dir`, read back as a receipt. */
-  function doctorHere(): DoctorReceipt {
+  async function doctorHere(): Promise<DoctorReceipt> {
     let stdout = '';
-    runDoctor(
+    await runDoctor(
       { json: true, scope: 'project' },
       { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9-test' },
     );
@@ -267,7 +269,7 @@ describe("an artefact's former home is still read, and still removed", () => {
 
     // And doctor is not silent about the leftover: a file of ours in a directory
     // opencode no longer loads from is an orphan, and it costs `current`.
-    const read = doctorHere();
+    const read = await doctorHere();
     expect(read.orphans.join('\n')).toContain(FORMER);
     expect(read.repair).toContain('smelt hooks remove --harness opencode');
     expect(read.current).toBe(false);

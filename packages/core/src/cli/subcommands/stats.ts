@@ -1,6 +1,5 @@
 import { CliUsageError } from '../../errors.ts';
-import { surveyStore } from '../../ops/verbs.ts';
-import { retrieveStats } from '../../stats.ts';
+import { surveyStore } from '../../ops/index.ts';
 import { DirectoryElisionStore } from '../../store-dir.ts';
 import type { RetrieveStats, RuleLedgerEntry } from '../../types.ts';
 import { stdoutPalette } from '../lava.ts';
@@ -121,7 +120,7 @@ export const statsCommand: Subcommand<StatsInvocation, ResolvedStatsRun> = {
     // from the counters, exactly as the store's own `stats()` does — the derivation
     // has one home and this verb is not it.
     const survey = surveyStore({ store });
-    const stats = retrieveStats(survey.counters);
+    const stats = survey.counters;
     const ledger = survey.ledger;
 
     if (resolved.json) {

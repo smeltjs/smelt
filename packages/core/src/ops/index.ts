@@ -20,7 +20,8 @@
  * So this module is the seam, below both doors:
  *
  * - **`ops/verbs.ts`** — {@link smeltBlob}, {@link mapTree}, {@link retrieveBytes},
- *   {@link retrieveMany}, {@link readCounters}. The verbs over already-resolved inputs, returning data.
+ *   {@link retrieveMany}, {@link readCounters}, {@link surveyStore},
+ *   {@link proveRoundTrip}. The verbs over already-resolved inputs, returning data.
  * - **`ops/inputs.ts`** — the laws an input must satisfy to *be* resolved, each
  *   stating its rule once and taking the caller's naming as an argument.
  *
@@ -52,20 +53,28 @@ export type {
 } from './inputs.ts';
 export {
   mapTree,
+  proveRoundTrip,
   readCounters,
   readLedger,
   retrieveBytes,
   retrieveMany,
+  ROUND_TRIP_PROBE_BUDGET_BYTES,
   smeltBlob,
+  surveyStore,
 } from './verbs.ts';
 export type {
+  DirectoryStoreReading,
   FocusSource,
   MapTreeOp,
+  ProveRoundTripOp,
   ReadCountersOp,
   ReadLedgerOp,
   ResolvedFocus,
   RetrieveBytesOp,
   RetrieveManyOp,
+  RoundTripProof,
   SmeltBlobOp,
   SmeltBlobOutcome,
+  StoreReading,
+  SurveyStoreOp,
 } from './verbs.ts';

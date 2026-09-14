@@ -93,7 +93,7 @@ const CALLS_THE_SEAM: readonly { readonly file: string; readonly call: string }[
   { file: 'server.ts', call: 'smeltBlob(' },
   { file: 'server.ts', call: 'mapTree(' },
   { file: 'server.ts', call: 'retrieveBytes(' },
-  { file: 'server.ts', call: 'readCounters(' },
+  { file: 'server.ts', call: 'surveyStore(' },
   { file: 'store.ts', call: 'configuredStore(' },
   { file: 'store.ts', call: 'openStore(' },
 ];
@@ -144,6 +144,17 @@ describe('the ops seam — this server calls it by name', () => {
  * removed was plausible and locally correct too.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'mcp-ops-stats-walks-the-store-twice',
+    file: 'server.ts',
+    find: '  const reading = surveyStore({ store: resolved.store });',
+    replace:
+      '  const reading = {\n' +
+      '    counters: resolved.store.stats(),\n' +
+      '    ledger: resolved.store.ledger?.(),\n' +
+      '  };',
+    why: 'smelt_stats reading the store through two calls of its own instead of the one surveying verb both front doors share — two traversals of the same journal per Stop hook, and the seam the CLI already reaches sitting unused one barrel away, which is exactly how the original fork began',
+  },
   {
     id: 'mcp-ops-budget-law-reforked',
     file: 'server.ts',

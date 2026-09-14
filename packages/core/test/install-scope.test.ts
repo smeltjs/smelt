@@ -95,7 +95,7 @@ function livePlan(ids: readonly string[], extra: Partial<HooksChoices> = {}) {
 }
 
 describe('locateStep is the one resolver', () => {
-  it('project scope is exactly join(cwd, step.file) — unchanged, by construction', () => {
+  it('project scope is exactly join(cwd, step.file) — unchanged, by construction', async () => {
     const step = { kind: 'json-hooks', file: '.claude/settings.json' } as const;
     expect(locateStep(step, 'project', { cwd: dir, home })).toEqual({
       path: join(dir, '.claude/settings.json'),
@@ -103,7 +103,7 @@ describe('locateStep is the one resolver', () => {
     });
   });
 
-  it('user scope is the documented location under home', () => {
+  it('user scope is the documented location under home', async () => {
     const step = {
       kind: 'json-hooks',
       file: '.claude/settings.json',
@@ -115,14 +115,14 @@ describe('locateStep is the one resolver', () => {
     });
   });
 
-  it('a step with no documented user location has no path at all, and says why', () => {
+  it('a step with no documented user location has no path at all, and says why', async () => {
     const step = { kind: 'own-file', file: '.hermes/hooks.yaml' } as const;
     const located = locateStep(step, 'user', { cwd: dir, home, harness: 'Hermes Agent' });
     expect(located.path, 'a skipped step must offer no path to fall back on').toBeUndefined();
     expect(located.skipped).toBe('Hermes Agent has no documented user-level hook file');
   });
 
-  it('a manual location carries the command instead of being written', () => {
+  it('a manual location carries the command instead of being written', async () => {
     const step = {
       kind: 'mcp-registration',
       file: '.mcp.json',
@@ -135,19 +135,19 @@ describe('locateStep is the one resolver', () => {
 });
 
 describe('detection: the machine is the default only from the machine', () => {
-  it('cwd == home detects user; anywhere else detects project', () => {
+  it('cwd == home detects user; anywhere else detects project', async () => {
     expect(detectScope({ cwd: home, home })).toBe('user');
     expect(detectScope({ cwd: dir, home })).toBe('project');
   });
 
-  it('the comparison is through realpath, so a symlinked home is still home', () => {
+  it('the comparison is through realpath, so a symlinked home is still home', async () => {
     // Two spellings of one directory. A string compare answers `project` here, and
     // the machine install nobody asked for goes into the project instead.
     const realpath = (path: string): string => (path === join(dir, 'link') ? home : path);
     expect(detectScope({ cwd: join(dir, 'link'), home }, realpath)).toBe('user');
   });
 
-  it('--scope wins over detection, in both directions', () => {
+  it('--scope wins over detection, in both directions', async () => {
     expect(resolveScope('project', { cwd: home, home })).toBe('project');
     expect(resolveScope('user', { cwd: dir, home })).toBe('user');
     expect(resolveScope(undefined, { cwd: dir, home })).toBe('project');
@@ -155,7 +155,7 @@ describe('detection: the machine is the default only from the machine', () => {
 });
 
 describe('a user-scope plan writes where each harness reads', () => {
-  it('claude-code: settings and CLAUDE.md under ~/.claude, config at ~/smelt.config.json', () => {
+  it('claude-code: settings and CLAUDE.md under ~/.claude, config at ~/smelt.config.json', async () => {
     const plan = userPlan(['claude-code']);
     const paths = plan.files.map((file) => file.path);
     expect(paths).toContain(join(home, '.claude', 'settings.json'));
@@ -168,7 +168,7 @@ describe('a user-scope plan writes where each harness reads', () => {
     expect(paths).not.toContain(join(home, '.mcp.json'));
   });
 
-  it('every harness, at user scope, plans only under home', () => {
+  it('every harness, at user scope, plans only under home', async () => {
     const plan = userPlan(HARNESSES.map((profile) => profile.id));
     expect(plan.files.length).toBeGreaterThan(0);
     for (const file of plan.files) {
@@ -177,7 +177,7 @@ describe('a user-scope plan writes where each harness reads', () => {
     }
   });
 
-  it('the documented locations, per harness', () => {
+  it('the documented locations, per harness', async () => {
     const at = (id: string, ...expected: readonly string[]): void => {
       const paths = userPlan([id])
         .files.map((file) => file.path)
@@ -201,7 +201,7 @@ describe('a user-scope plan writes where each harness reads', () => {
     at('aider');
   });
 
-  it('a harness with no documented user location is skipped with the reason', () => {
+  it('a harness with no documented user location is skipped with the reason', async () => {
     const plan = userPlan(['hermes']);
     const why = plan.skipped.map((one) => one.why).join('\n');
     expect(why).toContain('Hermes Agent has no documented user-level hook file');
@@ -209,7 +209,7 @@ describe('a user-scope plan writes where each harness reads', () => {
     expect(plan.files.map((file) => file.path)).toEqual([join(home, 'smelt.config.json')]);
   });
 
-  it("Claude Code's user-scope MCP registration is a command, not a file", () => {
+  it("Claude Code's user-scope MCP registration is a command, not a file", async () => {
     const plan = userPlan(['claude-code']);
     expect(plan.files.map((file) => file.name)).not.toContain('.claude.json');
     expect(plan.manual).toEqual([
@@ -222,7 +222,7 @@ describe('a user-scope plan writes where each harness reads', () => {
     ]);
   });
 
-  it('paths inside a written command are absolute at user scope', () => {
+  it('paths inside a written command are absolute at user scope', async () => {
     // A `dist` under home, and both plans made *from* home — so the only thing that
     // differs is the scope. A project install spells a script inside its own root
     // relatively, because that config travels with the repo. A machine install must
@@ -250,14 +250,14 @@ describe('a user-scope plan writes where each harness reads', () => {
 });
 
 describe('the snippet says which thing uses smelt', () => {
-  it('project scope says project; user scope says machine', () => {
+  it('project scope says project; user scope says machine', async () => {
     expect(instructionSnippet(8192, 4000)).toContain('This project uses');
     expect(instructionSnippet(8192, 4000, undefined, 'project')).toContain('This project uses');
     expect(instructionSnippet(8192, 4000, undefined, 'user')).toContain('This machine uses');
     expect(instructionSnippet(8192, 4000, undefined, 'user')).not.toContain('This project uses');
   });
 
-  it('a user-scope install stamps the machine wording into the block it writes', () => {
+  it('a user-scope install stamps the machine wording into the block it writes', async () => {
     const claude = userPlan(['claude-code']).files.find(
       (file) => file.path === join(home, '.claude', 'CLAUDE.md'),
     );
@@ -274,7 +274,7 @@ function apply(plan: ReturnType<typeof planInstall>): void {
 }
 
 describe('the readers look where the writer wrote', () => {
-  it('readInstalledState at user scope finds what planInstall put there', () => {
+  it('readInstalledState at user scope finds what planInstall put there', async () => {
     apply(userPlan(['claude-code']));
 
     const user = readInstalledState(dir, { scope: 'user', home });
@@ -291,7 +291,7 @@ describe('the readers look where the writer wrote', () => {
     expect(project.blocks).toEqual([]);
   });
 
-  it('the manual registration is read back read-only, and named when absent', () => {
+  it('the manual registration is read back read-only, and named when absent', async () => {
     apply(userPlan(['claude-code']));
     const absent = readInstalledState(dir, { scope: 'user', home });
     const mcp = absent.mcp.find((one) => one.file === '.claude.json');
@@ -308,7 +308,7 @@ describe('the readers look where the writer wrote', () => {
     expect(present.mcp.find((one) => one.file === '.claude.json')?.registered).toBe(true);
   });
 
-  it('presetToggles reads its toggles back from the user-level files', () => {
+  it('presetToggles reads its toggles back from the user-level files', async () => {
     apply(userPlan(['claude-code'], { mapOnStart: true, lintOnStart: false }));
     expect(presetToggles(dir, { scope: 'user', home })).toEqual({
       guard: true,
@@ -327,7 +327,7 @@ describe('the readers look where the writer wrote', () => {
     });
   });
 
-  it('planRemove at user scope takes back out what the user-scope install put in', () => {
+  it('planRemove at user scope takes back out what the user-scope install put in', async () => {
     apply(userPlan(['claude-code']));
     const removals = planRemove(dir, [harnessById('claude-code')!], { scope: 'user', home });
     const paths = removals.map((one) => one.path);
@@ -337,7 +337,7 @@ describe('the readers look where the writer wrote', () => {
     expect(paths).not.toContain(join(home, '.claude.json'));
   });
 
-  it('doctor at user scope reports the machine install, and its project reading is clean', () => {
+  it('doctor at user scope reports the machine install, and its project reading is clean', async () => {
     // Stamped by the binary that reads it back, and the store the config promises
     // created — `smelt setup` does both, and this test applies a plan directly. Without
     // them doctor is right to say `not current`, for reasons that are not about scope.
@@ -347,7 +347,7 @@ describe('the readers look where the writer wrote', () => {
     mkdirSync(join(home, SETUP_RECIPE.store.defaultDir), { recursive: true });
 
     let stdout = '';
-    const code = runDoctor(
+    const code = await runDoctor(
       { json: true, scope: 'user' },
       { output: (text) => void (stdout += text), cwd: dir, home, version: '9.9.9' },
     );
@@ -360,7 +360,7 @@ describe('the readers look where the writer wrote', () => {
     expect(code).toBe(EXIT.ok);
 
     let projectOut = '';
-    runDoctor(
+    await runDoctor(
       { json: true, scope: 'project' },
       { output: (text) => void (projectOut += text), cwd: dir, home, version: '9.9.9-test' },
     );
@@ -369,13 +369,13 @@ describe('the readers look where the writer wrote', () => {
     expect(projectReceipt.installed).toBe(false);
   });
 
-  it('doctor names --scope user in the repair it prints for a machine install', () => {
+  it('doctor names --scope user in the repair it prints for a machine install', async () => {
     // Stamped by an older release, so the block reads `behind` and there is a repair
     // to inspect at all — an unversioned block names none, and an assertion over an
     // empty list is an assertion about nothing.
     apply(userPlan(['claude-code'], { writtenBy: '1.0.0' }));
     let stdout = '';
-    const code = runDoctor(
+    const code = await runDoctor(
       { json: true, scope: 'user' },
       { output: (text) => void (stdout += text), cwd: dir, home, version: '2.0.0' },
     );
@@ -394,7 +394,7 @@ describe('the readers look where the writer wrote', () => {
 });
 
 describe('project scope is untouched', () => {
-  it('a project plan is byte-identical with the scope named and with it left out', () => {
+  it('a project plan is byte-identical with the scope named and with it left out', async () => {
     const named = planInstall(dir, choicesFor(['claude-code', 'codex'], { scope: 'project' }));
     const bare = planInstall(dir, choicesFor(['claude-code', 'codex']));
     expect(named.files.map((file) => [file.name, file.path, file.content])).toEqual(
@@ -479,7 +479,7 @@ describe('the wizards state the detected scope and let you flip it', () => {
 });
 
 describe('the reading order of hookFiles is the receipt field it has always been', () => {
-  it('project scope lists every JSON hook file, then every guard-only file', () => {
+  it('project scope lists every JSON hook file, then every guard-only file', async () => {
     apply(planInstall(dir, choicesFor(HARNESSES.map((profile) => profile.id))));
 
     // Restated by hand: the order `[...JSON_HOOK_FILES, ...GUARD_ONLY_FILES]` produced,
@@ -504,7 +504,7 @@ describe('the reading order of hookFiles is the receipt field it has always been
     );
   });
 
-  it('user scope lists them in the same two passes', () => {
+  it('user scope lists them in the same two passes', async () => {
     apply(userPlan(HARNESSES.map((profile) => profile.id)));
     const state = readInstalledState(dir, { scope: 'user', home });
     expect(state.hookFiles).toEqual([
@@ -624,11 +624,11 @@ describe('flipping the scope re-reads that scope’s toggles', () => {
 });
 
 describe('the prose says only what the scope makes it say', () => {
-  it("doctor's header carries the scope only when it is the machine's", () => {
+  it("doctor's header carries the scope only when it is the machine's", async () => {
     apply(userPlan(['claude-code']));
-    const prose = (scope: 'project' | 'user'): string => {
+    const prose = async (scope: 'project' | 'user'): Promise<string> => {
       let out = '';
-      runDoctor(
+      await runDoctor(
         { json: false, scope },
         { output: (text) => void (out += text), cwd: dir, home, version: '9.9.9' },
       );
@@ -636,9 +636,11 @@ describe('the prose says only what the scope makes it say', () => {
     };
     // Project scope reading a project directory is what this line has always meant,
     // and every byte of that prose stays what it was.
-    expect(prose('project')).toContain(`doctor — binary 9.9.9, reading ${dir}\n`);
-    expect(prose('project')).not.toContain('scope)');
-    expect(prose('user')).toContain(`doctor — binary 9.9.9, reading ${home} (machine scope)\n`);
+    expect(await prose('project')).toContain(`doctor — binary 9.9.9, reading ${dir}\n`);
+    expect(await prose('project')).not.toContain('scope)');
+    expect(await prose('user')).toContain(
+      `doctor — binary 9.9.9, reading ${home} (machine scope)\n`,
+    );
   });
 
   async function setupProse(options: {
@@ -703,7 +705,7 @@ describe('the prose says only what the scope makes it say', () => {
 });
 
 describe('a toggle that is off is not a location that is missing', () => {
-  it('guard off skips the guard-only files before it asks where they live', () => {
+  it('guard off skips the guard-only files before it asks where they live', async () => {
     const off = planInstall(dir, choicesFor(['hermes'], { scope: 'user', guard: false }));
     // Hermes has exactly two artefacts: a guard-only hook file and an instruction
     // file. With the guard off the first is not installed at any scope, so reporting

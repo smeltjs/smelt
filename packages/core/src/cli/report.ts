@@ -1,7 +1,7 @@
 import { GUIDE, GUIDE_TITLE } from '../agents/guide.ts';
 import { AGENTS_LINT_RULES, overBudgetBytes } from '../agents/lint.ts';
 import type { AgentsLintReport, AgentsMirrorReport } from '../agents/lint.ts';
-import type { ResolvedFocus } from '../ops/verbs.ts';
+import type { ResolvedFocus } from '../ops/index.ts';
 import type { RepoMap } from '../repomap/map.ts';
 import type { PruneReport } from '../store-dir.ts';
 import type { RerankAttribution, RetrieveStats, RuleLedgerEntry, SmeltResult } from '../types.ts';

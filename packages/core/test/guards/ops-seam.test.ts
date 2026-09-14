@@ -92,6 +92,18 @@ describe('the ops seam — each law is stated once', () => {
     }
   });
 
+  it('the CLI reaches the seam through its barrel, never past it', () => {
+    // `surveyStore` was written, exported from neither barrel, and deep-imported by the
+    // one verb that knew about it — so the other front door could not reach it at all
+    // (review IV, REP-56). A verb file that imports `ops/verbs.ts` directly is the
+    // first step of that fork; the barrel is what the seam *is* to a caller.
+    const past = sources
+      .filter(({ file }) => file.startsWith('cli/'))
+      .filter(({ text }) => /from '(?:\.\.\/)+ops\/verbs\.ts'/.test(text))
+      .map(({ file }) => file);
+    expect(past, 'these CLI files import ops/verbs.ts past the ops barrel').toEqual([]);
+  });
+
   it('names the built-in strategy once for the front doors, in the seam', () => {
     // `?? 'lexical'` was written in both packages, so promoting a planner to the
     // default was a two-package edit with nothing to catch the half that was missed.
@@ -205,6 +217,13 @@ describe('the ops seam — the CLI serves the law it is given', () => {
  * change to a law has a guard watching it from each front door.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'ops-verb-deep-imported-past-the-barrel',
+    file: 'cli/subcommands/stats.ts',
+    find: "import { surveyStore } from '../../ops/index.ts';",
+    replace: "import { surveyStore } from '../../ops/verbs.ts';",
+    why: 'a verb reaching past the ops barrel for a function the barrel does not export yet — exactly how surveyStore sat unexported for a release while the MCP server walked the store twice for want of it',
+  },
   {
     id: 'ops-budget-no-default-reasoning-dropped',
     file: 'ops/inputs.ts',

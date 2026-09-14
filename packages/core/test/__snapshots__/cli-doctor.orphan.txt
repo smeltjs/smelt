@@ -1,6 +1,7 @@
 smelt doctor — binary 9.9.9-test, reading <project>
 
   ✗ smelt.config.json: schema 1, budget 4000, store directory at .smelt/store (MISSING)
+  ✓ round trip: 1 elisions under the budget; the first cut's 4397 bytes retrieved byte-identical, in a throwaway store
   ✗ ORPHAN: the store directory (.smelt/store) does not exist — retrieves across processes would fail
 
   Repair:

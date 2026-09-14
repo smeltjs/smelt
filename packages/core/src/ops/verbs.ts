@@ -1,18 +1,24 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { buildRepoMap } from '../repomap/map.ts';
+import { retrieveStats } from '../stats.ts';
 import type { RepoMap } from '../repomap/map.ts';
 import { focusTermsFor } from '../hooks/focus-terms.ts';
 import { retrieveEach } from '../retrieve.ts';
 import { createSmelter } from '../smelter.ts';
-import type { DirectoryElisionStore, StoreSurvey } from '../store-dir.ts';
+import { DirectoryElisionStore } from '../store-dir.ts';
 import type { Strategy } from '../plan/planners.ts';
 import type {
   DetectedLanguage,
   ElisionStore,
   RerankStage,
-  RetrievedBlock,
   RetrieveStats,
+  RetrievedBlock,
   RuleLedgerEntry,
   SmeltResult,
+  StoreSurvey,
 } from '../types.ts';
 
 /**
@@ -263,32 +269,56 @@ export function readCounters(op: ReadCountersOp): RetrieveStats {
   return op.store.stats();
 }
 
-/** One directory store to survey. */
+/** One store to read whole. */
 export interface SurveyStoreOp {
-  /**
-   * A {@link DirectoryElisionStore}, not any {@link ElisionStore} — the same narrowing
-   * `smelt store prune` uses, and for the same reason. A survey is a *traversal*, a
-   * fact about a store that lives on a disk; a memory store's counters are a `Map`'s
-   * size and there is nothing to walk.
-   */
-  readonly store: DirectoryElisionStore;
+  readonly store: ElisionStore;
 }
+
+/**
+ * What one uncounted read of a store says: the derived counters, the ledger when the
+ * store keeps one, and — when the store lives on a disk — its size there.
+ */
+export interface StoreReading {
+  /** The {@link RetrieveStats}, derived exactly as the store's own `stats()` derives them. */
+  readonly counters: RetrieveStats;
+  /** The per-rule ledger; absent when the store keeps none (never an invented `[]`). */
+  readonly ledger?: readonly RuleLedgerEntry[];
+  /** Blobs and bytes on disk; absent for a store that has no disk to measure. */
+  readonly size?: StoreSurvey['size'];
+}
+
+/** A directory store's reading always carries its ledger and its size. */
+export type DirectoryStoreReading = StoreReading & {
+  readonly ledger: readonly RuleLedgerEntry[];
+  readonly size: StoreSurvey['size'];
+};
 
 /**
  * Verb: **the uncounted read, in one pass.**
  *
  * {@link readCounters} and {@link readLedger} each answer one question, and a front
- * door that wants both plus the store's size asked for three traversals of the same two
- * files. This is that reading, whole: the counters, the ledger and the size out of one
- * walk. It journals nothing, exactly as its two siblings journal nothing — watching the
- * expansion rate must never move it.
+ * door that wants both asked for two traversals of the same two files — `smelt stats`
+ * once asked for three, and the MCP `smelt_stats` still asked for two. This is that
+ * reading, whole: a store that can answer in one walk (`survey()`, which a directory
+ * store implements) is asked once; a store that cannot (a memory store, a custom
+ * adapter) is asked the two narrower questions, and the reading looks the same from
+ * the outside. It journals nothing, exactly as its two siblings journal nothing —
+ * watching the expansion rate must never move it.
  *
- * The two narrower verbs stay: a caller that wants only the ledger should say so, and
- * the {@link ElisionStore} seam is what a custom adapter implements. This one is for the
- * surface that wants the whole reading, which today is `smelt stats`.
+ * The two narrower verbs stay: a caller that wants only the ledger should say so.
+ * Until review IV (REP-56) this verb was written but exported from neither barrel, so
+ * the CLI deep-imported it and the MCP server could not reach it at all — the exact
+ * barrel defect the ops seam was created to end.
  */
-export function surveyStore(op: SurveyStoreOp): StoreSurvey {
-  return op.store.survey();
+export function surveyStore(op: { readonly store: DirectoryElisionStore }): DirectoryStoreReading;
+export function surveyStore(op: SurveyStoreOp): StoreReading;
+export function surveyStore(op: SurveyStoreOp): StoreReading {
+  const survey = op.store.survey?.();
+  if (survey !== undefined) {
+    return { counters: retrieveStats(survey.counters), ledger: survey.ledger, size: survey.size };
+  }
+  const ledger = op.store.ledger?.();
+  return { counters: op.store.stats(), ...(ledger === undefined ? {} : { ledger }) };
 }
 
 /** One store to read the ledger off. */
@@ -306,4 +336,89 @@ export interface ReadLedgerOp {
  */
 export function readLedger(op: ReadLedgerOp): readonly RuleLedgerEntry[] | undefined {
   return op.store.ledger?.();
+}
+
+/**
+ * The blob the round-trip proof smelts: big enough that the probe budget forces cuts,
+ * with one focus term that must survive. The lexical planner is deterministic, so every
+ * machine that runs the proof proves the same round trip.
+ */
+const ROUND_TRIP_PROBE_SOURCE: string = `${Array.from(
+  { length: 40 },
+  (_, i): string =>
+    `export function helper${String(i)}(input: string): string {\n` +
+    `  const trimmed = input.trim();\n` +
+    `  return trimmed + " (${String(i)})";\n` +
+    `}\n`,
+).join('')}\nexport function renderTicket(id: string): string {\n  return 'ticket-' + id;\n}\n`;
+
+/** The budget the proof is run at when the caller's own is larger — small enough to force cuts. */
+export const ROUND_TRIP_PROBE_BUDGET_BYTES = 600;
+
+/** What the proof is run at. */
+export interface ProveRoundTripOp {
+  /** The budget to smelt the probe under. Larger than the probe means no cuts, and no proof. */
+  readonly budgetBytes: number;
+}
+
+/** What one proof said. */
+export interface RoundTripProof {
+  /** The elided bytes came back byte-identical. */
+  readonly ok: boolean;
+  /** How many elisions the probe produced under the budget. */
+  readonly elisions: number;
+  /** The bytes of the first cut — the ones retrieved and compared. */
+  readonly bytes: number;
+  /** One sentence a report can print, true whichever way `ok` went. */
+  readonly detail: string;
+}
+
+/**
+ * Verb: **prove the loop** — smelt a known blob into a throwaway store, retrieve the
+ * first cut, compare bytes.
+ *
+ * Both `smelt setup` (which prints it as its last check) and `smelt doctor` (which
+ * reports it as a verdict) run this; until review IV (REP-56) it lived inside setup,
+ * so doctor could read installed state but never prove the binary still closed the
+ * loop. The store is a fresh temp directory, removed again: a proof that ran in the
+ * production store would leave its blobs and its one retrieval behind forever (a store
+ * that can forget is not reversible), so a fresh machine's first `smelt stats` would
+ * have reported the proof as the user's work — noise in the exact honest signal the
+ * product leads with.
+ */
+export async function proveRoundTrip(op: ProveRoundTripOp): Promise<RoundTripProof> {
+  const disposable = mkdtempSync(join(tmpdir(), 'smelt-round-trip-'));
+  try {
+    const store = new DirectoryElisionStore(disposable);
+    const smelter = createSmelter({ store });
+    const result = await smelter.smelt(ROUND_TRIP_PROBE_SOURCE, {
+      path: 'round-trip-probe.ts',
+      focus: ['renderTicket'],
+      budgetBytes: op.budgetBytes,
+    });
+    const first = result.elisions[0];
+    if (first === undefined) {
+      return {
+        ok: false,
+        elisions: 0,
+        bytes: 0,
+        detail: `the probe produced no elisions at a ${String(op.budgetBytes)}-byte budget`,
+      };
+    }
+    const original = ROUND_TRIP_PROBE_SOURCE.slice(first.range.start, first.range.end);
+    const back = store.retrieve(first.hash);
+    const bytes = first.range.end - first.range.start;
+    return {
+      ok: back === original,
+      elisions: result.elisions.length,
+      bytes,
+      detail:
+        back === original
+          ? `${String(result.elisions.length)} elisions under the budget; the first cut's ` +
+            `${String(bytes)} bytes retrieved byte-identical, in a throwaway store`
+          : 'the store returned different bytes than were elided',
+    };
+  } finally {
+    rmSync(disposable, { recursive: true, force: true });
+  }
 }

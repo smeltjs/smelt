@@ -21,8 +21,7 @@ import {
   loadRerankStage,
   mapTree,
   readBlob,
-  readCounters,
-  readLedger,
+  surveyStore,
   readTree,
   resolveStrategy,
   retrieveBytes,
@@ -60,7 +59,7 @@ import {
  *
  * **Each tool is an adapter, and nothing more: validate the JSON Schema, call the op,
  * wrap the answer.** The verbs themselves are `smeltBlob`, `mapTree`, `retrieveBytes`,
- * `retrieveMany` and `readCounters` in `@smeltjs/core`'s ops seam, which sits below this server and
+ * `retrieveMany` and `surveyStore` in `@smeltjs/core`'s ops seam, which sits below this server and
  * below the `smelt` binary alike — so the two front doors cannot drift on what a verb
  * does. The laws their inputs must satisfy come from the same place (a budget is a
  * positive integer with no default; an explicit strategy beats a configured one and
@@ -463,10 +462,13 @@ function handleStats(args: Record<string, unknown>, resolved: ResolvedMcpStore):
   // verbatim, as JSON.
   // The ledger as its own block beside them — the first block stays the RetrieveStats
   // verbatim, as it always was, so a reader of one is never handed a reshaped other.
+  // One reading, one traversal: the store is asked once for counters and ledger
+  // together (review IV, REP-56 — this handler used to walk the store twice).
+  const reading = surveyStore({ store: resolved.store });
   return {
     content: [
-      text(JSON.stringify(readCounters({ store: resolved.store }), null, 2)),
-      text(JSON.stringify(readLedger({ store: resolved.store }) ?? [], null, 2)),
+      text(JSON.stringify(reading.counters, null, 2)),
+      text(JSON.stringify(reading.ledger ?? [], null, 2)),
     ],
   };
 }
