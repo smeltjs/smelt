@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -199,9 +199,14 @@ describe('llms.txt is the generator’s output, and every link in it is real', (
   });
 
   it('teaches only flags the verbs actually own', () => {
+    // The whole SkillPack, not only its root: the store and setup flags live in the
+    // references the root routes to, and a reference is a teaching surface too.
+    const pack = join(repoRoot(), 'skills/smelt');
     const taught = [
       committed(INDEX),
-      readFileSync(join(repoRoot(), 'skills/smelt/SKILL.md'), 'utf8'),
+      ...readdirSync(pack, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8')),
     ].join('\n');
     const setupFlags: readonly string[] = setupCommand.flags;
     const storeFlags: readonly string[] = storeCommand.flags;

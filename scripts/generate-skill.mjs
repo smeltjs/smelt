@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 /**
- * Renders the SkillPack — `skills/smelt/SKILL.md`, the artifact
- * `npx skills add smeltjs/smelt` installs (ADR-0002: the second adapter over the
- * instruction content, complementing the marker block beside the enforcement hooks).
+ * Renders the SkillPack — `skills/smelt/`, the directory `npx skills add smeltjs/smelt`
+ * installs (ADR-0002: the second adapter over the instruction content, complementing
+ * the marker block beside the enforcement hooks).
+ *
+ * The pack is a **router and its references**. `SKILL.md` is loaded on every
+ * invocation of the skill, relevant or not, so it carries only what an agent mid-task
+ * needs — read a big file, retrieve a marker, orient, obey a guard denial, the MCP
+ * names — and one link line per operator workflow. Setup and doctor, the store's
+ * prune, and the reranker opt-in live in `references/*.md`, read only by the agent
+ * doing that job. The root is held under {@link ROOT_BUDGET_BYTES}; a root that
+ * outgrows it is a refusal here and a red guard, never a warning.
  *
  * Generated, not hand-written, for the same reason the site's facts are: the commands
  * it teaches are the SetupRecipe's, and a skill that retyped them would drift from
- * the CLI the first time a default moved. The committed file is the renderer's output,
- * byte for byte — `test/guards/skill-pack.test.ts` regenerates and compares, so a
- * hand edit to the skill is a red verify, not a suggestion.
+ * the CLI the first time a default moved. The committed files are the renderer's
+ * output, byte for byte — `test/guards/skill-pack.test.ts` regenerates and compares
+ * the whole directory, so a hand edit to any file, or a stray file, is a red verify.
  *
  * Law 4 governs the prose: every claim is a mechanism (reversible, counted, offline),
  * never a saving. The only numbers are facts about the tool itself — the recipe's
@@ -18,23 +26,40 @@
  *
  * The sources: the **built** `@smeltjs/core` (a workspace devDependency), so
  * `pnpm --filter "@smeltjs/site..." build` — or any core build — must run first.
- * `renderSkill()` is exported and throws; the guard calls it the way it calls the
- * site's `renderFacts`. Only run directly does a refusal become exit 1.
+ * `renderSkillPack()` is exported and throws; the guard runs this script with
+ * `--print-json` and compares. Only run directly does a refusal become exit 1.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const OUT_PATH = join(here, '..', 'skills', 'smelt', 'SKILL.md');
-const CORE_ENTRY = join(here, '..', 'packages', 'core', 'dist', 'index.js');
+/**
+ * The repository this script renders for. Normally the one it lives in; the skill-pack
+ * guard overrides it so a *copy* of this script in the mutation runner's scratch root
+ * still finds the built core and the pack — otherwise a broken copy would fail on
+ * "core not built" before the break it carries was ever rendered, and the guard would
+ * go red for the wrong reason.
+ */
+const REPO_ROOT = process.env['SMELT_REPO_ROOT'] ?? join(here, '..');
+const PACK_DIR = join(REPO_ROOT, 'skills', 'smelt');
+const CORE_ENTRY = join(REPO_ROOT, 'packages', 'core', 'dist', 'index.js');
 
 /**
- * The skill, rendered from the built package's SetupRecipe. Throws on anything
- * missing — a skill that quietly rendered `undefined` for the budget would teach an
- * agent a command nobody's CLI accepts.
+ * The root's byte budget. The root is what every invocation of the skill loads, so it
+ * is the one file in the pack whose size is a cost paid on every task; the references
+ * are paid for only by the agent doing that job. The number is this pack's own — a
+ * budget for its own prose, not a claim about any harness's limit.
  */
-export async function renderSkill() {
+export const ROOT_BUDGET_BYTES = 2048;
+
+/**
+ * The pack, rendered from the built package's SetupRecipe: a map of file path
+ * (relative to `skills/smelt/`) to text, plus the root's measurement. Throws on anything
+ * missing — a skill that quietly rendered `undefined` for the budget would teach an
+ * agent a command nobody's CLI accepts — and on a root over its budget.
+ */
+export async function renderSkillPack() {
   if (!existsSync(CORE_ENTRY)) {
     throw new Error(
       `@smeltjs/core is not built (${CORE_ENTRY} is missing). The skill renders the ` +
@@ -77,16 +102,16 @@ export async function renderSkill() {
   // this spells the same format rather than importing it.
   const machineScopeInstall = `npm install --prefix "$HOME" ${rerankVoyagePackage}`;
 
-  return `---
+  const root = `---
 name: smelt
-description: Shrink oversized files and tool output before they hit your context window — structure-aware, reversible, offline. Use when a file, log, grep result, diff or stack trace is too big to read raw — smelt keeps the parts the task needs and replaces the rest with one-line markers you can retrieve by hash.
+description: Use when a file, log, diff or grep result is too big to read raw, or when a marker's retrieve("hash") needs expanding — smelt keeps what the task needs and makes the rest retrievable.
 ---
 
 # smelt
 
-smelt keeps large tool output out of your context window, reversibly: the parts the
-task needs survive, everything else becomes one line saying what was removed, how big
-it was, and a hash to get it back. It makes zero network calls.
+smelt keeps large tool output out of your context window, reversibly: what the task
+needs survives; everything else becomes one line naming what was removed, its size, and
+a hash to get it back. It makes zero network calls.
 
 ## Reading big files
 
@@ -103,25 +128,39 @@ Every marker ends in \`retrieve("hash")\`. The exact original bytes come back fr
 
     smelt retrieve <hash>
 
-Retrievals are counted, and \`smelt stats\` reports the expansion rate — the honest
-signal of over-pruning. Retrieve what you actually need.
+Retrievals are counted; \`smelt stats\` reports the expansion rate. Retrieve what you
+actually need.
 
 ## Orienting in an unfamiliar tree
 
     smelt map <dir> --budget ${budget}
 
-prints a ranked symbol map of the repository. The budget is met by construction.
+prints a ranked symbol map of the repository, fitted to the budget by construction.
 
 ## If a guard denies a raw read
 
-This project may run a smelt guard hook: raw reads over a size threshold are denied,
-and the denial names the exact \`smelt\` replacement command. Run that command, then
-\`smelt retrieve\` any marker you need expanded. The deny teaches the replacement —
-that pairing is the design, not an obstacle.
+Run the exact \`smelt\` replacement command the denial names, then \`smelt retrieve\` any
+marker you need expanded. The deny teaches the replacement.
 
-## Step by step (when \`setup\` is unavailable on an older install)
+## MCP
 
-${steps}
+Over MCP the same loop is five tools: \`smelt_file\`, \`smelt_retrieve\`,
+\`smelt_retrieve_batch\` (several hashes in one call — prefer it when more than one marker
+matters), \`repo_map\` and \`smelt_stats\`. The store is shared with the CLI.
+
+## Operator workflows — read only the one for the job at hand
+
+- [references/setup.md](references/setup.md) — install, \`smelt setup\`, \`smelt doctor\`, upgrading.
+- [references/store.md](references/store.md) — \`smelt store prune\` and the retention cut-off.
+- [references/rerank.md](references/rerank.md) — the opt-in reranker and its adapter.
+
+This skill enforces nothing by itself; the marker block \`smelt setup\` writes beside the
+hooks teaches the same commands from the same recipe.
+`;
+
+  const setup = `# smelt — setting up and checking the install
+
+Part of the smelt skill; the root \`SKILL.md\` covers reading, retrieving and mapping.
 
 ## Setting up
 
@@ -148,6 +187,10 @@ is always safe; \`smelt hooks remove\` takes the wiring back out.
 If you upgraded smelt (\`${recipe.install.brewUpgrade}\`, \`npm update -g\`), run
 \`smelt setup\` again. The loop is: upgrade → \`smelt doctor\` → \`smelt setup\`.
 
+## Step by step (when \`setup\` is unavailable on an older install)
+
+${steps}
+
 ## Checking the install
 
     smelt doctor [--scope user] [--json]
@@ -163,7 +206,15 @@ Exit 0 means current, or nothing is installed. Exit ${refusedExit} means somethi
 behind or broken, and the report names the exact repair command — \`smelt setup\`, per
 harness. Run that; do not hand-edit the files doctor names.
 
-## Keeping the store small
+## Notes
+
+- Zero network calls, ever — a test in smelt's own suite fails if that could change.
+- The wire surface (the marker format, the tool contracts) is stable from 0.1.
+`;
+
+  const store = `# smelt — keeping the store small
+
+Part of the smelt skill; the root \`SKILL.md\` covers reading, retrieving and mapping.
 
 Nothing is ever evicted on its own: no timer, no size cap, nothing on opening a store.
 Deleting elided bytes is one explicit command, and it refuses unless an age was named —
@@ -188,8 +239,11 @@ names which of the two chose the age. A configured \`keepRetrieved: true\` is ad
 \`--keep-retrieved\`, never overridden by its absence — a flag with no negative spelling
 cannot delete more than the config asked to spare. With no age on either the flag or in
 the config, the command still refuses.
+`;
 
-## Reranking
+  const rerank = `# smelt — the opt-in reranker
+
+Part of the smelt skill; the root \`SKILL.md\` covers reading, retrieving and mapping.
 
 There is no default reranker and never will be. Nothing is loaded, imported or called
 unless a \`rerank\` key in \`smelt.config.json\` says so:
@@ -213,44 +267,51 @@ whatever project you happen to be standing in:
 best score first and spares while the output still fits the budget, so a \`topK\` of 8 can
 come back as 3 kept. The report line names the wall the walk hit, and the \`--json\`
 receipt carries it as \`result.rerank.stopped\` (\`budget\`, \`cap\` or \`exhausted\`).
-
-## MCP
-
-If the project registers smelt over MCP, five tools exist: \`smelt_file\` (shrink a
-file under a byte budget with a focus), \`repo_map\` (a ranked whole-tree symbol map),
-\`smelt_retrieve\` (elided bytes back by hash), \`smelt_retrieve_batch\` (several
-hashes back in one call — prefer it when more than one marker matters, because every
-call re-bills the conversation) and \`smelt_stats\` (retrieval counters). The
-config's store is shared with the CLI, so a hash a marker gave you is the same hash
-either surface retrieves.
-
-## Notes
-
-- Zero network calls, ever — a test in smelt's own suite fails if that could change.
-- The wire surface (the marker format, the tool contracts) is stable from 0.1.
-- This skill complements the marker-block instructions that \`smelt hooks install\`
-  writes beside the enforcement hooks. If both are present, they teach the same
-  commands from the same recipe; if only this skill is present, nothing is enforced —
-  the discipline above is yours to follow.
 `;
+
+  const rootBytes = Buffer.byteLength(root, 'utf8');
+  if (rootBytes > ROOT_BUDGET_BYTES) {
+    throw new Error(
+      `SKILL.md renders to ${rootBytes} B, over its ${ROOT_BUDGET_BYTES} B budget. The root ` +
+        `is loaded on every invocation of the skill; move operator prose into references/.`,
+    );
+  }
+
+  return {
+    files: {
+      'SKILL.md': root,
+      'references/setup.md': setup,
+      'references/store.md': store,
+      'references/rerank.md': rerank,
+    },
+    rootBytes,
+    rootBudgetBytes: ROOT_BUDGET_BYTES,
+  };
 }
 
 const invokedDirectly =
   process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (invokedDirectly) {
-  let skill;
+  let pack;
   try {
-    skill = await renderSkill();
+    pack = await renderSkillPack();
   } catch (error) {
     console.error(`generate-skill: ${error.message}`);
     process.exit(1);
   }
-  if (process.argv.includes('--print')) {
-    process.stdout.write(skill);
+  if (process.argv.includes('--print-json')) {
+    process.stdout.write(JSON.stringify(pack));
+  } else if (process.argv.includes('--print')) {
+    process.stdout.write(pack.files['SKILL.md']);
   } else {
-    mkdirSync(dirname(OUT_PATH), { recursive: true });
-    writeFileSync(OUT_PATH, skill);
-    console.log(`generate-skill: skills/smelt/SKILL.md rendered`);
+    for (const [path, text] of Object.entries(pack.files)) {
+      const target = join(PACK_DIR, path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, text);
+    }
+    console.log(
+      `generate-skill: skills/smelt/ rendered (${Object.keys(pack.files).length} files, root ${pack.rootBytes} B of ${ROOT_BUDGET_BYTES})`,
+    );
   }
 }

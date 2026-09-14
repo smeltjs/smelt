@@ -1022,14 +1022,14 @@ any consumer can rely on — is in
 
 ---
 name: smelt
-description: Shrink oversized files and tool output before they hit your context window — structure-aware, reversible, offline. Use when a file, log, grep result, diff or stack trace is too big to read raw — smelt keeps the parts the task needs and replaces the rest with one-line markers you can retrieve by hash.
+description: Use when a file, log, diff or grep result is too big to read raw, or when a marker's retrieve("hash") needs expanding — smelt keeps what the task needs and makes the rest retrievable.
 ---
 
 # smelt
 
-smelt keeps large tool output out of your context window, reversibly: the parts the
-task needs survive, everything else becomes one line saying what was removed, how big
-it was, and a hash to get it back. It makes zero network calls.
+smelt keeps large tool output out of your context window, reversibly: what the task
+needs survives; everything else becomes one line naming what was removed, its size, and
+a hash to get it back. It makes zero network calls.
 
 ## Reading big files
 
@@ -1046,29 +1046,42 @@ Every marker ends in `retrieve("hash")`. The exact original bytes come back from
 
     smelt retrieve <hash>
 
-Retrievals are counted, and `smelt stats` reports the expansion rate — the honest
-signal of over-pruning. Retrieve what you actually need.
+Retrievals are counted; `smelt stats` reports the expansion rate. Retrieve what you
+actually need.
 
 ## Orienting in an unfamiliar tree
 
     smelt map <dir> --budget 4000
 
-prints a ranked symbol map of the repository. The budget is met by construction.
+prints a ranked symbol map of the repository, fitted to the budget by construction.
 
 ## If a guard denies a raw read
 
-This project may run a smelt guard hook: raw reads over a size threshold are denied,
-and the denial names the exact `smelt` replacement command. Run that command, then
-`smelt retrieve` any marker you need expanded. The deny teaches the replacement —
-that pairing is the design, not an obstacle.
+Run the exact `smelt` replacement command the denial names, then `smelt retrieve` any
+marker you need expanded. The deny teaches the replacement.
 
-## Step by step (when `setup` is unavailable on an older install)
+## MCP
 
-- `npm install -g @smeltjs/core` — install the CLI
-- `smelt init` — write smelt.config.json
-- `smelt hooks install` — wire the hooks preset
-- `npx @smeltjs/mcp` — register the MCP server with your harness
-- `smelt <file> --budget 4000 --focus <focus>` — prove the round trip on a real file
+Over MCP the same loop is five tools: `smelt_file`, `smelt_retrieve`,
+`smelt_retrieve_batch` (several hashes in one call — prefer it when more than one marker
+matters), `repo_map` and `smelt_stats`. The store is shared with the CLI.
+
+## Operator workflows — read only the one for the job at hand
+
+- [references/setup.md](references/setup.md) — install, `smelt setup`, `smelt doctor`, upgrading.
+- [references/store.md](references/store.md) — `smelt store prune` and the retention cut-off.
+- [references/rerank.md](references/rerank.md) — the opt-in reranker and its adapter.
+
+This skill enforces nothing by itself; the marker block `smelt setup` writes beside the
+hooks teaches the same commands from the same recipe.
+
+---
+
+# skills/smelt/references/setup.md
+
+# smelt — setting up and checking the install
+
+Part of the smelt skill; the root `SKILL.md` covers reading, retrieving and mapping.
 
 ## Setting up
 
@@ -1095,6 +1108,14 @@ is always safe; `smelt hooks remove` takes the wiring back out.
 If you upgraded smelt (`brew upgrade smelt`, `npm update -g`), run
 `smelt setup` again. The loop is: upgrade → `smelt doctor` → `smelt setup`.
 
+## Step by step (when `setup` is unavailable on an older install)
+
+- `npm install -g @smeltjs/core` — install the CLI
+- `smelt init` — write smelt.config.json
+- `smelt hooks install` — wire the hooks preset
+- `npx @smeltjs/mcp` — register the MCP server with your harness
+- `smelt <file> --budget 4000 --focus <focus>` — prove the round trip on a real file
+
 ## Checking the install
 
     smelt doctor [--scope user] [--json]
@@ -1110,7 +1131,18 @@ Exit 0 means current, or nothing is installed. Exit 3 means something is
 behind or broken, and the report names the exact repair command — `smelt setup`, per
 harness. Run that; do not hand-edit the files doctor names.
 
-## Keeping the store small
+## Notes
+
+- Zero network calls, ever — a test in smelt's own suite fails if that could change.
+- The wire surface (the marker format, the tool contracts) is stable from 0.1.
+
+---
+
+# skills/smelt/references/store.md
+
+# smelt — keeping the store small
+
+Part of the smelt skill; the root `SKILL.md` covers reading, retrieving and mapping.
 
 Nothing is ever evicted on its own: no timer, no size cap, nothing on opening a store.
 Deleting elided bytes is one explicit command, and it refuses unless an age was named —
@@ -1136,7 +1168,13 @@ names which of the two chose the age. A configured `keepRetrieved: true` is adde
 cannot delete more than the config asked to spare. With no age on either the flag or in
 the config, the command still refuses.
 
-## Reranking
+---
+
+# skills/smelt/references/rerank.md
+
+# smelt — the opt-in reranker
+
+Part of the smelt skill; the root `SKILL.md` covers reading, retrieving and mapping.
 
 There is no default reranker and never will be. Nothing is loaded, imported or called
 unless a `rerank` key in `smelt.config.json` says so:
@@ -1160,25 +1198,6 @@ whatever project you happen to be standing in:
 best score first and spares while the output still fits the budget, so a `topK` of 8 can
 come back as 3 kept. The report line names the wall the walk hit, and the `--json`
 receipt carries it as `result.rerank.stopped` (`budget`, `cap` or `exhausted`).
-
-## MCP
-
-If the project registers smelt over MCP, five tools exist: `smelt_file` (shrink a
-file under a byte budget with a focus), `repo_map` (a ranked whole-tree symbol map),
-`smelt_retrieve` (elided bytes back by hash), `smelt_retrieve_batch` (several
-hashes back in one call — prefer it when more than one marker matters, because every
-call re-bills the conversation) and `smelt_stats` (retrieval counters). The
-config's store is shared with the CLI, so a hash a marker gave you is the same hash
-either surface retrieves.
-
-## Notes
-
-- Zero network calls, ever — a test in smelt's own suite fails if that could change.
-- The wire surface (the marker format, the tool contracts) is stable from 0.1.
-- This skill complements the marker-block instructions that `smelt hooks install`
-  writes beside the enforcement hooks. If both are present, they teach the same
-  commands from the same recipe; if only this skill is present, nothing is enforced —
-  the discipline above is yours to follow.
 
 ---
 
@@ -1900,10 +1919,20 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   facts, never silently cleaned. `presetToggles` lives with it (`cli/installed.ts`), for
   the same reason: what a re-run's four toggles start from is a reading of what is
   installed, not a wizard's memory.
-- **SkillPack**: the opt-in, published teaching artifact an agent's owner installs by
-  consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
-  content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt
-  still never writes an agent's files uninvited.
+- **SkillPack** (`skills/smelt/`): the opt-in, published teaching artifact an agent's
+  owner installs by consent (`npx skills add smeltjs/smelt`) — the second adapter over
+  the instruction content, beside the marker block. Distinct from R1's refused act
+  (ADR-0002): smelt still never writes an agent's files uninvited. It is a **router and
+  its references**: the root `SKILL.md` is loaded on every invocation of the skill, so it
+  carries only what an agent mid-task needs — read, retrieve, map, obey a guard denial,
+  the MCP names — plus one link line per operator workflow, and is held under a byte
+  budget the generator states (`ROOT_BUDGET_BYTES` in `scripts/generate-skill.mjs`) and
+  refuses to exceed; `references/setup.md`, `references/store.md` and
+  `references/rerank.md` carry setup and doctor, prune and retention, and the reranker
+  opt-in, read only by the agent doing that job. The root's `description` names the
+  trigger ("Use when …"), not the domain, because a long description is what gets
+  truncated where many skills are installed. Every file is the generator's output byte
+  for byte, and a stray file is a red guard. _Avoid_: prompt pack, plugin.
 - **AgentIndex** (`llms.txt`, with `llms-full.txt` beside it): the llmstxt.org index an
   agent fetches _before_ it has installed anything — an H1, a blockquote summary, the four
   laws as the notes, the three commands, the MCP tool names, and H2 link lists of every
@@ -2195,7 +2224,7 @@ digit for the tally appears anywhere in this document.
 | `packages/core/test/guards/setup-recipe.test.ts`        | The setup recipe is data, and it is owned once. Everything that used to retype the store default or the MCP registration command either imports `setup/recipe.ts` or is pinned to it — including each harness's own registration sentence, pinned against the section `packages/mcp/README.md` gives it. The recipe's MCP block is pinned to `run` alone, and Claude Code's CLI verb to the one profile that owns it.                                                                                                                                                                                                                                                                                             |
 | `packages/core/test/guards/setup-verb.test.ts`          | The one-command recipe, branch by branch: `--yes --json` applies the whole recipe with no prompts and names every file and every check; a re-run on a current machine is a byte-neutral no-op; the hard rule survives `--yes` — a file smelt writes whole and does not own is skipped, with the receipt saying so; a config that already carries choices keeps them; the refusals are the agent-facing interface (no stream without `--yes`, `--json` without `--yes`, an unknown harness answered with the known list); and the interactive wizard completes on Enter alone but for the final confirm.                                                                                                           |
 | `packages/core/test/guards/site-facts.test.ts`          | The site may only say what the packages say. The versions in the generated `site/src/generated/facts.json` are the two manifests' character for character, the generator refuses a missing or unparseable source rather than emitting a hole, and the tour's recorded-at version — the one string deliberately not generated, because it is provenance — never names a release the packages have not reached.                                                                                                                                                                                                                                                                                                     |
-| `packages/core/test/guards/skill-pack.test.ts`          | The published skill teaches only what the recipe and the MCP server say, and is the generator's output byte for byte: a hand edit to the committed `SKILL.md` is a red verify, the four MCP tool names are pinned to the server's own source, every command the recipe carries reaches the text, and Law 4 holds the prose — the only number in the skill is the recipe's budget.                                                                                                                                                                                                                                                                                                                                 |
+| `packages/core/test/guards/skill-pack.test.ts`          | The published SkillPack teaches only what the recipe and the MCP server say, and every file of it is the generator's output byte for byte: a hand edit to the root or a reference, or a stray file, is a red verify; the root is held under its stated byte budget by a recount the guard makes itself; every reference is reachable from the root; the MCP tool names are pinned to the server's own source; every command the recipe carries reaches the pack; the description opens with its trigger; and Law 4 holds the prose.                                                                                                                                                                               |
 | `packages/core/test/guards/store-prune.test.ts`         | The one eviction Law 3 allows. `smelt store prune` evicts only what the user's cut-off reaches, a dry run deletes nothing, an evicted lookup throws `EvictedHashError` rather than claiming the hash was never elided, and `elisionsStored` keeps counting what went — so a prune cannot raise the expansion rate by shrinking its own denominator.                                                                                                                                                                                                                                                                                                                                                               |
 | `packages/core/test/guards/structural-totality.test.ts` | Tests for every claimed language: each id in `STRUCTURAL_LANGUAGES` must have a fixture, a committed snapshot and a doc-comment case — claiming a language without tests goes red.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `packages/core/test/guards/structural.test.ts`          | The structural planner's claims: honest kinds and counts in every marker, no silent lexical fallback, doc comments attached, pins respected, a survivor that still parses in its own grammar, and the budget rung's over-budget escalation labelled by its own rule id, never silently.                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -2217,7 +2246,7 @@ it exports mutations of its own:
 | `site/scripts/facts-data.mjs`          | Generates `site/src/generated/facts.json` — versions from both manifests, the tier table from `harnessesByTier()`, the structural language list and grammar set from the language registry, the tally from `guards.json`. A missing or unparseable source fails the build; nothing on the page is a package fact typed twice.                                                                                                                                                                                                                                                                                                                                                                                   |
 | `scripts/bundle-grammars.mjs`          | Copies the grammars `WASM_BY_LANGUAGE` names into the package, so they ship. Reads the built map rather than keeping a second list.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `scripts/generate-third-party.mjs`     | Generates `THIRD-PARTY.md`. The grammar ↔ provenance mapping is a partition: an unattributed grammar throws.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `scripts/generate-skill.mjs`           | Renders the published `SKILL.md` from the built SetupRecipe, so the teaching channel for agents that never ran the installer cannot drift from the commands the installer runs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `scripts/generate-skill.mjs`           | Renders the published SkillPack — the root `SKILL.md` router and its `references/*.md` — from the built SetupRecipe, so the teaching channel for agents that never ran the installer cannot drift from the commands the installer runs; refuses a root over `ROOT_BUDGET_BYTES`.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `scripts/generate-llms-txt.mjs`        | Renders `llms.txt` (the llmstxt.org index an agent fetches first) and `llms-full.txt` (every document that index names, inlined) from one document list and the built packages' own facts. The index is written twice, at the repository root and under `site/public/`, byte-identically; the companion is written once, under `site/public/`, because a second committed copy of the whole documentation set is a large regenerated blob in every docs diff. The ADRs are discovered rather than listed. `test/guards/llms-txt.test.ts` regenerates every committed copy, compares the index's two directly, refuses a companion at the root, and resolves every link in the index back to a file that exists. |
 | `scripts/check-fresh-clone.sh`         | Installs and verifies from `git archive` output — tracked files only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `.github/workflows/ci.yml`             | `pnpm verify` on Node 20.19/22.12/24, plus the fresh-clone job.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

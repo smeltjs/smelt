@@ -32,6 +32,23 @@ the runner rather than by hand.
   the trigger and the mechanism and stop. `smelt_retrieve`'s description is unchanged.
   `@smeltjs/mcp` now exports `toolSurface`, `TOOL_SURFACE_BUDGET_BYTES`,
   `TOOL_LIST_BUDGET_BYTES` and the `ToolSurface` types beside the tool names. (Architecture review IV, REP-50.)
+- **The SkillPack is a router and its references.** `skills/smelt/SKILL.md` was one flat
+  7,662-byte document, and six of its twelve sections — setup, the step-by-step fallback,
+  doctor, prune and retention, the reranker, notes — were operator workflows an agent
+  reading one big file never needs, yet paid for on every invocation. The root now
+  carries what a task needs (read, retrieve, map, obey a guard denial, the MCP names) and
+  one link line per operator workflow; `references/setup.md`, `references/store.md` and
+  `references/rerank.md` carry the rest, read only by the agent doing that job. The root
+  is held under `ROOT_BUDGET_BYTES` (2,048) by the generator, which refuses a larger one,
+  and by `test/guards/skill-pack.test.ts`, which recounts it (2,039 bytes after this
+  change) and now compares the whole directory byte for byte — a hand edit to a
+  reference or a stray file is a red verify. The root's `description` says the trigger in
+  one sentence ("Use when a file, log, diff or grep result is too big to read raw, or
+  when a marker's `retrieve("hash")` needs expanding …") instead of opening with the
+  domain, because a long description is what gets truncated where many skills are
+  installed. Same commands, same recipe facts, same generator; `llms.txt` lists the three
+  references beside the root and `llms-full.txt` inlines them. (Architecture review IV,
+  REP-49.)
 
 ### Docs
 

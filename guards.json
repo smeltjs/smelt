@@ -1,6 +1,6 @@
 {
   "guards": 47,
-  "mutations": 249,
+  "mutations": 252,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -144,7 +144,7 @@
     },
     {
       "guard": "packages/core/test/guards/skill-pack.test.ts",
-      "count": 2
+      "count": 5
     },
     {
       "guard": "packages/core/test/guards/store-prune.test.ts",
