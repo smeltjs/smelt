@@ -64,14 +64,11 @@ export function createRetrieveTool(store: ElisionStore): RetrieveTool {
 }
 
 const BATCH_DESCRIPTION =
-  'Return the exact original text for several markers at once — the same bytes ' +
-  `${RETRIEVE_TOOL_NAME} returns for one hash, in one call. Context you were given may ` +
-  `contain markers like \`${EXAMPLE_MARKER}\`. Pass every hash you need in one array: ` +
-  'each hash comes back as its own block, in the order asked, and a hash the store does ' +
-  'not hold comes back as a refusal in its block without failing the others. Prefer this ' +
-  `over repeated ${RETRIEVE_TOOL_NAME} calls whenever more than one marker matters — every ` +
-  'call is a new request, and asking for eighteen blobs one at a time pays for the whole ' +
-  'conversation eighteen times.';
+  'Return the exact original text for several markers in one call — the same bytes ' +
+  `${RETRIEVE_TOOL_NAME} returns for one hash. Pass every hash you need: each comes back ` +
+  'as its own block, in the order asked, and a hash the store does not hold comes back ' +
+  'as a refusal in its slot without failing the others. Prefer this over repeated ' +
+  `${RETRIEVE_TOOL_NAME} calls: every call is a new request that re-bills the conversation.`;
 
 /**
  * Retrieve each hash through the counted path, keeping the store's own refusal per

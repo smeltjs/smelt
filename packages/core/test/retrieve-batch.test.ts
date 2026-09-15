@@ -47,9 +47,9 @@ describe(RETRIEVE_BATCH_TOOL_NAME, () => {
     expect(store.stats().uniqueRetrieved).toBe(2);
   });
 
-  it('describes the batch in terms of the marker the model already knows', () => {
+  it('describes the batch in terms of the single tool the model already knows', () => {
     const batch = createRetrieveBatchTool(new MemoryElisionStore());
-    expect(batch.description).toContain('<<smelt/v1:');
+    expect(batch.description).toContain('hash');
     expect(batch.description).toContain(RETRIEVE_TOOL_NAME);
   });
 

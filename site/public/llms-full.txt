@@ -1286,6 +1286,20 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
   one.
 - **The four laws**: zero network · every elision explainable · every elision reversible
   (and counted) · no unmeasured numbers. Reasoning in `docs/ARCHITECTURE.md`.
+- **Tool surface** (`packages/mcp/src/surface.ts`): everything the MCP server says to a
+  model before it has been asked anything — the five tool descriptions and the
+  `instructions` string — rendered once by `toolSurface()` as one value beside two
+  measured sizes in UTF-8 bytes: the **prose** (every description plus the instructions,
+  held under `TOOL_SURFACE_BUDGET_BYTES`) and the **payload** (the serialized
+  `tools/list` plus the instructions, schemas included, held under
+  `TOOL_LIST_BUDGET_BYTES`), both recounted by `test/guards/tool-surface.test.ts`. It is
+  the one context budget smelt spends on its own account in every session it is
+  registered in, and until it was measured the server's comment claimed the prose sat
+  "well under 2 KB" while it was 3,718 bytes. The ceilings are smelt's own budgets for
+  its own words, never a claim about a client's limit; the descriptions of
+  `smelt_retrieve` and `smelt_retrieve_batch` are the core's, verbatim — the surface adds
+  no tail to either — and the module imports only types, so the guard can execute a
+  mutant copy of it. _Avoid_: prompt, system prompt, tool metadata.
 
 ## Deepened modules
 
@@ -3036,6 +3050,20 @@ HTTP transports never enter the import graph — is guard-enforced in its own pa
 `smelt_file` honours the same `rerank` opt-in the CLI does, by handing the config block
 to the core's loader; the server imports no adapter of its own, and its guard says so.
 
+**The tool surface is measured.** The five descriptions and the `instructions` string
+travel to the model on every `initialize` and `tools/list`, relevant or not — the one
+context budget smelt spends on its own account. `packages/mcp/src/surface.ts` renders
+them once, as one value beside two byte counts — the prose (descriptions plus
+instructions) and the whole serialized `tools/list` payload, schemas included — from the
+core's two retrieve tools (their descriptions verbatim, no server-side tail) and the
+strategy list, and `test/guards/tool-surface.test.ts` holds the prose under
+`TOOL_SURFACE_BUDGET_BYTES` and the payload under `TOOL_LIST_BUDGET_BYTES`, each with a
+recount the module cannot flatter. The module imports only types, and the guard pins
+that, so the mutation runner's bare copy of `src` can be executed, not only grepped.
+Before the guard existed the server's own comment claimed the prose sat "well under
+2 KB"; measured, it was 3,718 bytes — Law 4, broken in the one package that ships prose
+to a model on every session.
+
 ### The opt-in reranker adapter
 
 [`@smeltjs/rerank-voyage`](../packages/rerank-voyage/) is the **one package in this
@@ -3679,6 +3707,14 @@ The server's `instructions` field tells the model the one thing it could not inf
 that a marker's `retrieve("hash")` maps to the `smelt_retrieve` tool. The marker format
 and the `smelt_retrieve` contract are the frozen wire surface — stable from 0.1,
 treated as 1.0.
+
+Every description and the instructions are sent on every session, so they are treated
+as the byte budget they are: `src/surface.ts` renders them once and measures them — the
+prose, and the whole serialized tool list with its schemas — and
+`test/guards/tool-surface.test.ts` holds the two totals under `TOOL_SURFACE_BUDGET_BYTES`
+and `TOOL_LIST_BUDGET_BYTES`.
+The descriptions of `smelt_retrieve` and `smelt_retrieve_batch` are `@smeltjs/core`'s,
+verbatim — this server adds no words to either.
 
 ## Wiring it into a harness
 

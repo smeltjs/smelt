@@ -13,6 +13,26 @@ the runner rather than by hand.
 
 ## Unreleased
 
+### Changed
+
+- **The MCP tool surface is measured, and under a stated ceiling.** The five tool
+  descriptions and the server `instructions` are what every session pays on
+  `initialize` and `tools/list`; the server's comment said they sat "well under 2 KB",
+  and nothing measured it. Measured, they were 3,718 bytes. `packages/mcp/src/surface.ts`
+  now renders the whole surface once as one value beside two measured sizes — the prose
+  (descriptions plus instructions: 2,028 bytes after this change) and the whole
+  serialized `tools/list` payload plus instructions, schemas included (4,588 bytes) — the
+  server registers what it is handed, and a new guard (`test/guards/tool-surface.test.ts`,
+  five mutations) holds the prose under `TOOL_SURFACE_BUDGET_BYTES` (2,048) and the payload
+  under `TOOL_LIST_BUDGET_BYTES` (5,120), each with a recount the module cannot flatter,
+  and pins the module to type-only imports so the mutation runner can execute it. To fit: `smelt_retrieve_batch` is described by the core alone —
+  the server-side tail restating its block format is gone — and the core's own batch
+  description no longer repeats the example marker the `smelt_retrieve` description
+  already carries; `smelt_file`, `repo_map`, `smelt_stats` and the instructions each say
+  the trigger and the mechanism and stop. `smelt_retrieve`'s description is unchanged.
+  `@smeltjs/mcp` now exports `toolSurface`, `TOOL_SURFACE_BUDGET_BYTES`,
+  `TOOL_LIST_BUDGET_BYTES` and the `ToolSurface` types beside the tool names. (Architecture review IV, REP-50.)
+
 ### Docs
 
 - **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**

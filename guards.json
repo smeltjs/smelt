@@ -1,6 +1,6 @@
 {
-  "guards": 46,
-  "mutations": 244,
+  "guards": 47,
+  "mutations": 249,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -181,6 +181,10 @@
     {
       "guard": "packages/mcp/test/guards/packaging.test.ts",
       "count": 3
+    },
+    {
+      "guard": "packages/mcp/test/guards/tool-surface.test.ts",
+      "count": 5
     },
     {
       "guard": "packages/rerank-voyage/test/guards/packaging.test.ts",
