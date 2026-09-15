@@ -2,7 +2,7 @@ import { nodeFsReader } from '../repomap/reader.ts';
 import type { RepoReader } from '../repomap/reader.ts';
 import type { ElisionReason } from '../types.ts';
 
-import { citing, GUIDE } from './guide.ts';
+import { ARTICLE, ARTICLE_TITLE, citing, GUIDE } from './guide.ts';
 import { ancestorDirs, readInstructionSet, resolvesInTree } from './instructions.ts';
 import type { InstructionFile, InstructionLevel, InstructionSet } from './instructions.ts';
 
@@ -57,6 +57,7 @@ export const GENERATED_BOILERPLATE_RULE = 'generated-boilerplate';
 export const LANGUAGE_RULE_RULE = 'language-rule';
 export const MIRROR_DRIFT_RULE = 'mirror-drift';
 export const RESTATED_AT_LEVEL_RULE = 'restated-at-level';
+export const BLANKET_READ_RULE = 'blanket-read';
 
 /** The id of one advisory rule — the machine-readable half of a finding. */
 export type AgentsRuleId =
@@ -67,7 +68,8 @@ export type AgentsRuleId =
   | typeof GENERATED_BOILERPLATE_RULE
   | typeof LANGUAGE_RULE_RULE
   | typeof MIRROR_DRIFT_RULE
-  | typeof RESTATED_AT_LEVEL_RULE;
+  | typeof RESTATED_AT_LEVEL_RULE
+  | typeof BLANKET_READ_RULE;
 
 /** What a rule that reads one file at a time is handed beside the file. */
 export interface RuleContext {
@@ -150,6 +152,12 @@ export const AGENTS_RULES: Readonly<Record<AgentsRuleId, AgentsRule>> = {
     meaning: 'the fingerprints an init script leaves (softest rule)',
     scope: 'file',
     find: findGeneratedBoilerplate,
+  },
+  [BLANKET_READ_RULE]: {
+    id: BLANKET_READ_RULE,
+    meaning: 'a "read A, B and C" with no when — every request pays',
+    scope: 'file',
+    find: findBlanketReads,
   },
   [LANGUAGE_RULE_RULE]: {
     id: LANGUAGE_RULE_RULE,
@@ -831,6 +839,97 @@ function structureFinding(file: InstructionFile, line: number, what: string): Ag
 /* ------------------------------------------------------------------------------------
  * generated-boilerplate — the softest rule here, and it says so
  * ---------------------------------------------------------------------------------- */
+
+/* ------------------------------------------------------------------------------------
+ * blanket-read — "read A, B and C first", with no when (review IV, REP-59)
+ * ---------------------------------------------------------------------------------- */
+
+/** The verbs that make a line a reading instruction rather than a description. */
+const READ_VERBS = /\b(?:read|review|consult|study|go through|familiari[sz]e yourself with)\b/i;
+
+/** A read that is told *not* to happen is not a tour: "do not read `dist/` and `lock`". */
+const NEGATED_READ =
+  /\b(?:do not|don't|never|avoid|without)\s+(?:read|review|consult|study|go through)\b/i;
+
+/**
+ * An occasion for the whole line: it opens on a "before/when/if …" clause, or closes on
+ * a condition ("… only when the schema changes"). Either says *when*, which is what the
+ * article asks an instruction to say.
+ */
+const LEADING_OCCASION = /^(?:before|after|when|whenever|if|unless|while|once|during)\b/i;
+const TRAILING_CONDITION = /\b(?:when|whenever|if|unless|only)\b/i;
+
+/**
+ * A trigger bound to one document — the article's own shape, `<doc> for <task>` — read
+ * off the text between that document and the next. `for` counts here and not in a
+ * trailing clause: "`a.md` for service boundaries" is a trigger; "read `a.md` and `b.md`
+ * for context" is a tour with a filler on the end.
+ */
+const DOCUMENT_TRIGGER = /\b(?:for|when|whenever|if|unless)\b/i;
+
+/**
+ * A blanket read: one prose line that tells the agent to read two or more documents
+ * and gives an occasion for none of them. Every request then pays for every one, which
+ * is the guide's thesis restated from the article's side. The passing shapes: a
+ * document each with its own trigger ("use X for service boundaries, Y for schema
+ * changes"), a line that opens or closes on an occasion, a single pointer, a negated
+ * read. The failing shape names its documents in the finding, so the reader can see
+ * the tour.
+ */
+function findBlanketReads(file: InstructionFile, lines: readonly ScannedLine[]): AgentsFinding[] {
+  const out: AgentsFinding[] = [];
+  for (const line of lines) {
+    if (line.fenced) continue;
+    const text = bareText(line.text);
+    if (!READ_VERBS.test(text) || NEGATED_READ.test(text) || LEADING_OCCASION.test(text)) continue;
+    const documents = documentSpans(text);
+    if (documents.length < 2) continue;
+    const tail = text.slice(documents[documents.length - 1]!.end);
+    if (TRAILING_CONDITION.test(tail)) continue;
+    // Every document but the last must carry its own trigger in the text that follows
+    // it; one that does not is a document the agent is told to read for no stated reason.
+    const untriggered = documents
+      .slice(0, -1)
+      .filter(
+        (doc, index) => !DOCUMENT_TRIGGER.test(text.slice(doc.end, documents[index + 1]!.start)),
+      );
+    if (untriggered.length === 0) continue;
+    const names = documents.map((doc) => doc.name);
+    out.push({
+      file: file.path,
+      line: line.number,
+      reason: {
+        rule: BLANKET_READ_RULE,
+        explanation:
+          `directs a read of ${String(names.length)} documents (${names
+            .map((name) => `\`${name}\``)
+            .join(', ')}) with no occasion for them — every request pays for all; say ` +
+          `what each is for` +
+          citing(ARTICLE.contextualTriggers, ARTICLE_TITLE),
+      },
+    });
+  }
+  return out;
+}
+
+/** The documents a line names — links and path-like tokens — with where each sits in it. */
+function documentSpans(
+  text: string,
+): readonly { readonly name: string; readonly start: number; readonly end: number }[] {
+  const spans: { name: string; start: number; end: number }[] = [];
+  for (const match of text.matchAll(MARKDOWN_LINK)) {
+    spans.push({ name: match[1]!, start: match.index, end: match.index + match[0].length });
+  }
+  const withoutLinks = text.replace(MARKDOWN_LINK, (whole) => ' '.repeat(whole.length));
+  for (const token of pathCandidates(withoutLinks)) {
+    const at = withoutLinks.indexOf(token);
+    if (at !== -1) spans.push({ name: token, start: at, end: at + token.length });
+  }
+  const seen = new Set<string>();
+  return spans
+    .toSorted((a, b) => a.start - b.start)
+    .filter((span) => (seen.has(span.name) ? false : (seen.add(span.name), true)));
+}
 
 /** The fingerprints an init script leaves behind, with what each one is. */
 const BOILERPLATE_SIGNATURES: readonly (readonly [RegExp, string])[] = [

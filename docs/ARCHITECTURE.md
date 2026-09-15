@@ -1089,9 +1089,12 @@ one agent loads one of them and summing all three would triple a cost nobody pay
   `smelt.config.json`, which is the user's; exceeding it exits 1, the same over-budget
   code a `smelt` run uses. There is no default, for the reason `--budget` has none.
 - **Explain every finding.** A finding is an `ElisionReason` — a stable `rule` id and a
-  sentence — exactly like an elision. Eight rules: `dead-path`, `dead-link`,
+  sentence — exactly like an elision. Nine rules: `dead-path`, `dead-link`,
   `forcing-language`, `structure-dump`, `generated-boilerplate` (the softest, and its
-  own explanation says so), `language-rule`, `mirror-drift`, `restated-at-level`.
+  own explanation says so), `blanket-read` (an unconditional "read A, B and C" — the
+  one rule grounded in a second source, OpenAI's GPT-6 Astra notes, quoted once in
+  `guide.ts` beside the guide; review IV, REP-59), `language-rule`, `mirror-drift`,
+  `restated-at-level`.
   Findings exit 0; `--strict` makes any of them exit 1 for CI, because rules about
   somebody's house style are advisory until that somebody opts in. The rules are one
   **registry** (`AGENTS_RULES`, a `Record` over the id union — the shape

@@ -109,8 +109,8 @@ export const agentsCommand: Subcommand<AgentsInvocation, ResolvedAgentsRun> = {
         `  rules — dead-path and dead-link resolve against the real tree, the check\n` +
         `  nobody else makes and the reason to run this in CI:\n` +
         ruleLines() +
-        `  Every finding carries a stable rule id and a sentence citing the guide it\n` +
-        `  applies\n` +
+        `  Every finding carries a stable rule id and a sentence citing its source: the\n` +
+        `  AGENTS.md guide, or for blanket-read OpenAI's GPT-6 Astra notes\n` +
         `  (aihero.dev/a-complete-guide-to-agents-md). Findings exit 0; --strict makes\n` +
         `  any finding exit 1. There is no built-in size limit: set agents.budgetBytes\n` +
         `  in ${CONFIG_FILE_NAME} and exceeding it exits 1, as every other ${CLI_NAME}\n` +

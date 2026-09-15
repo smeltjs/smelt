@@ -1821,11 +1821,13 @@ registry, idField)`: the key **is** the id, and the entry's id field agrees, so 
   the guide recommends) cannot drift at all.
 - **Finding** (`smelt agents lint`): what the lint noticed at one place, carrying an
   `ElisionReason` — the same stable `rule` id plus explanation an elision carries, for
-  the same reason. Eight rules, one registry — `AGENTS_RULES` in `src/agents/lint.ts`, a
+  the same reason. Nine rules, one registry — `AGENTS_RULES` in `src/agents/lint.ts`, a
   `Record` keyed by rule id like every other registry here, each entry naming its
   scope (`file`, `level`, `set`), its meaning and its finder; the explanation always ends
-  with an attributed fragment of the guide, so smelt's measurement and the guide's
-  opinion are never mistaken for each other. Findings are **advisory** — exit 0 —
+  with an attributed fragment of its source — the AGENTS.md guide for eight rules, and
+  for **`blanket-read`** (an unconditional "read A, B and C", review IV REP-59) OpenAI's
+  GPT-6 Astra notes, both quoted once in `guide.ts` — so smelt's measurement and a
+  source's opinion are never mistaken for each other. Findings are **advisory** — exit 0 —
   until `--strict`.
 - **Imperatives (heuristic)**: the count of instruction-looking lines, reported beside
   the byte total and never as a precise figure. It is a companion measurement, not a
@@ -3057,9 +3059,12 @@ one agent loads one of them and summing all three would triple a cost nobody pay
   `smelt.config.json`, which is the user's; exceeding it exits 1, the same over-budget
   code a `smelt` run uses. There is no default, for the reason `--budget` has none.
 - **Explain every finding.** A finding is an `ElisionReason` — a stable `rule` id and a
-  sentence — exactly like an elision. Eight rules: `dead-path`, `dead-link`,
+  sentence — exactly like an elision. Nine rules: `dead-path`, `dead-link`,
   `forcing-language`, `structure-dump`, `generated-boilerplate` (the softest, and its
-  own explanation says so), `language-rule`, `mirror-drift`, `restated-at-level`.
+  own explanation says so), `blanket-read` (an unconditional "read A, B and C" — the
+  one rule grounded in a second source, OpenAI's GPT-6 Astra notes, quoted once in
+  `guide.ts` beside the guide; review IV, REP-59), `language-rule`, `mirror-drift`,
+  `restated-at-level`.
   Findings exit 0; `--strict` makes any of them exit 1 for CI, because rules about
   somebody's house style are advisory until that somebody opts in. The rules are one
   **registry** (`AGENTS_RULES`, a `Record` over the id union — the shape

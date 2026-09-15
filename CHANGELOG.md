@@ -13,6 +13,22 @@ the runner rather than by hand.
 
 ## Unreleased
 
+### Added
+
+- **`smelt agents lint` gains `blanket-read`.** A prose line that tells the agent to read
+  two or more documents and gives no occasion for it — "read architecture.md,
+  database.md and deployment.md before making changes" — is the shape OpenAI's note on
+  rewriting instruction files for GPT-6 Astra retires, in favour of a trigger per document
+  ("use architecture.md for service boundaries, database.md for schema changes"). Every
+  request pays for every document named, which is the AGENTS.md guide's thesis from the
+  other side. Advisory like the other eight; the explanation names the documents and
+  cites the article, the second source `guide.ts` quotes (once, attributed, beside the
+  guide). A line naming one document, or saying when — smelt's own "Read this before
+  renaming anything" — passes; a fixture pins each shape, and a mutation that fires the
+  rule on a single pointer goes red. A guard also pins that the marker block `smelt setup`
+  writes mints no finding when the linter reads it, at either scope. (Architecture
+  review IV, REP-59.)
+
 ### Changed
 
 - **The MCP tool surface is measured, and under a stated ceiling.** The five tool

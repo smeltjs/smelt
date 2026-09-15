@@ -66,13 +66,35 @@ export const GUIDE = {
 } as const;
 
 /**
- * `… — <the guide>: "<quote>"`, the tail every explanation ends with.
+ * The second source, quoted once for the same reason: OpenAI's note on rewriting skills
+ * and instruction files for a more capable model ({@link ARTICLE_URL}). Its argument
+ * about `AGENTS.md` is the guide's, from the other side — an instruction loaded on
+ * every request should say *when* it applies, not name everything an agent might ever
+ * read — and it grounds exactly one rule, `blanket-read` (review IV, REP-59). Quoted
+ * as the source, never restated as smelt's law: the rule is advisory like the other
+ * eight, and a reader can see whose sentence the finding leans on.
+ */
+export const ARTICLE_URL =
+  'https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra';
+
+/** How the article is named in a citation. */
+export const ARTICLE_TITLE = "OpenAI's GPT-6 Astra notes";
+
+/** The article's own phrasing, short and attributed. */
+export const ARTICLE = {
+  /** The rewrite it recommends in place of a blanket "read these before every edit". */
+  contextualTriggers: 'use architecture.md for service boundaries, database.md for schema changes',
+} as const;
+
+/**
+ * `… — <the source>: "<quote>"`, the tail every explanation ends with.
  *
  * One function so the attribution is spelled identically everywhere: a reader
  * scanning a wall of findings must be able to tell, at a glance and without counting
  * quotation marks, which half of a sentence is smelt's claim and which half is the
- * guide's.
+ * source's. The source defaults to the guide; the one rule grounded in the article
+ * names it.
  */
-export function citing(quote: string): string {
-  return ` — ${GUIDE_TITLE}: "${quote}"`;
+export function citing(quote: string, source: string = GUIDE_TITLE): string {
+  return ` — ${source}: "${quote}"`;
 }
