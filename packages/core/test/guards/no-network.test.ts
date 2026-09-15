@@ -226,9 +226,9 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'law1-node-https-import',
     file: 'plan/lexical.ts',
-    find: "import { markerBytes, predictOutputBytes, requirePricing } from './budget.ts';",
+    find: "import { chooseUnderBudget, markerBytes, requirePricing } from './budget.ts';",
     replace:
-      "import 'node:https';\nimport { markerBytes, predictOutputBytes, requirePricing } from './budget.ts';",
+      "import 'node:https';\nimport { chooseUnderBudget, markerBytes, requirePricing } from './budget.ts';",
     why: 'a network transport imported directly into the elision path',
   },
   {

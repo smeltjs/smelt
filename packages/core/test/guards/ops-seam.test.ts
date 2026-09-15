@@ -52,33 +52,92 @@ import { allSourceFiles, readSource } from './_source.ts';
  * Restated by hand: a guard that asks the source where its own laws live proves
  * nothing.
  */
-const LAW_TEXT: readonly { readonly law: string; readonly phrase: string }[] = [
-  { law: 'a budget is required and has no default', phrase: 'is required, in UTF-8 bytes' },
-  { law: 'a budget is a whole number', phrase: 'must be a whole number of bytes,' },
-  { law: 'a budget is greater than zero', phrase: 'must be greater than zero, got ${JSON' },
-  { law: 'a tree reader refuses a file', phrase: 'is not a directory. ' },
-  { law: 'a directory is read or the refusal names it', phrase: 'cannot read directory "' },
-  { law: 'a path is read or the refusal names it', phrase: 'cannot read "' },
-];
-
-/** The one file the laws above may live in. */
+/** The one file the budget laws live in: beside the budget arithmetic (review IV, REP-54). */
+const BUDGET_LAW = 'plan/budget.ts';
+/** The one file the source laws live in. */
 const OPS_INPUTS = 'ops/inputs.ts';
+
+const LAW_TEXT: readonly {
+  readonly law: string;
+  readonly phrase: string;
+  readonly home: string;
+}[] = [
+  {
+    law: 'a budget is required and has no default',
+    phrase: 'is required, in UTF-8 bytes',
+    home: BUDGET_LAW,
+  },
+  {
+    law: 'a budget is a whole number',
+    phrase: 'must be a whole number of bytes,',
+    home: BUDGET_LAW,
+  },
+  {
+    law: 'a budget is greater than zero',
+    phrase: 'must be greater than zero, got ${JSON',
+    home: BUDGET_LAW,
+  },
+  { law: 'a tree reader refuses a file', phrase: 'is not a directory. ', home: OPS_INPUTS },
+  {
+    law: 'a directory is read or the refusal names it',
+    phrase: 'cannot read directory "',
+    home: OPS_INPUTS,
+  },
+  { law: 'a path is read or the refusal names it', phrase: 'cannot read "', home: OPS_INPUTS },
+];
 
 describe('the ops seam — each law is stated once', () => {
   const sources = allSourceFiles().map((file) => ({ file, text: readSource(file) }));
 
-  for (const { law, phrase } of LAW_TEXT) {
-    it(`states "${law}" only in ${OPS_INPUTS}`, () => {
+  for (const { law, phrase, home } of LAW_TEXT) {
+    it(`states "${law}" only in ${home}`, () => {
       const holders = sources.filter((source) => source.text.includes(phrase)).map((s) => s.file);
       expect(
         holders,
         `the sentence for "${law}" is written in ${String(holders.length)} file(s). It ` +
-          `belongs to the ops seam and to nothing else: a front door that restates it ` +
-          `owns a second copy of the law, which is how the CLI and the MCP server came ` +
-          `to refuse the same mistake in two different sentences.`,
-      ).toEqual([OPS_INPUTS]);
+          `belongs to the seam and to nothing else: a front door — or a library entry ` +
+          `point — that restates it owns a second copy of the law, which is how the CLI ` +
+          `and the MCP server came to refuse the same mistake in two different sentences, ` +
+          `and how createSmelter and buildRepoMap did for a release after them.`,
+      ).toEqual([home]);
     });
   }
+
+  it('the library entry points refuse a lawless budget in the seam\u2019s own words', async () => {
+    // Until review IV (REP-54) createSmelter and buildRepoMap each carried a private
+    // refusal — correct, unwatched, and in neither the CLI's nor the tool's sentence.
+    const { createSmelter } = await import('@guard/smelter');
+    const { buildRepoMap } = await import('@guard/repomap/map');
+    await expect(createSmelter().smelt('text')).rejects.toThrow(/is required, in UTF-8 bytes/);
+    await expect(createSmelter().smelt('text', { budgetBytes: 0 })).rejects.toThrow(
+      /must be greater than zero/,
+    );
+    await expect(createSmelter().smelt('text', { budgetBytes: 1.5 })).rejects.toThrow(
+      /must be a whole number of bytes/,
+    );
+    await expect(buildRepoMap({ root: '.', budgetBytes: -3 })).rejects.toThrow(
+      /must be greater than zero/,
+    );
+  });
+
+  it('the ladder stops at the first rung that fits — a generous budget keeps more', async () => {
+    // `chooseUnderBudget` is the one selection rule (review IV, REP-54). A ladder that
+    // always took the tightest rung would cut a file to the bone whatever budget the
+    // caller typed, and the report would still read as if the plan were chosen against
+    // it. Observed as the budget's only visible effect: more budget, more survives.
+    const { createSmelter } = await import('@guard/smelter');
+    const text = Array.from(
+      { length: 200 },
+      (_unused, i) => `line ${String(i)} of filler text here`,
+    ).join('\n');
+    const smelter = createSmelter();
+    const generous = await smelter.smelt(text, { budgetBytes: 100_000, focus: ['line 100'] });
+    const tight = await smelter.smelt(text, { budgetBytes: 300, focus: ['line 100'] });
+    expect(
+      Buffer.byteLength(generous.text, 'utf8'),
+      'a budget the whole file fits under produced the same cut as a tight one — the ladder ignored it',
+    ).toBeGreaterThan(Buffer.byteLength(tight.text, 'utf8'));
+  });
 
   it('keeps the filesystem laws out of the verb files that used to hold them', () => {
     // `map` statted its own directory and `smelt` read its own file; both refusals
@@ -225,15 +284,22 @@ export const MUTATIONS: GuardMutation[] = [
     why: 'a verb reaching past the ops barrel for a function the barrel does not export yet — exactly how surveyStore sat unexported for a release while the MCP server walked the store twice for want of it',
   },
   {
+    id: 'ladder-always-takes-the-tightest-rung',
+    file: 'plan/budget.ts',
+    find: '    attempts.find((elisions) => predictOutputBytes(inputBytes, elisions, pricing) <= budgetBytes) ??',
+    replace: '    undefined ??',
+    why: 'the ladder skipping every rung that fits and returning the tightest — a file that fits at four lines of context is cut to the bone, the budget the caller typed stops meaning anything, and the report still reads as if the plan were chosen against it',
+  },
+  {
     id: 'ops-budget-no-default-reasoning-dropped',
-    file: 'ops/inputs.ts',
+    file: 'plan/budget.ts',
     find: '`${naming.knob} is required, in UTF-8 bytes. There is no default, because a budget ` +',
     replace: '`${naming.knob} is required. ` +',
     why: "the budget law's reasoning cut out of the one sentence that carries it — the refusal stops saying *why* there is no default, which is the half a user needs, and both front doors serve the shortened sentence at once",
   },
   {
     id: 'ops-budget-positive-rule-dropped',
-    file: 'ops/inputs.ts',
+    file: 'plan/budget.ts',
     find: "  if (value <= 0) return 'not-positive';",
     replace: '',
     why: 'the greater-than-zero half of the budget law removed — `--budget 0` and `"budgetBytes": 0` both become valid, and a zero budget means every byte is over budget',

@@ -51,72 +51,15 @@ import type { ElisionStore } from '../types.ts';
 export type Ruling<T> =
   { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: string };
 
-/** How one front door spells the budget it is refusing, and what it points at next. */
-export interface BudgetNaming {
-  /** The knob, as this surface spells it: `--budget`, `"budgetBytes"`. */
-  readonly knob: string;
-  /**
-   * What a budget smelt invented would silently decide — the back half of the
-   * no-default sentence. `'your context to throw away'` for a blob run, `'the map to
-   * leave out'` for a tree.
-   */
-  readonly stake: string;
-  /**
-   * Anything this surface adds after the law: where else the value can come from, and
-   * an example. Appended after a single space. The CLI names `defaultBudgetBytes` and
-   * `smelt init` here; a tool whose schema already says `required` adds nothing.
-   */
-  readonly advice?: string;
-}
-
 /**
- * Law: **a budget is required, and there is no default.**
- *
- * The reasoning is the whole point of the sentence, so it is stated once here rather
- * than paraphrased per surface: a budget smelt invented would silently decide how much
- * of the caller's context to throw away, which is a number nobody measured making a
- * decision nobody made.
+ * The budget law — required, a whole number, greater than zero — lives beside the
+ * budget arithmetic in `plan/budget.ts` since review IV (REP-54): it is a fact about
+ * Budgets, not about argv, and the two library entry points a consumer calls
+ * (`createSmelter`, `buildRepoMap`) state it from there too. Re-exported here so the
+ * front doors keep reaching it through the seam.
  */
-export function budgetRequired(naming: BudgetNaming): string {
-  return (
-    `${naming.knob} is required, in UTF-8 bytes. There is no default, because a budget ` +
-    `smelt invented would silently decide how much of ${naming.stake}.` +
-    (naming.advice === undefined ? '' : ` ${naming.advice}`)
-  );
-}
-
-/** The two ways a budget that *was* given can still be wrong. See {@link budgetFault}. */
-export type BudgetFault = 'not-an-integer' | 'not-positive';
-
-/**
- * Law: **a budget is a whole number of UTF-8 bytes greater than zero.**
- *
- * The numeric half only. Getting a candidate *number* out of a surface is that
- * surface's own lexing and stays there: argv carries strings (`--budget 4kb` is a
- * malformed number, and `-1` never reaches here because a leading `-` is not a
- * budget at all), while a JSON tool argument carries whatever type the model sent.
- * Both then ask this function the same question about the same rule.
- */
-export function budgetFault(value: number): BudgetFault | undefined {
-  if (!Number.isInteger(value)) return 'not-an-integer';
-  if (value <= 0) return 'not-positive';
-  return undefined;
-}
-
-/**
- * The sentence for a {@link BudgetFault}, naming the value it rejected.
- *
- * `got` is rendered with `JSON.stringify`, which is what both front doors already
- * printed: a CLI passes the raw argv word and gets it back quoted (`"4kb"`), a tool
- * passes the raw JSON value and gets numbers bare (`0`) and strings quoted. One
- * renderer, because a value echoed back in a different shape than it was written is a
- * value the author has to translate before they can see their own typo.
- */
-export function budgetMalformed(fault: BudgetFault, knob: string, got: unknown): string {
-  return fault === 'not-an-integer'
-    ? `${knob} must be a whole number of bytes, got ${JSON.stringify(got)}.`
-    : `${knob} must be greater than zero, got ${JSON.stringify(got)}.`;
-}
+export { budgetFault, budgetMalformed, budgetRequired } from '../plan/budget.ts';
+export type { BudgetFault, BudgetNaming } from '../plan/budget.ts';
 
 /**
  * The strategy a run falls back to when neither the caller nor a config names one.
