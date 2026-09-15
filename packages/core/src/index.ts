@@ -1,4 +1,4 @@
-import type { ApplyOptions, MarkerBuilder, MarkerInfo } from './apply.ts';
+import type { ApplyOptions, MarkerBuilder, MarkerInfo, MarkerScheme } from './apply.ts';
 
 /**
  * The public surface: a barrel over the modules that hold the reasoning.
@@ -10,12 +10,13 @@ import type { ApplyOptions, MarkerBuilder, MarkerInfo } from './apply.ts';
  * entered first. Every name is re-exported here, so consumers see no difference.
  */
 
-export type { ApplyOptions, MarkerBuilder, MarkerInfo };
+export type { ApplyOptions, MarkerBuilder, MarkerInfo, MarkerScheme };
 export {
+  MARKER_FORMAT_VERSION,
   applyPlan,
   defaultMarker,
-  MARKER_FORMAT_VERSION,
   markerPricing,
+  markerScheme,
   reconstruct,
 } from './apply.ts';
 export { detectLanguage, SUPPORTED_LANGUAGES } from './detect.ts';

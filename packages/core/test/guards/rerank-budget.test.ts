@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 // Guards import through @guard so the mutation runner can aim them at a broken copy
 // of src. See scripts/mutate.mjs.
-import { markerPricing } from '@guard/apply';
+import { markerScheme } from '@guard/apply';
 import { predictOutputBytes } from '@guard/plan/budget';
 import { planLexical } from '@guard/plan/lexical';
 import { applyRerank } from '@guard/rerank/protect';
@@ -46,7 +46,8 @@ const TEXT = Array.from({ length: 60 }, (_unused, i) => `line ${String(i)} fille
   '\n',
 );
 const FOCUS = ['line 30'];
-const PRICING = markerPricing('unknown');
+const SCHEME = markerScheme('unknown');
+const PRICING = SCHEME.pricing;
 const INPUT_BYTES = Buffer.byteLength(TEXT, 'utf8');
 
 function plan(budgetBytes: number): ElisionPlan {
@@ -112,7 +113,7 @@ describe('a stage cannot spend past the budget the caller typed', () => {
       text: TEXT,
       query: 'line 30',
       budgetBytes: predicted - 1,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     expect(called).toBe(false);
     expect(outcome.plan).toBe(proposed);
@@ -134,7 +135,7 @@ describe('a stage cannot spend past the budget the caller typed', () => {
       // Exactly the plan's own size: there is no headroom at all, so the first spare
       // breaks it and the walk must give up rather than take one anyway.
       budgetBytes: predicted,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     expect(outcome.attribution.kept).toBe(0);
     expect(outcome.attribution.sparedBytes).toBe(0);
@@ -152,7 +153,7 @@ describe('the report of what happened is the measurement, not a story', () => {
       text: TEXT,
       query: 'line 30',
       budgetBytes: predicted,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     // The stage asked for all of them and got none: the only truthful reason is the
     // budget. `cap` here would blame the caller's own configuration for smelt's ruling.
@@ -168,7 +169,7 @@ describe('the report of what happened is the measurement, not a story', () => {
       text: TEXT,
       query: 'line 30',
       budgetBytes: INPUT_BYTES,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     expect(outcome.attribution.kept).toBe(proposed.elisions.length);
     expect(outcome.attribution.stopped).toBe('exhausted');
@@ -186,7 +187,7 @@ describe('the report of what happened is the measurement, not a story', () => {
       text: TEXT,
       query: 'line 30',
       budgetBytes: INPUT_BYTES,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     expect(outcome.attribution.kept).toBeLessThanOrEqual(outcome.attribution.returned!);
     expect(outcome.attribution.stopped).toBe('cap');
@@ -200,7 +201,7 @@ describe('the report of what happened is the measurement, not a story', () => {
       text: TEXT,
       query: 'line 30',
       budgetBytes: INPUT_BYTES,
-      pricing: PRICING,
+      scheme: SCHEME,
     });
     expect(outcome.attribution.sparedBytes).toBe(
       predictOutputBytes(INPUT_BYTES, outcome.plan.elisions, PRICING) -

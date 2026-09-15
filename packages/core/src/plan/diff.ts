@@ -1,9 +1,9 @@
-import { ContentKindError, MissingMarkerPricingError } from '../errors.ts';
+import { ContentKindError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
 import { focusMatcher } from './focus.ts';
 import type { FocusOptions } from './focus.ts';
 
-import { predictOutputBytes, savingBytes } from './budget.ts';
+import { predictOutputBytes, requirePricing, savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
 
 export const DIFF_PLANNER_ID = 'diff/v1';
@@ -87,7 +87,7 @@ interface FileDiff {
  * @throws {ContentKindError} when the text carries no unified-diff header.
  */
 export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): ElisionPlan {
-  const pricing = requirePricing(input);
+  const pricing = requirePricing(input, DIFF_PLANNER_ID);
   if (probeKind(input.text) !== 'diff') {
     throw new ContentKindError(
       `smelt: the diff planner was asked to plan text with no unified-diff header ` +
@@ -219,12 +219,6 @@ function windowsIn(
   }
   flush(lines.length);
   return out;
-}
-
-function requirePricing(input: PlanInput): MarkerPricing {
-  const pricing: MarkerPricing | undefined = input.pricing;
-  if (pricing === undefined) throw new MissingMarkerPricingError(DIFF_PLANNER_ID);
-  return pricing;
 }
 
 function splitLines(text: string): readonly Line[] {

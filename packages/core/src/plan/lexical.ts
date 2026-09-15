@@ -1,9 +1,8 @@
-import { MissingMarkerPricingError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
 import { focusMatcher } from './focus.ts';
 import type { FocusMatcher, FocusOptions } from './focus.ts';
 
-import { markerBytes, predictOutputBytes } from './budget.ts';
+import { markerBytes, predictOutputBytes, requirePricing } from './budget.ts';
 
 export const LEXICAL_PLANNER_ID = 'lexical/v1';
 
@@ -72,7 +71,7 @@ export class LexicalPlanner implements Planner {
  * the markers landed.
  */
 export function planLexical(input: PlanInput, options: LexicalPlannerOptions = {}): ElisionPlan {
-  const pricing = requirePricing(input);
+  const pricing = requirePricing(input, LEXICAL_PLANNER_ID);
   const lines = splitLines(input.text);
   const focus = focusMatcher(input.focus, options);
   const minRunLines = options.minRunLines ?? 3;
@@ -116,17 +115,6 @@ function ladder(start: number): readonly number[] {
   for (let n = start; n >= 0; n -= 1) sizes.push(n);
   if (sizes.length === 0) sizes.push(0);
   return sizes;
-}
-
-/**
- * The runtime backstop for JS callers: TypeScript makes `pricing` required, but a JS
- * caller can omit it, and the honest answer is a named refusal rather than a planner
- * quietly pricing markers itself — the inversion the seam removed.
- */
-function requirePricing(input: PlanInput): MarkerPricing {
-  const pricing: MarkerPricing | undefined = input.pricing;
-  if (pricing === undefined) throw new MissingMarkerPricingError(LEXICAL_PLANNER_ID);
-  return pricing;
 }
 
 function splitLines(text: string): readonly Line[] {

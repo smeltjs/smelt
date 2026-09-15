@@ -122,13 +122,13 @@ smelt packages/core/src/plan/lexical.ts --budget 4000 --focus planLexical
 
 ```
 smelt  packages/core/src/plan/lexical.ts  typescript  lexical/v1
-in 7,910 B → out 968 B   (-87.8%, 3 elisions)
+in 7,412 B → out 988 B   (-86.7%, 3 elisions)
 focus  planLexical
 
   rule          lines  bytes  hash              explanation
-  focus-window     49  2,100  ff2c9049a14aceb3  collapsed 49 lines with no match for the focu…
+  focus-window     48  2,058  854d4737e2cc3116  collapsed 48 lines with no match for the focu…
   focus-window     11    756  c35d231379780e11  collapsed 11 lines with no match for the focu…
-  focus-window    133  4,416  2e98a0a03dff42f0  collapsed 133 lines with no match for the foc…
+  focus-window    122  3,940  79459ffb81056dd6  collapsed 122 lines with no match for the foc…
 ```
 
 At the end of a session the store reports on itself — what it holds, the expansion rate,
@@ -140,12 +140,12 @@ build's output rather than a past release's:
 
 ```
 smelt stats  /your/project/.smelt/store
-2 blobs, 4.6 KB on disk
+2 blobs, 4.0 KB on disk
 
   expansion  ████████████░░░░░░░░░░░░  50.0%   1 of 2 elisions asked for back
 
   elisionsStored            2
-  bytesStored           4,665
+  bytesStored           4,147
   retrieveCalls             1
   uniqueRetrieved           1
   misses                    0

@@ -98,8 +98,8 @@ export class MissingMarkerPricingError extends SmeltError {
     super(
       `smelt: ${plannerId} was handed a PlanInput without \`pricing\`. A planner never ` +
         `guesses what a marker costs — the applier renders markers, so the applier ` +
-        `prices them. Build one with markerPricing(language, marker) from apply.ts and ` +
-        `put it on the input; createSmelter and the CLI construct it centrally.`,
+        `prices them. Mint a scheme with markerScheme(language, marker) from apply.ts and ` +
+        `put its .pricing on the input; createSmelter and the CLI mint it centrally.`,
     );
   }
 }

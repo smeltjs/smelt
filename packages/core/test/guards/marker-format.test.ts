@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyPlan, defaultMarker, MARKER_FORMAT_VERSION, markerPricing } from '@guard/apply';
+import {
+  applyPlan,
+  defaultMarker,
+  MARKER_FORMAT_VERSION,
+  markerPricing,
+  markerScheme,
+} from '@guard/apply';
+import { planLexical } from '@guard/plan/lexical';
 import { createRetrieveTool } from '@guard/retrieve';
 import { MemoryElisionStore } from '@guard/store';
 import type { ElisionPlan } from '@guard/types';
@@ -174,7 +181,55 @@ describe('the elision outline stays out of band', () => {
   });
 });
 
+describe('the marker scheme prices exactly what it emits', () => {
+  // A custom builder far longer than the default: every small cut the default marker
+  // would make profitable is unprofitable under it. Priced with its own rendering the
+  // planner refuses those cuts and the output never grows; priced with the default
+  // (the mutation) it plans them, the long marker lands, and the survivor is bigger
+  // than the input — the silent failure `apply.ts` documents, made loud.
+  const padding = 'x'.repeat(400);
+  const long = markerScheme('unknown', (info) => `${defaultMarker(info)} ${padding}`);
+  const text = Array.from({ length: 40 }, (_unused, i) => `line ${String(i)} of filler text`).join(
+    '\n',
+  );
+
+  it('a longer custom marker makes small cuts unprofitable, so the output cannot grow', () => {
+    const plan = planLexical(
+      { text, language: 'unknown', budgetBytes: 200, focus: ['line 20'], pricing: long.pricing },
+      { contextLines: 1, minRunLines: 1 },
+    );
+    const result = applyPlan(text, plan, new MemoryElisionStore(), { scheme: long });
+    expect(
+      Buffer.byteLength(result.text, 'utf8'),
+      'the survivor grew past the input — the plan was priced with a marker it did not emit',
+    ).toBeLessThanOrEqual(Buffer.byteLength(text, 'utf8'));
+    // Priced honestly, no run is worth its ~500-byte marker at this budget: the planner
+    // refuses every cut, and the survivor is the input. Under the mutation two runs look
+    // cheap, two long markers land, and the output grows past the input.
+    expect(result.elisions, 'a cut the custom marker cannot pay for was made anyway').toEqual([]);
+  });
+
+  it('prices and builds from one value: the cost is the emitted marker, byte for byte', () => {
+    const reason = { rule: 'r', explanation: 'collapsed 3 lines' };
+    const cost = long.pricing.costBytes(reason, 27);
+    const emitted = long.build({
+      hash: '0'.repeat(16),
+      bytes: 27,
+      rule: 'r',
+      explanation: reason.explanation,
+    });
+    expect(cost).toBe(Buffer.byteLength(emitted, 'utf8'));
+  });
+});
+
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'scheme-prices-the-default-marker-emits-a-custom-one',
+    file: 'apply.ts',
+    find: '  return { build, pricing: pricingFor(build) };',
+    replace: '  return { build, pricing: pricingFor(markerForLanguage(language)) };',
+    why: 'the scheme pricing the default marker while emitting the caller\u2019s longer one — the pairing minted apart again, so the planner passes cuts the real marker makes unprofitable and the output grows, silently, on every custom-marker run',
+  },
   {
     id: 'outline-leaks-into-the-marker',
     file: 'apply.ts',
