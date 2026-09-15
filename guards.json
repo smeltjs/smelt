@@ -1,6 +1,6 @@
 {
   "guards": 47,
-  "mutations": 265,
+  "mutations": 266,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -112,7 +112,7 @@
     },
     {
       "guard": "packages/core/test/guards/planner-registry.test.ts",
-      "count": 1
+      "count": 2
     },
     {
       "guard": "packages/core/test/guards/readme-numbers.test.ts",

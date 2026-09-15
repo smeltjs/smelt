@@ -3985,183 +3985,41 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 # CHANGELOG.md (newest release section)
 
-## 0.9.0 — 2026-09-15
+## 0.9.1 — 2026-09-15
 
-`@smeltjs/core@0.9.0` · `@smeltjs/mcp@0.8.0` · `@smeltjs/rerank-voyage` stays at `0.1.1`
-(its source is unchanged and its peer range, `>=0.7.0 <1`, still names nothing this
-release adds).
+`@smeltjs/core@0.9.1` · `@smeltjs/mcp` stays at `0.8.0` and `@smeltjs/rerank-voyage` at
+`0.1.1` (neither names anything this release adds).
 
-Architecture review IV, in one release: smelt turned its own instruction surface into the
-byte budget it asks everyone else to keep, and closed six seams the review found shallow.
-The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
-contract — is unchanged. The TypeScript API moved in five places, each listed under
-Changed with its reason: `ApplyOptions.marker` is `ApplyOptions.scheme` and
-`RerankRequest.pricing` is `RerankRequest.scheme` (both a `MarkerScheme`); `runDoctor` is
-async; `ElisionStore` gains an optional `survey()`; and `createSmelter` refuses a budget
-of `0` or `1.5` with the same sentence the CLI and the MCP server use, where it used to
-plan. `@smeltjs/mcp` exports `toolSurface` and its two ceilings beside the tool names.
+The additive half of review IV's last card (REP-58, "shrink the barrel"): the barrel's
+own comment promised that every name is re-exported so consumers see no difference, and
+it was false for the two content-kind planners. This release makes the comment true;
+the breaking half — un-exporting what nothing consumes — follows in 0.10.0 with its
+removed names listed.
 
 ### Added
 
-- **`smelt agents lint` gains `blanket-read`.** A prose line that tells the agent to read
-  two or more documents and gives no occasion for it — "read architecture.md,
-  database.md and deployment.md before making changes" — is the shape OpenAI's note on
-  rewriting instruction files for GPT-6 Astra retires, in favour of a trigger per document
-  ("use architecture.md for service boundaries, database.md for schema changes"). Every
-  request pays for every document named, which is the AGENTS.md guide's thesis from the
-  other side. Advisory like the other eight; the explanation names the documents and
-  cites the article, the second source `guide.ts` quotes (once, attributed, beside the
-  guide). A line naming one document, or saying when — smelt's own "Read this before
-  renaming anything" — passes; a fixture pins each shape, and a mutation that fires the
-  rule on a single pointer goes red. A guard also pins that the marker block `smelt setup`
-  writes mints no finding when the linter reads it, at either scope. (Architecture
-  review IV, REP-59.)
-
-### Changed
-
-- **The MCP tool surface is measured, and under a stated ceiling.** The five tool
-  descriptions and the server `instructions` are what every session pays on
-  `initialize` and `tools/list`; the server's comment said they sat "well under 2 KB",
-  and nothing measured it. Measured, they were 3,718 bytes. `packages/mcp/src/surface.ts`
-  now renders the whole surface once as one value beside two measured sizes — the prose
-  (descriptions plus instructions: 2,028 bytes after this change) and the whole
-  serialized `tools/list` payload plus instructions, schemas included (4,588 bytes) — the
-  server registers what it is handed, and a new guard (`test/guards/tool-surface.test.ts`,
-  five mutations) holds the prose under `TOOL_SURFACE_BUDGET_BYTES` (2,048) and the payload
-  under `TOOL_LIST_BUDGET_BYTES` (5,120), each with a recount the module cannot flatter,
-  and pins the module to type-only imports so the mutation runner can execute it. To fit: `smelt_retrieve_batch` is described by the core alone —
-  the server-side tail restating its block format is gone — and the core's own batch
-  description no longer repeats the example marker the `smelt_retrieve` description
-  already carries; `smelt_file`, `repo_map`, `smelt_stats` and the instructions each say
-  the trigger and the mechanism and stop. `smelt_retrieve`'s description is unchanged.
-  `@smeltjs/mcp` now exports `toolSurface`, `TOOL_SURFACE_BUDGET_BYTES`,
-  `TOOL_LIST_BUDGET_BYTES` and the `ToolSurface` types beside the tool names. (Architecture review IV, REP-50.)
-- **The SkillPack is a router and its references.** `skills/smelt/SKILL.md` was one flat
-  7,662-byte document, and six of its twelve sections — setup, the step-by-step fallback,
-  doctor, prune and retention, the reranker, notes — were operator workflows an agent
-  reading one big file never needs, yet paid for on every invocation. The root now
-  carries what a task needs (read, retrieve, map, obey a guard denial, the MCP names) and
-  one link line per operator workflow; `references/setup.md`, `references/store.md` and
-  `references/rerank.md` carry the rest, read only by the agent doing that job. The root
-  is held under `ROOT_BUDGET_BYTES` (2,048) by the generator, which refuses a larger one,
-  and by `test/guards/skill-pack.test.ts`, which recounts it (2,039 bytes after this
-  change) and now compares the whole directory byte for byte — a hand edit to a
-  reference or a stray file is a red verify. The root's `description` says the trigger in
-  one sentence ("Use when a file, log, diff or grep result is too big to read raw, or
-  when a marker's `retrieve("hash")` needs expanding …") instead of opening with the
-  domain, because a long description is what gets truncated where many skills are
-  installed. Same commands, same recipe facts, same generator; `llms.txt` lists the three
-  references beside the root and `llms-full.txt` inlines them. (Architecture review IV,
-  REP-49.)
-- **The wizard kit is finished: one consent discipline, four verbs.** `cli/wizard.ts`
-  was extracted because the third copy of the stream machinery raced — and two copies
-  were still outside it. `smelt init` re-implemented the step walker, the confirm loop,
-  the file listing and the write loop (the last without `mkdirSync`, a latent gap: the
-  wizard only ever wrote into a directory that existed); `smelt agents split` imported
-  nothing from the kit and carried its own ask, confirm, listing and write. The per-file
-  question `<name> exists — overwrite it? (yes/no)>` was spelled three times — init,
-  agents split, merge-policy — each copy with a comment saying it had one home. The kit now owns `askOverwrite` (a literal `yes`
-  and nothing else), `fileFate(file, 'ask' | 'skip')` (the one word that differed between
-  the interactive verbs and `setup --yes` is a parameter, not a fourth copy), a listing
-  padded to its own longest name instead of 20, 32 or 40, and a step machine whose
-  first-step `back` can exit to a question before the steps (init's directory question).
-  `init` and `agents split` route through it; the `module-seams` guard pins the four
-  consent symbols to the kit; the init-wizard guard gains a mutation that loosens the
-  literal-yes rule in the kit itself. One behaviour change, and it is a fix: the kit's
-  confirm printed its retry copy through `ask`, which reads a line — so a mistyped
-  confirm (`y`) swallowed the `yes` typed next, and `hooks` and `setup` needed it twice.
-  The retry copy is now said, never asked, for all four verbs; `test/wizard.test.ts` pins
-  it. (Architecture review IV, REP-55.)
-- **The hook prober is its own module.** `harness/hook-command.ts` was two things in one
-  file: a pure round trip (a hook command as a value, rendered and parsed, string in and
-  string out) and the prober `smelt doctor` runs — a real `spawnSync` of this node
-  against a synthetic payload in a scratch directory under a five-second timeout. The
-  parser has three callers (the installed-state reader, the install planner, doctor);
-  the prober has one — yet anyone who parsed a hook command transitively imported
-  `node:child_process`. The prober now lives in `harness/hook-probe.ts`, imported only by
-  doctor; the parser imports no process, filesystem or clock, and the module-seams guard
-  pins both facts with a mutation that grows the spawn back into the parser. Nothing
-  about what either half does has changed; the spawn guard still proves the one spawn
-  Law 1 permits runs this very node. (Architecture review IV, REP-57.)
-- **`smelt agents lint`'s rules are a registry.** The eight advisory rules were declared
-  twice — an array of ids that fixed the report order, and a hand-written sequence of
-  eight finder calls inside `lintAgents` across three different signatures — with
-  nothing tying the two together; adding a rule was three uncoupled edits in the one
-  registry of this repository that was not a keyed `Record`. `AGENTS_RULES` now is: one
-  entry per rule with its id, its one-sentence meaning, its scope (`file`, `level`,
-  `set`) and its finder, keyed by id, in report order. `lintAgents` folds over it, the
-  id list `AGENTS_LINT_RULES` is derived from its keys, and the report's no-findings
-  line counts the registry instead of spelling "Eight". The agents-lint guard checks
-  the registry is keyed by its own ids (the same `assertKeyedById` the other registries
-  use) and gains two mutations: a key flipped to another rule's id, and a rule left in
-  the registry at a scope the fold never runs. Same ids, same findings, same order.
-  (Architecture review IV, REP-51.)
-
-- **Two verbs on the operations seam: `surveyStore` and `proveRoundTrip`.** `surveyStore`
-  — the one-pass reading `smelt stats` uses — was written but exported from neither
-  barrel, so the CLI deep-imported it and the MCP server, which could not reach it,
-  walked the store twice for `smelt_stats` (counters, then ledger): the barrel defect the
-  seam was created to end, recurring. It is on both barrels now and reads any
-  `ElisionStore`: a store that can answer in one walk (`survey()`, newly optional on the
-  seam; the directory store implements it) is asked once, any other is asked the two
-  narrower questions. `smelt_stats` makes one traversal. `proveRoundTrip` is the proof
-  `smelt setup` ends on — smelt a known blob into a throwaway store, retrieve the first
-  cut, compare bytes — lifted out of setup into ops so `smelt doctor` runs it too:
-  doctor now prints a `round trip` verdict, its `--json` receipt carries `roundTrip`
-  (additive), a failed proof makes the install not current and names the reinstall as
-  its repair, and `runDoctor` is async (its proof is an injectable `DoctorIo.prove`, so
-  the failing verdict is tested, not trusted). Setup's output is unchanged, except that
-  the no-elisions refusal now names the budget the probe actually ran at. (Architecture
-  review IV, REP-56.)
-
-- **One focus matcher.** "Does this text match the Focus?" was answered in five places
-  — the lexical, json, diff and structural planners each carried a copy, and the repo
-  map a fifth that had drifted: it ignored case sensitivity and always lowercased.
-  `plan/focus.ts` now holds the one implementation (`focusMatcher`: substring,
-  case-insensitive unless `caseSensitive`, empty terms dropped, the first matching term
-  in caller order named for receipts), the four planner option bags extend one
-  `FocusOptions` instead of declaring `caseSensitive` four times, and `buildRepoMap`
-  gains `caseSensitive` and honours it. Planner output is unchanged; the repo-map guard
-  gains a case-sensitivity case and a mutation that folds case regardless.
-  (Architecture review IV, REP-52.)
-- **The budget law is stated once, inside the library too.** `ops/inputs.ts` owned "a
-  budget is required, a whole number, greater than zero, with no default" for the two
-  front doors — and `createSmelter` and `buildRepoMap`, the two entry points a library
-  consumer actually calls, each restated it in their own prose, unwatched by the guard
-  that scans for exactly that. The law now lives beside the budget arithmetic in
-  `plan/budget.ts` (`budgetRequired`, `budgetFault`, `budgetMalformed`, plus
-  `lawfulBudget` applying them as a value-or-refusal), is re-exported through the ops seam unchanged, and the
-  two entry points refuse in its sentence: a smelter with no budget now says
-  "`budgetBytes` is required, in UTF-8 bytes …" instead of "no budget", and a smelter
-  given `0` or `1.5` now refuses where it used to plan. The ladder's selection rule —
-  the first attempt whose predicted output fits, else the tightest — was two copies and
-  is `chooseUnderBudget`; the structural planner's budget rung is a different shape and
-  keeps its own. The ops-seam guard names each law's one home and gains a mutation that
-  makes the ladder always take the tightest rung. (Architecture review IV, REP-54.)
-
-- **The marker builder and its pricing are one value.** `apply.ts` documented that
-  pricing a plan with one marker builder and applying it with another produces "cuts
-  that grow the output, silently" — and then resolved the two apart in three places,
-  while `createSmelter` priced against the detected language and built the marker from
-  the plan's; they agreed because every planner echoes its input language, an accident
-  no type recorded. `markerScheme(language, override?)` now mints both together, the
-  smelter threads the one scheme to the planner, the rerank slot and `applyPlan`, and the
-  four copies of the `requirePricing` backstop are one function in `plan/budget.ts`. The
-  marker-format guard breaks the pairing and watches the output grow. **TypeScript API:**
-  `ApplyOptions.marker` is replaced by `ApplyOptions.scheme`, and `RerankRequest.pricing`
-  by `RerankRequest.scheme` (both `MarkerScheme`); `markerPricing()` remains as the
-  pricing half for a caller that only plans. Output is byte-identical. (Architecture
-  review IV, REP-53.)
+- **The json and diff planners are on the barrel, whole.** `JSON_PLANNER_ID`,
+  `JsonPlanner`, `planJson`, `JsonPlannerOptions`, `DIFF_PLANNER_ID`, `DiffPlanner`,
+  `planDiff` and `DiffPlannerOptions` are exported from `@smeltjs/core`, beside the
+  lexical, structural and auto planners that already were. A consumer could select
+  `strategy: 'json'` before this and could not name what it had selected.
+  `test/guards/planner-registry.test.ts` now reads the barrel against the registry —
+  id, class, plan function and options type for every shipped strategy — and a mutation
+  that drops one of them proves it goes red.
 
 ### Docs
 
-- **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**
-  "Keeping the store small" no longer reads as an unconditional refusal: `smelt store
-prune` refuses only when no age was named on the flag or in `store.retention` — the
-  config supplies the default, `--older-than` overrides it, and a configured
-  `keepRetrieved: true` is added to `--keep-retrieved` rather than overridden by its
-  absence. "Reranking" now names the one fact a machine-scope (`~/smelt.config.json`)
-  user needs: the adapter is looked for beside the config first, so
-  `npm install --prefix "$HOME" @smeltjs/rerank-voyage` is the install command that
-  reaches it, not a plain `npm install`. `scripts/generate-skill.mjs` renders both facts
-  from the built package, as it does everywhere else in the skill.
+- **The README is a front door again.** It was 1,018 lines and 60 KB; it is now under half
+  of each, and every line it lost moved rather than vanished. The new
+  [`docs/SETUP.md`](docs/SETUP.md) is the operator guide — `smelt setup` and what it writes,
+  project or machine scope, the upgrade loop, the hooks preset harness by harness, the MCP
+  server, `smelt agents lint`, the reranker opt-in, and the three-step wiring for a harness
+  of your own — and the index `pnpm generate:llms-txt` renders lists it beside the README.
+  What the README keeps is what a guard pins: the three-number summary, both "Sixty
+  seconds" captures regenerated from the binary, the four measured tiers with their corpus
+  commits, the hand-written harness tier table and the structural-language list. One new
+  picture, `assets/how-it-works.svg`, draws the round trip on the palette; it carries no
+  number. The section order follows the cited survey in
+  [`docs/research/2026-09-15-readme-design.md`](docs/research/2026-09-15-readme-design.md):
+  what it is, what it looks like, sixty seconds, install, setup, agents, library, then the
+  measured tables and the fine print.

@@ -7,7 +7,9 @@ import type { ApplyOptions, MarkerBuilder, MarkerInfo, MarkerScheme } from './ap
  * to import this file to build a smelter — the CLI's default verb does exactly that,
  * and a barrel that imports the CLI which imports the barrel is a cycle whose only
  * symptom is a registry evaluating to `undefined` in whichever module the loader
- * entered first. Every name is re-exported here, so consumers see no difference.
+ * entered first. Every planner is re-exported here whole — id, class, plan function
+ * and options type — so consumers see no difference; `test/guards/planner-registry.test.ts`
+ * reads this file against the registry to keep that sentence true.
  */
 
 export type { ApplyOptions, MarkerBuilder, MarkerInfo, MarkerScheme };
@@ -39,6 +41,10 @@ export { AUTO_PLANNER_ID, AutoPlanner, planAuto } from './plan/auto.ts';
 export type { AutoPlannerOptions } from './plan/auto.ts';
 export { LEXICAL_PLANNER_ID, LexicalPlanner, planLexical } from './plan/lexical.ts';
 export type { LexicalPlannerOptions } from './plan/lexical.ts';
+export { JSON_PLANNER_ID, JsonPlanner, planJson } from './plan/json.ts';
+export type { JsonPlannerOptions } from './plan/json.ts';
+export { DIFF_PLANNER_ID, DiffPlanner, planDiff } from './plan/diff.ts';
+export type { DiffPlannerOptions } from './plan/diff.ts';
 export { focusMatcher } from './plan/focus.ts';
 export type { FocusMatcher, FocusOptions } from './plan/focus.ts';
 export { DEFAULT_STRATEGY, isStrategy, PLANNERS, STRATEGIES } from './plan/planners.ts';
