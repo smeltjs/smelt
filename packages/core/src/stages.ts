@@ -1,5 +1,5 @@
 import { NotImplementedError } from './errors.ts';
-import type { DistillStage, RerankCandidate, RerankStage, RerankedCandidate } from './types.ts';
+import type { RerankCandidate, RerankStage, RerankedCandidate } from './types.ts';
 
 /**
  * The reranker that ships with smelt: one that refuses.
@@ -20,25 +20,6 @@ export const unconfiguredRerankStage: RerankStage = {
       'reranking',
       'docs/ARCHITECTURE.md § "Explicitly out of scope" — implement `RerankStage` in your own ' +
         'code, with your own key, so the network call is visible in your source',
-    );
-  },
-};
-
-/**
- * Learned distillation, same treatment, for a different reason.
- *
- * Distillation is out of v1 because a model-written summary cannot satisfy Law 2. "The
- * model condensed this" does not say what was removed, and once the text is rewritten
- * there is nothing left to store under a hash. If this ever ships it will store the
- * original, explain itself in the same rule-named terms every other elision uses, and
- * be reversible — or it will not ship.
- */
-export const unconfiguredDistillStage: DistillStage = {
-  id: 'distill/unconfigured',
-  distill(_text: string, _budgetBytes: number): Promise<string> {
-    throw new NotImplementedError(
-      'learned distillation',
-      'docs/ARCHITECTURE.md § "Explicitly out of scope"',
     );
   },
 };

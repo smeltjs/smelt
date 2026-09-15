@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { NotImplementedError, SmeltError } from '../src/errors.ts';
 import { createSmelter } from '../src/index.ts';
-import { unconfiguredDistillStage, unconfiguredRerankStage } from '../src/stages.ts';
+import { unconfiguredRerankStage } from '../src/stages.ts';
 
 /**
  * Every unbuilt stage throws. This test exists because the tempting alternative —
@@ -12,16 +12,13 @@ import { unconfiguredDistillStage, unconfiguredRerankStage } from '../src/stages
  *
  * The structural planner used to live here; it is real now, and its refusals
  * — a language it has not mapped, a grammar that will not load — are guarded in
- * `test/guards/structural.test.ts` instead. The stage stubs in `src/stages.ts` remain
- * stubs by design.
+ * `test/guards/structural.test.ts` instead. The rerank stub in `src/stages.ts` remains a
+ * stub by design; the distill stub was deleted with its interface (ADR-0005) — a shape
+ * nobody may fill in quietly is written down in ARCHITECTURE as prose, not exported.
  */
 describe('stubs throw instead of returning a plausible wrong answer', () => {
   it('the rerank stage refuses, and points at the interface to implement', () => {
     expect(() => unconfiguredRerankStage.rerank([], 'query')).toThrow(/implement `RerankStage`/);
-  });
-
-  it('the distill stage refuses', () => {
-    expect(() => unconfiguredDistillStage.distill('text', 10)).toThrow(NotImplementedError);
   });
 
   it('a smelter with no budget refuses to invent one', async () => {

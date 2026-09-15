@@ -11,6 +11,73 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
+## 0.10.0 — 2026-09-15
+
+`@smeltjs/core@0.10.0` · `@smeltjs/mcp@0.9.0` (its own source is unchanged; it moves
+because its dependency range on the core does) · `@smeltjs/rerank-voyage` stays at
+`0.1.1` (its peer range, `>=0.7.0 <1`, still names nothing this release removes, and
+the three types it imports are all still exported).
+
+**Breaking, on purpose, and the last card of architecture review IV (REP-58).** The wire
+surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve` contract —
+is unchanged. The TypeScript API loses forty-eight exports and four declarations, every
+one listed below by name. None was documented, none was imported by a workspace package
+or generator, none appeared in a public signature, and the rule that says so is now
+written down ([ADR-0005](docs/adr/0005-public-surface-rule.md)) and held by a guard.
+If you imported one of these from `@smeltjs/core`, the CHANGELOG entry names what it
+was; the module that declares it is unchanged, and the door back is a documented
+consumer or a one-line reason in `test/guards/public-surface.test.ts`.
+
+### Changed
+
+- **The barrel exports what is documented, consumed, reachable or reasoned, and nothing
+  else.** `packages/core/src/index.ts` re-exported about 280 names; the documented
+  consumer contract used about a dozen and the two workspace consumers named nine plus
+  the operations seam. Every export is now accounted for under one of four clauses —
+  named in the docs, imported by a workspace package or read off the barrel by a
+  repository generator, a type reachable from one of those signatures, or listed with
+  a one-line reason — and `test/guards/public-surface.test.ts` reads the barrel, the
+  docs, the consumers and the emitted declaration files to prove it, in both
+  directions: a stray export is red, and so is un-exporting a name `@smeltjs/mcp`
+  still imports. Two mutations watch each half go red.
+- **Un-exported** (still declared in their modules; no longer on `@smeltjs/core`):
+  - the `smelt setup` and `smelt doctor` verbs as functions, and their receipt shapes —
+    `runSetup`, `SetupIo`, `SetupOptions`, `SetupReceipt`, `SetupCheck`,
+    `SetupFileAction`, `runDoctor`, `DoctorIo`, `DoctorOptions`, `DoctorReceipt`,
+    `DoctorBlock`, `DoctorConfig`, `DoctorHookEntry`, `DoctorHookFile`, `DoctorMcp`,
+    `DoctorRerank`. `runCli` is the documented way to drive a verb, and it drives both.
+  - `smelt init`'s stub plumbing — `MEASURE_STUB_FILE`, `measureStubSource`,
+    `RERANK_STUB_FILE`, `rerankStubSource`. `runInit` stays.
+  - the CLI's rendering helpers — `cliUsage`, `formatMapReport`, `MapReportInput`.
+  - repo-map internals — `PAGERANK_DAMPING`, `PAGERANK_ITERATIONS`, `rankDefinitions`,
+    `FileTagsEntry`, `RankedDefinition`, `TAGS_CACHE_FORMAT`, `TAGS_CACHE_VERSION`,
+    `tagsCacheKey`. `buildRepoMap`, `extractTags`, the reader seam and every reason rule
+    id stay.
+  - store and config internals — `DIRECTORY_STORE_FORMAT`, `DIRECTORY_STORE_VERSION`,
+    `CUTOFF_HELP`, `readCutoff`, `CutoffReading`, `findConfigFile`, `resolveStorePath`,
+    `VOYAGE_DEFAULT_KEY_ENV`, `VOYAGE_DEFAULT_MODEL`, `ROUND_TRIP_PROBE_BUDGET_BYTES`.
+    `loadNearestConfig`, `configuredStore`, `openStore` and `readStoreSize` stay.
+  - grammar loading — `grammarPath`, `loadGrammar`. `WASM_BY_LANGUAGE`, which the
+    bundler reads, stays.
+  - registry views nothing rendered — `harnessNames`, `HARNESS_TIERS`, `TIER_HONESTY`,
+    `profileForPath`, `ANTHROPIC_PROMPT_CACHE_FACTS`. The barrel's comment said the first two existed for
+    the site's fact generator; the generator reads `harnessesByTier`, `harnessLabel` and
+    `HARNESSES`, and those stay.
+- **The barrel comment is true.** It no longer claims exports for a generator that does
+  not read them; it points at ADR-0005 for what earns a place.
+
+### Removed
+
+- **`Reconstructor`** — a type nothing referenced, including the doc comment that
+  pointed at it. `reconstruct()` is the function; it never had this signature.
+- **`DistillStage` and `unconfiguredDistillStage`** — an interface whose only adapter
+  threw. The stage's shape stays written down where it always was argued,
+  `docs/ARCHITECTURE.md` § "Explicitly out of scope", as prose: a shape nobody may fill
+  in quietly is a paragraph, not an exported interface inviting an implementation.
+  `test/stubs.test.ts` loses the one row that exercised it.
+- **`clearGrammarCache`** — a cache reset only tests had a reason to call, and no test
+  called it.
+
 ## 0.9.1 — 2026-09-15
 
 `@smeltjs/core@0.9.1` · `@smeltjs/mcp` stays at `0.8.0` and `@smeltjs/rerank-voyage` at

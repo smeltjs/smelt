@@ -1,6 +1,6 @@
 {
-  "guards": 47,
-  "mutations": 266,
+  "guards": 48,
+  "mutations": 268,
   "byGuard": [
     {
       "guard": "packages/core/test/guards/adapter-resolver.test.ts",
@@ -112,6 +112,10 @@
     },
     {
       "guard": "packages/core/test/guards/planner-registry.test.ts",
+      "count": 2
+    },
+    {
+      "guard": "packages/core/test/guards/public-surface.test.ts",
       "count": 2
     },
     {
