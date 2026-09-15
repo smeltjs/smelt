@@ -11,6 +11,25 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
+## Unreleased
+
+### Docs
+
+- **The README is a front door again.** It was 1,018 lines and 60 KB; it is now under half
+  of each, and every line it lost moved rather than vanished. The new
+  [`docs/SETUP.md`](docs/SETUP.md) is the operator guide — `smelt setup` and what it writes,
+  project or machine scope, the upgrade loop, the hooks preset harness by harness, the MCP
+  server, `smelt agents lint`, the reranker opt-in, and the three-step wiring for a harness
+  of your own — and the index `pnpm generate:llms-txt` renders lists it beside the README.
+  What the README keeps is what a guard pins: the three-number summary, both "Sixty
+  seconds" captures regenerated from the binary, the four measured tiers with their corpus
+  commits, the hand-written harness tier table and the structural-language list. One new
+  picture, `assets/how-it-works.svg`, draws the round trip on the palette; it carries no
+  number. The section order follows the cited survey in
+  [`docs/research/2026-09-15-readme-design.md`](docs/research/2026-09-15-readme-design.md):
+  what it is, what it looks like, sixty seconds, install, setup, agents, library, then the
+  measured tables and the fine print.
+
 ## 0.9.0 — 2026-09-15
 
 `@smeltjs/core@0.9.0` · `@smeltjs/mcp@0.8.0` · `@smeltjs/rerank-voyage` stays at `0.1.1`

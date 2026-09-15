@@ -1009,8 +1009,8 @@ instruction-file snippet as belt and braces, because the snippet is also what te
 the model to run `smelt retrieve` after a deny. Harnesses are tiered honestly —
 verified / experimental / advisory — against the primary-source survey in
 [`docs/research/2026-09-02-harness-capability-matrix.md`](research/2026-09-02-harness-capability-matrix.md).
-Enforcement defaults to deny-with-reason; rewrite is opt-in and never silent. The
-README's harness section is the user-facing walkthrough.
+Enforcement defaults to deny-with-reason; rewrite is opt-in and never silent.
+[`docs/SETUP.md`](SETUP.md) is the user-facing walkthrough.
 
 The guard is the **producer expert** — to decide anything about a `grep` it has already
 parsed the pattern — and that knowledge used to die inside it: the deny reason printed

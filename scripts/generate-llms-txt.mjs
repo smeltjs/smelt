@@ -85,7 +85,14 @@ function documents(adrs) {
       section: 'Docs',
       path: 'README.md',
       title: 'README',
-      note: 'What smelt is, how to install it, the sixty-second round trip, how it wires into each harness, and the measured tables with their dates and corpus commits.',
+      note: 'What smelt is, how to install it, the sixty-second round trip, setup in one command, and the measured tables with their dates and corpus commits.',
+      inline: true,
+    },
+    {
+      section: 'Docs',
+      path: 'docs/SETUP.md',
+      title: 'docs/SETUP.md',
+      note: 'The operator guide: `smelt setup` and what it writes, project or machine scope, the upgrade loop, every hook harness by harness, the MCP server, `smelt agents lint`, the reranker opt-in, and wiring the library into a harness of your own.',
       inline: true,
     },
     {
