@@ -79,6 +79,19 @@ the runner rather than by hand.
   pins both facts with a mutation that grows the spawn back into the parser. Nothing
   about what either half does has changed; the spawn guard still proves the one spawn
   Law 1 permits runs this very node. (Architecture review IV, REP-57.)
+- **`smelt agents lint`'s rules are a registry.** The eight advisory rules were declared
+  twice — an array of ids that fixed the report order, and a hand-written sequence of
+  eight finder calls inside `lintAgents` across three different signatures — with
+  nothing tying the two together; adding a rule was three uncoupled edits in the one
+  registry of this repository that was not a keyed `Record`. `AGENTS_RULES` now is: one
+  entry per rule with its id, its one-sentence meaning, its scope (`file`, `level`,
+  `set`) and its finder, keyed by id, in report order. `lintAgents` folds over it, the
+  id list `AGENTS_LINT_RULES` is derived from its keys, and the report's no-findings
+  line counts the registry instead of spelling "Eight". The agents-lint guard checks
+  the registry is keyed by its own ids (the same `assertKeyedById` the other registries
+  use) and gains two mutations: a key flipped to another rule's id, and a rule left in
+  the registry at a scope the fold never runs. Same ids, same findings, same order.
+  (Architecture review IV, REP-51.)
 
 ### Docs
 

@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-import { lintAgents, overBudgetBytes } from '../../agents/lint.ts';
+import { AGENTS_RULES, lintAgents, overBudgetBytes } from '../../agents/lint.ts';
 import type { AgentsLintReport } from '../../agents/lint.ts';
 import { CliUsageError } from '../../errors.ts';
 import { readTree } from '../../ops/inputs.ts';
@@ -14,6 +14,17 @@ import type { CliIo } from '../shell.ts';
 
 import type { FlagValues } from './flags.ts';
 import type { ConfigSource, Subcommand } from './subcommand.ts';
+
+/**
+ * The rule list the help prints, one line per registry entry: the id and its meaning,
+ * read from `AGENTS_RULES` so the help cannot name a rule the linter does not run, nor
+ * miss one it does. Column-aligned on the longest id; every line fits eighty columns.
+ */
+function ruleLines(): string {
+  const rules = Object.values(AGENTS_RULES);
+  const width = Math.max(...rules.map((rule) => rule.id.length));
+  return rules.map((rule) => `    ${rule.id.padEnd(width)}  ${rule.meaning}\n`).join('');
+}
 
 /**
  * `smelt agents` — the instruction files an agent loads on **every** request.
@@ -94,12 +105,12 @@ export const agentsCommand: Subcommand<AgentsInvocation, ResolvedAgentsRun> = {
         `  nested one merges with the root. A merge runs up the tree and never across\n` +
         `  it, so it reports bytes per level, the per-request worst case (the heaviest\n` +
         `  level plus its ancestors — what one agent actually loads) and the whole-tree\n` +
-        `  surface, plus an imperative count labelled a heuristic. Then eight advisory\n` +
-        `  rules: dead-path and dead-link (path-like tokens and links resolved against\n` +
-        `  the real tree — the check nobody else makes, and the reason to run this in\n` +
-        `  CI), forcing-language, structure-dump, generated-boilerplate, language-rule,\n` +
-        `  mirror-drift and restated-at-level. Every finding carries a stable rule id\n` +
-        `  and a sentence citing the guide it applies\n` +
+        `  surface, plus an imperative count labelled a heuristic. Then the advisory\n` +
+        `  rules — dead-path and dead-link resolve against the real tree, the check\n` +
+        `  nobody else makes and the reason to run this in CI:\n` +
+        ruleLines() +
+        `  Every finding carries a stable rule id and a sentence citing the guide it\n` +
+        `  applies\n` +
         `  (aihero.dev/a-complete-guide-to-agents-md). Findings exit 0; --strict makes\n` +
         `  any finding exit 1. There is no built-in size limit: set agents.budgetBytes\n` +
         `  in ${CONFIG_FILE_NAME} and exceeding it exits 1, as every other ${CLI_NAME}\n` +

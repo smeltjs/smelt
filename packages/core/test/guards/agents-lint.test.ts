@@ -7,12 +7,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 // Through @guard, so the mutation runner can point this at a deliberately broken copy
 // of `src` and watch it go red. See scripts/mutate.mjs.
+import { assertKeyedById } from '@smelt/guard-kit';
+
 import {
   AGENTS_LINT_RULES,
+  AGENTS_RULES,
   IMPERATIVE_LINE_RULE,
   lintAgents,
   overBudgetBytes,
 } from '@guard/agents/lint';
+import { cliUsage } from '@guard/cli/args';
+import { formatAgentsReport } from '@guard/cli/report';
 import { readInstructionSet } from '@guard/agents/instructions';
 import { planSplit, readSections, rewriteLinks } from '@guard/agents/split';
 import { runAgentsSplit } from '@guard/cli/agents';
@@ -141,6 +146,38 @@ describe('every advisory rule fires, on prose written to trip exactly it', () =>
       (AGENTS_LINT_RULES as readonly string[]).includes(IMPERATIVE_LINE_RULE),
       'imperative-line became a finding — --strict is now useless on any real file',
     ).toBe(false);
+  });
+
+  it('keeps its rules in one registry, keyed by their own ids, in report order', () => {
+    // The same totality discipline HARNESS_PROFILES, SUBCOMMANDS and PLANNERS live
+    // under: a rule is one entry, its key is its id, and the report order is the key
+    // order — declared once. The list of ids is derived from the table, never restated
+    // beside it, so the two cannot disagree.
+    assertKeyedById(AGENTS_RULES, 'id');
+    expect([...AGENTS_LINT_RULES]).toEqual(Object.keys(AGENTS_RULES));
+    // The help prints the registry, not a hand-kept sentence: every id, every meaning.
+    const usage = cliUsage();
+    for (const rule of Object.values(AGENTS_RULES)) {
+      expect(usage, `the help does not name ${rule.id}`).toContain(rule.id);
+      const line = usage.split('\n').find((one) => one.includes(rule.meaning));
+      expect(line, `the help does not say what ${rule.id} means`).toBeDefined();
+      // The help is read in an eighty-column terminal; a meaning is one line of it.
+      expect(line?.length ?? 0, `the ${rule.id} line overflows eighty columns`).toBeLessThanOrEqual(
+        80,
+      );
+    }
+    for (const rule of Object.values(AGENTS_RULES)) {
+      expect(rule.meaning.length, `${rule.id} states no meaning`).toBeGreaterThan(20);
+      expect(['file', 'level', 'set']).toContain(rule.scope);
+    }
+  });
+
+  it('counts its own rules in the no-findings line, from the registry', () => {
+    const text = formatAgentsReport(lintFixture('# p\n\nA project.\n'), {
+      source: 'p',
+      strict: false,
+    });
+    expect(text).toContain(`${String(AGENTS_LINT_RULES.length)} advisory rules ran`);
   });
 
   it('mints no finding on a file written to the guide’s own minimum', () => {
@@ -631,6 +668,20 @@ describe('split writes nothing without consent, and mints no finding of its own'
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'agents-rule-registry-key-flipped',
+    file: 'agents/lint.ts',
+    find: '  [DEAD_LINK_RULE]: {\n    id: DEAD_LINK_RULE,',
+    replace: '  [DEAD_LINK_RULE]: {\n    id: DEAD_PATH_RULE,',
+    why: 'a registry entry whose key names one rule and whose id names another — the published id list now carries dead-path twice and dead-link never, the help prints the wrong id beside the dead-link meaning, and the keyed-by-id check the other registries already live under is what sees the key and the entry disagree',
+  },
+  {
+    id: 'agents-rule-asleep-in-the-registry',
+    file: 'agents/lint.ts',
+    find: "    scope: 'file',\n    find: findLanguageRules,",
+    replace: "    scope: 'never' as 'file',\n    find: findLanguageRules,",
+    why: 'a rule present in the registry that the fold never runs — the id is still published, the help still names it, and the language-rule fixture that must fire goes quiet; the per-rule fixture is what notices a rule asleep',
+  },
   {
     id: 'agents-dead-path-stops-resolving',
     file: 'agents/instructions.ts',

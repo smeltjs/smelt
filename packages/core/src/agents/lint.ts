@@ -4,7 +4,7 @@ import type { ElisionReason } from '../types.ts';
 
 import { citing, GUIDE } from './guide.ts';
 import { ancestorDirs, readInstructionSet, resolvesInTree } from './instructions.ts';
-import type { InstructionFile, InstructionSet } from './instructions.ts';
+import type { InstructionFile, InstructionLevel, InstructionSet } from './instructions.ts';
 
 /**
  * `smelt agents lint` — the audit of the blob an agent loads on **every** request.
@@ -47,40 +47,143 @@ import type { InstructionFile, InstructionSet } from './instructions.ts';
  * Rule ids — stable, and the whole machine-readable surface of a finding
  * ---------------------------------------------------------------------------------- */
 
-/** A path-like token in the prose that resolves to nothing in the tree. The flagship. */
+// The ids. What each rule means is said once, in its {@link AGENTS_RULES} entry — the
+// sentence the help prints — not repeated here.
 export const DEAD_PATH_RULE = 'dead-path';
-/** A Markdown link whose relative target is not in the tree. */
 export const DEAD_LINK_RULE = 'dead-link';
-/** "always", "never", ALL-CAPS forcing. */
 export const FORCING_LANGUAGE_RULE = 'forcing-language';
-/** A directory tree, or a run of bare path lines. */
 export const STRUCTURE_DUMP_RULE = 'structure-dump';
-/** The fingerprints an init script leaves. The softest rule here, and it says so. */
 export const GENERATED_BOILERPLATE_RULE = 'generated-boilerplate';
-/** A code-style rule that loads on every request to be relevant on some of them. */
 export const LANGUAGE_RULE_RULE = 'language-rule';
-/** A mirror (CLAUDE.md / GEMINI.md) that has diverged from its AGENTS.md. */
 export const MIRROR_DRIFT_RULE = 'mirror-drift';
-/** The same instruction present at a level and at one of its ancestors. */
 export const RESTATED_AT_LEVEL_RULE = 'restated-at-level';
 
+/** The id of one advisory rule — the machine-readable half of a finding. */
+export type AgentsRuleId =
+  | typeof DEAD_PATH_RULE
+  | typeof DEAD_LINK_RULE
+  | typeof FORCING_LANGUAGE_RULE
+  | typeof STRUCTURE_DUMP_RULE
+  | typeof GENERATED_BOILERPLATE_RULE
+  | typeof LANGUAGE_RULE_RULE
+  | typeof MIRROR_DRIFT_RULE
+  | typeof RESTATED_AT_LEVEL_RULE;
+
+/** What a rule that reads one file at a time is handed beside the file. */
+export interface RuleContext {
+  /** The repository root, for resolving tokens against the tree. */
+  readonly root: string;
+  /** The tree seam. Every resolution goes through it. */
+  readonly reader: RepoReader;
+}
+
 /**
- * The rules a finding can carry, in report order.
- *
- * `Object.freeze`-flat on purpose: the ids are a wire surface. They go into `--json`,
- * into CI greps and into whatever a user filters on, so they are declared once and
- * never spelled again in prose.
+ * One advisory rule: its id, the one sentence the help prints for it, the scope it
+ * reads at, and the finder. Three scopes, because the rules genuinely read three
+ * different things — one file's lines, one level's primary beside its mirrors, or the
+ * whole merged set — and a rule at the wrong scope is a type error, not a runtime one.
  */
-export const AGENTS_LINT_RULES = [
-  DEAD_PATH_RULE,
-  DEAD_LINK_RULE,
-  FORCING_LANGUAGE_RULE,
-  STRUCTURE_DUMP_RULE,
-  GENERATED_BOILERPLATE_RULE,
-  LANGUAGE_RULE_RULE,
-  MIRROR_DRIFT_RULE,
-  RESTATED_AT_LEVEL_RULE,
-] as const;
+export type AgentsRule =
+  | {
+      readonly id: AgentsRuleId;
+      readonly meaning: string;
+      readonly scope: 'file';
+      readonly find: (
+        file: InstructionFile,
+        lines: readonly ScannedLine[],
+        context: RuleContext,
+      ) => AgentsFinding[];
+    }
+  | {
+      readonly id: AgentsRuleId;
+      readonly meaning: string;
+      readonly scope: 'level';
+      readonly find: (level: InstructionLevel) => AgentsFinding[];
+    }
+  | {
+      readonly id: AgentsRuleId;
+      readonly meaning: string;
+      readonly scope: 'set';
+      readonly find: (set: InstructionSet) => AgentsFinding[];
+    };
+
+/**
+ * The rule registry — every advisory rule, keyed by its own id, in report order.
+ *
+ * The same shape `HARNESS_PROFILES`, `SUBCOMMANDS` and `PLANNERS` take, for the same
+ * reason: a `Record` over the id union does not compile with an entry missing, so
+ * adding a rule is one entry here and its finder, and forgetting either is a build
+ * error rather than a rule that exists in the help and never runs. The guard checks
+ * every key names its own entry (`assertKeyedById`), that the published id list is
+ * the entries' own ids, and — one fixture per rule — that every rule fires. Until
+ * review IV (REP-51) the rule list was declared twice — an array of ids for report
+ * order, and a hand-written sequence of eight finder calls — and nothing tied the two
+ * together.
+ */
+export const AGENTS_RULES: Readonly<Record<AgentsRuleId, AgentsRule>> = {
+  [DEAD_PATH_RULE]: {
+    id: DEAD_PATH_RULE,
+    meaning: 'a path-like token resolving to nothing in the tree',
+    scope: 'file',
+    find: (file, lines, context) => findDeadPaths(file, lines, context.root, context.reader),
+  },
+  [DEAD_LINK_RULE]: {
+    id: DEAD_LINK_RULE,
+    meaning: 'a link whose relative target is not in the tree',
+    scope: 'file',
+    find: (file, lines, context) => findDeadLinks(file, lines, context.root, context.reader),
+  },
+  [FORCING_LANGUAGE_RULE]: {
+    id: FORCING_LANGUAGE_RULE,
+    meaning: '"always", "never" or ALL-CAPS where a reason would do',
+    scope: 'file',
+    find: findForcingLanguage,
+  },
+  [STRUCTURE_DUMP_RULE]: {
+    id: STRUCTURE_DUMP_RULE,
+    meaning: 'a drawn directory tree, or a run of bare path lines',
+    scope: 'file',
+    find: findStructureDumps,
+  },
+  [GENERATED_BOILERPLATE_RULE]: {
+    id: GENERATED_BOILERPLATE_RULE,
+    meaning: 'the fingerprints an init script leaves (softest rule)',
+    scope: 'file',
+    find: findGeneratedBoilerplate,
+  },
+  [LANGUAGE_RULE_RULE]: {
+    id: LANGUAGE_RULE_RULE,
+    meaning: 'a code-style rule paid on every request, used on few',
+    scope: 'file',
+    find: findLanguageRules,
+  },
+  [MIRROR_DRIFT_RULE]: {
+    id: MIRROR_DRIFT_RULE,
+    meaning: 'a CLAUDE.md or GEMINI.md diverged from its AGENTS.md',
+    scope: 'level',
+    find: (level) => findMirrorDrift(level.primary, level.mirrors),
+  },
+  [RESTATED_AT_LEVEL_RULE]: {
+    id: RESTATED_AT_LEVEL_RULE,
+    meaning: 'an instruction restated at a level and an ancestor',
+    scope: 'set',
+    find: findRestatedAcrossLevels,
+  },
+};
+
+/**
+ * The rule ids in report order — the entries' own ids, in the registry's key order,
+ * derived the way `HARNESS_IDS` is and never restated. Read from the entries rather
+ * than the keys so that a key naming one rule over an entry carrying another shows up
+ * here too, not only in the guard.
+ *
+ * The ids are a wire surface: they go into `--json`, into CI greps and into whatever a
+ * user filters on, so each is declared once (the constants above) and the list is
+ * whatever the registry says.
+ */
+export const AGENTS_LINT_RULES: readonly AgentsRuleId[] = Object.values(AGENTS_RULES).map(
+  (rule) => rule.id,
+);
 
 /**
  * The imperative counter's rule id (ruling R6).
@@ -190,6 +293,10 @@ export function lintAgents(options: AgentsLintOptions): AgentsLintReport {
 
   const findings: AgentsFinding[] = [];
   const imperatives: AgentsFinding[] = [];
+  // The fold over the registry: every rule runs at its own scope, and nothing here
+  // names a rule — adding one is a registry entry, not an edit to this loop.
+  const rules = Object.values(AGENTS_RULES);
+  const context: RuleContext = { root: options.root, reader };
 
   for (const level of set.levels) {
     // The imperative count is a companion to the byte total, so it is counted over
@@ -208,16 +315,17 @@ export function lintAgents(options: AgentsLintOptions): AgentsLintReport {
     ];
     for (const file of linted) {
       const lines = scanLines(file.text);
-      findings.push(...findDeadLinks(file, lines, options.root, reader));
-      findings.push(...findDeadPaths(file, lines, options.root, reader));
-      findings.push(...findForcingLanguage(file, lines));
-      findings.push(...findStructureDumps(file, lines));
-      findings.push(...findGeneratedBoilerplate(file, lines));
-      findings.push(...findLanguageRules(file, lines));
+      for (const rule of rules) {
+        if (rule.scope === 'file') findings.push(...rule.find(file, lines, context));
+      }
     }
-    findings.push(...findMirrorDrift(level.primary, level.mirrors));
+    for (const rule of rules) {
+      if (rule.scope === 'level') findings.push(...rule.find(level));
+    }
   }
-  findings.push(...findRestatedAcrossLevels(set));
+  for (const rule of rules) {
+    if (rule.scope === 'set') findings.push(...rule.find(set));
+  }
 
   return {
     root: options.root,
@@ -265,7 +373,7 @@ function ruleOrder(rule: string): number {
  * ---------------------------------------------------------------------------------- */
 
 /** One line of an instruction file, with the one fact every rule branches on. */
-interface ScannedLine {
+export interface ScannedLine {
   /** 1-based. */
   readonly number: number;
   readonly text: string;

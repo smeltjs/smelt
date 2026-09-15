@@ -103,12 +103,19 @@ AGENTS
   nested one merges with the root. A merge runs up the tree and never across
   it, so it reports bytes per level, the per-request worst case (the heaviest
   level plus its ancestors — what one agent actually loads) and the whole-tree
-  surface, plus an imperative count labelled a heuristic. Then eight advisory
-  rules: dead-path and dead-link (path-like tokens and links resolved against
-  the real tree — the check nobody else makes, and the reason to run this in
-  CI), forcing-language, structure-dump, generated-boilerplate, language-rule,
-  mirror-drift and restated-at-level. Every finding carries a stable rule id
-  and a sentence citing the guide it applies
+  surface, plus an imperative count labelled a heuristic. Then the advisory
+  rules — dead-path and dead-link resolve against the real tree, the check
+  nobody else makes and the reason to run this in CI:
+    dead-path              a path-like token resolving to nothing in the tree
+    dead-link              a link whose relative target is not in the tree
+    forcing-language       "always", "never" or ALL-CAPS where a reason would do
+    structure-dump         a drawn directory tree, or a run of bare path lines
+    generated-boilerplate  the fingerprints an init script leaves (softest rule)
+    language-rule          a code-style rule paid on every request, used on few
+    mirror-drift           a CLAUDE.md or GEMINI.md diverged from its AGENTS.md
+    restated-at-level      an instruction restated at a level and an ancestor
+  Every finding carries a stable rule id and a sentence citing the guide it
+  applies
   (aihero.dev/a-complete-guide-to-agents-md). Findings exit 0; --strict makes
   any finding exit 1. There is no built-in size limit: set agents.budgetBytes
   in smelt.config.json and exceeding it exits 1, as every other smelt
