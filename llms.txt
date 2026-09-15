@@ -83,6 +83,7 @@ a marker gave you retrieves the same bytes from either surface.
 - [ADR-0002](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0002-skill-pack-complements-marker-blocks.md): The skill pack complements the marker block; it does not replace it.
 - [ADR-0003](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0003-doctor-reports-never-migrates.md): Doctor reports; setup repairs; nothing migrates silently.
 - [ADR-0004](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0004-rerank-config-seam.md): A reranker is an explicit config opt-in, never a default.
+- [ADR-0005](https://raw.githubusercontent.com/smeltjs/smelt/main/docs/adr/0005-public-surface-rule.md): The barrel exports what is documented, consumed, reachable or reasoned — and nothing else.
 
 ## Packages
 

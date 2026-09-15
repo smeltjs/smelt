@@ -145,7 +145,7 @@ export interface AppliedElision {
   readonly range: ByteRange;
   /**
    * Where the marker sits in the *output*. Law 3 — every elision is reversible — needs
-   * this: {@link Reconstructor} splices stored bytes back over these ranges. Without it,
+   * this: `reconstruct()` splices stored bytes back over these ranges. Without it,
    * "reversible" would mean parsing markers back out of the text, which is a guess.
    * This is a fact recorded at the moment of the cut.
    */
@@ -214,12 +214,6 @@ export interface SmeltResult {
    */
   readonly rerank?: RerankAttribution;
 }
-
-/**
- * Reversibility, as a callable. Takes a {@link SmeltResult} and the store that holds its
- * elided bytes, and returns the original text — byte for byte.
- */
-export type Reconstructor = (result: SmeltResult, store: ElisionStore) => string;
 
 // ---------------------------------------------------------------------------
 // The store, and the counters that make over-pruning visible
@@ -634,18 +628,4 @@ export interface RerankAttribution {
    * Absent means the stage ran.
    */
   readonly skipped?: 'no-candidates' | 'no-query' | 'plan-over-budget';
-}
-
-/**
- * Learned distillation — rewriting content with a model instead of cutting it.
- *
- * Out of v1 for a reason beyond the network: a distilled paragraph cannot satisfy
- * Law 2. "The model summarised this" is not an explanation of what was removed, and
- * the removed material is no longer recoverable from the output. If this ever ships,
- * it ships as a stage that stores the original and explains itself in the same terms
- * every other rule does.
- */
-export interface DistillStage {
-  readonly id: string;
-  distill(text: string, budgetBytes: number): Promise<string>;
 }

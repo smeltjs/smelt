@@ -36,7 +36,7 @@ export {
   RERANK_VOYAGE_PACKAGE,
 } from './net/policy.ts';
 export type { LocalResource } from './net/policy.ts';
-export { clearGrammarCache, grammarPath, loadGrammar, WASM_BY_LANGUAGE } from './plan/grammar.ts';
+export { WASM_BY_LANGUAGE } from './plan/grammar.ts';
 export { AUTO_PLANNER_ID, AutoPlanner, planAuto } from './plan/auto.ts';
 export type { AutoPlannerOptions } from './plan/auto.ts';
 export { LEXICAL_PLANNER_ID, LexicalPlanner, planLexical } from './plan/lexical.ts';
@@ -67,14 +67,9 @@ export { loadRerankStage } from './rerank/load.ts';
 export type { RerankLoad } from './rerank/load.ts';
 export { applyRerank } from './rerank/protect.ts';
 export type { RerankOutcome, RerankRequest } from './rerank/protect.ts';
-export { unconfiguredDistillStage, unconfiguredRerankStage } from './stages.ts';
+export { unconfiguredRerankStage } from './stages.ts';
 export { MemoryElisionStore } from './store.ts';
-export {
-  DIRECTORY_STORE_FORMAT,
-  DIRECTORY_STORE_VERSION,
-  DirectoryElisionStore,
-  readStoreSize,
-} from './store-dir.ts';
+export { DirectoryElisionStore, readStoreSize } from './store-dir.ts';
 export type {
   DirectoryElisionStoreOptions,
   PrunedBlob,
@@ -82,25 +77,18 @@ export type {
   PruneReport,
   StoreSurvey,
 } from './store-dir.ts';
-export { CUTOFF_HELP, readCutoff } from './store-cutoff.ts';
-export type { CutoffReading } from './store-cutoff.ts';
+
 export * from './types.ts';
 export {
   CLI_JSON_FORMAT,
   CLI_NAME,
-  cliUsage,
   EXIT,
   formatReport,
   parseSmeltArgs,
   runCli,
 } from './cli/run.ts';
 export type { AnswerStream, CliIo, CliJsonEnvelope, SmeltInvocation } from './cli/run.ts';
-export {
-  ANTHROPIC_PROMPT_CACHE_FACTS,
-  CACHE_BREAKER_RULES,
-  detectCacheBreakers,
-  findPrefixDivergence,
-} from './cache/prefix.ts';
+export { CACHE_BREAKER_RULES, detectCacheBreakers, findPrefixDivergence } from './cache/prefix.ts';
 export type {
   CacheWarning,
   PrefixDivergence,
@@ -126,24 +114,19 @@ export type {
   RepoMapReason,
   RepoMapWarning,
 } from './repomap/map.ts';
-export { PAGERANK_DAMPING, PAGERANK_ITERATIONS, rankDefinitions } from './repomap/rank.ts';
-export type { FileTagsEntry, RankedDefinition } from './repomap/rank.ts';
+
 export { extractTags } from './repomap/tags.ts';
 export type { DefinitionTag, FileTags, ReferenceTag } from './repomap/tags.ts';
-export { TAGS_CACHE_FORMAT, TAGS_CACHE_VERSION, tagsCacheKey } from './repomap/cache.ts';
+
 export { nodeFsReader } from './repomap/reader.ts';
 export type { DirEntry, FileStat, RepoReader } from './repomap/reader.ts';
 export {
   CONFIG_FILE_NAME,
   CONFIG_VERSION,
   configuredStore,
-  findConfigFile,
   loadNearestConfig,
   parseConfig,
   renderConfig,
-  resolveStorePath,
-  VOYAGE_DEFAULT_KEY_ENV,
-  VOYAGE_DEFAULT_MODEL,
 } from './config.ts';
 export type {
   ConfiguredStore,
@@ -153,34 +136,9 @@ export type {
   SmeltConfigRetention,
   SmeltConfigStore,
 } from './config.ts';
-export {
-  MEASURE_STUB_FILE,
-  measureStubSource,
-  RERANK_STUB_FILE,
-  rerankStubSource,
-  runInit,
-} from './cli/init.ts';
+export { runInit } from './cli/init.ts';
 export type { InitIo } from './cli/init.ts';
-export { runSetup } from './cli/setup.ts';
-export type {
-  SetupCheck,
-  SetupFileAction,
-  SetupIo,
-  SetupOptions,
-  SetupReceipt,
-} from './cli/setup.ts';
-export { runDoctor } from './cli/doctor.ts';
-export type {
-  DoctorBlock,
-  DoctorConfig,
-  DoctorHookEntry,
-  DoctorHookFile,
-  DoctorIo,
-  DoctorMcp,
-  DoctorOptions,
-  DoctorReceipt,
-  DoctorRerank,
-} from './cli/doctor.ts';
+
 export { retrieveStats, ruleLedger } from './stats.ts';
 export type { RawRetrieveCounters } from './stats.ts';
 
@@ -192,29 +150,27 @@ export type { RawRetrieveCounters } from './stats.ts';
  */
 export { SETUP_RECIPE, SETUP_STEPS } from './setup/recipe.ts';
 export type { SetupRecipe, SetupStep } from './setup/recipe.ts';
-export {
-  LANGUAGE_PROFILES,
-  profileFor,
-  profileForPath,
-  structuralLanguages,
-} from './lang/registry.ts';
+export { LANGUAGE_PROFILES, profileFor, structuralLanguages } from './lang/registry.ts';
 export type { LanguageProfile, LanguageStructure, RepoMapFacts } from './lang/profile.ts';
 /**
- * The harness registry's rendered views. Public for the same reason the ops seam is:
- * something outside this package renders them — the site's `facts.json` generator —
- * and the alternative is a second copy of the tier table typed into a React component,
- * which is exactly the drift `harnessesByTier()` exists to end.
+ * The harness registry's rendered views. Public because something outside this package
+ * renders them — the site's `facts.json` generator reads `harnessesByTier`,
+ * `harnessLabel` and `HARNESSES` — and the alternative is a second copy of the tier
+ * table typed into a React component, which is exactly the drift `harnessesByTier()`
+ * exists to end. What earns a place on this barrel at all is ADR-0005: documented,
+ * consumed, reachable from a public signature, or listed with a reason in
+ * `test/guards/public-surface.test.ts`.
  */
-export { harnessesByTier, harnessNames, HARNESSES, HARNESS_IDS } from './harness/registry.ts';
+export { harnessesByTier, HARNESSES, HARNESS_IDS } from './harness/registry.ts';
 export type { HarnessTierGroup } from './harness/registry.ts';
-export { harnessLabel, HARNESS_TIERS, TIER_HONESTY } from './harness/profile.ts';
+export { harnessLabel } from './harness/profile.ts';
 export type { HarnessId, HarnessTier } from './harness/profile.ts';
 export { resolveRun } from './cli/subcommands/smelt.ts';
 export type { ResolvedRun } from './cli/subcommands/smelt.ts';
 export { REPO_MAP_FOCUS_RULE } from './repomap/map.ts';
-export { CLI_MAP_JSON_FORMAT, formatMapReport, resolveMapRun } from './cli/run.ts';
+export { CLI_MAP_JSON_FORMAT, resolveMapRun } from './cli/run.ts';
 export type { CliInvocation, CliMapJsonEnvelope, MapInvocation } from './cli/run.ts';
-export type { MapReportInput } from './cli/report.ts';
+
 export type { ResolvedMapRun } from './cli/subcommands/map.ts';
 
 /**
@@ -237,7 +193,6 @@ export {
   resolveStrategy,
   retrieveBytes,
   retrieveMany,
-  ROUND_TRIP_PROBE_BUDGET_BYTES,
   smeltBlob,
   surveyStore,
 } from './ops/index.ts';

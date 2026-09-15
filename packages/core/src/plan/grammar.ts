@@ -139,9 +139,3 @@ function describeFailure(cause: unknown): string {
   if (cause instanceof Error && cause.message !== '') return cause.message;
   return String(cause);
 }
-
-/** Reset the grammar cache. Tests use it; production has no reason to. */
-export function clearGrammarCache(): void {
-  cache.clear();
-  runtimeReady = undefined;
-}

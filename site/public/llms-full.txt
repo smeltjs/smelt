@@ -1262,6 +1262,15 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
 
 ## Deepened modules
 
+- **Public surface** (the barrel, `packages/core/src/index.ts`): the whole of
+  `@smeltjs/core`'s API — the one entry the package's `exports` map names. A name is on
+  it under exactly one of four clauses (ADR-0005): **documented** (backticked in the
+  README, ARCHITECTURE, SETUP or a package README), **consumed** (imported from
+  `@smeltjs/core` by a workspace package, or read off the barrel by a repository
+  generator), **reachable** (a type in the signature of something public), or
+  **reasoned** (listed with a one-line reason in `test/guards/public-surface.test.ts`).
+  Everything else stays declared in its module and off the barrel. _Avoid_: "exported"
+  as a synonym for public — a module can export what the barrel does not.
 - **LanguageProfile**: the single adapter carrying every per-language fact — extensions,
   grammar wasm, marker leader, pinned comments, structural node kinds, repo-map tag
   kinds, licence provenance. One file per language in `src/lang/`; the registry
@@ -1998,7 +2007,8 @@ must fill in both.
 The consequence people find surprising: **no learned distillation in v1.** A model-written
 summary cannot satisfy this law. "The model condensed this" does not say what was
 removed, and once the text has been rewritten there is nothing left to store under a
-hash. The interface exists (`DistillStage`); the implementation does not.
+hash. The stage's shape is written down under "Explicitly out of scope" below, as prose
+— there is no interface for it, on purpose (ADR-0005).
 
 ### Law 3 — every elision is reversible
 
@@ -2073,7 +2083,7 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 
 | File                                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/core/src/types.ts`                | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `RerankAttribution`, `DistillStage`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `packages/core/src/types.ts`                | The vocabulary: `Planner`, `ElisionPlan`, `AppliedElision`, `ElisionStore`, `RetrieveStats`, `Measure`, `RerankStage`, `RerankAttribution`. Read this first — the doc comments carry the reasoning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `packages/core/src/rerank/protect.ts`       | The rerank **slot**, and its budget rung: between the planner's decision and the cut. The candidates are the planner's own proposed elisions; what a stage returns is what is spared, never added — best-first, and only while the predicted output still fits `budgetBytes` (`plan/budget.ts`, the arithmetic the planners' own rungs use). A K smelt invents is refused; a budget the user typed is honoured. Every way a stage can fail, throwing included, becomes a `RerankStageError`.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `packages/core/src/rerank/load.ts`          | A `rerank` config block to a live stage. `undefined` in, `undefined` out; the opt-in adapter package is loaded by computed specifier and imported by nothing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `packages/core/src/rerank/resolve.ts`       | The **adapter resolver**: where an opt-in adapter package is looked for. The config file's own directory first, smelt's own install second, and otherwise one refusal — `missing`, with `npm install --prefix "<configDir>" <name>`, or `unreachable` for a package that is installed and whose `exports` map answers under neither `default` nor `require`, which no install would fix — and an unreachable copy beside the config **stops the search**, a precedence rule the refusal states along with the fix it opens. Resolves and never imports — what comes back is a `file:` URL, so the specifier at every `import()` stays a value.                                                                                                                                                                                                                                                                                 |
@@ -2132,13 +2142,13 @@ Everything below is typechecked, linted, and covered. `pnpm verify` is the gate.
 | `packages/core/src/ops/`                    | The operations seam, below both front doors: `smeltBlob`, `mapTree`, `retrieveBytes`, `readCounters` over already-resolved inputs (`ops/verbs.ts`), and the five laws an input must satisfy to be resolved (`ops/inputs.ts`). Exported from the barrel, so `@smeltjs/mcp` consumes it as a dependency instead of re-deriving it. See "The operations seam" below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `packages/core/src/cli/bin.ts`              | The `smelt` binary. Owns only what cannot be tested without a real process: the shebang, stdin on fd 0, the exit code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `packages/core/src/smelter.ts`              | `createSmelter()` — the smelter, its store and its stats, in one place. Outside `index.ts` so nothing under `src/` has to import the package barrel to build one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `packages/core/src/index.ts`                | The public surface, as a barrel. `createSmelter()` itself lives in `src/smelter.ts`, so nothing under `src/` imports the barrel to build a smelter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `packages/core/src/index.ts`                | The public surface, as a barrel — and only what ADR-0005 admits: documented, consumed by a workspace package or generator, reachable from a public signature, or listed with a reason in `test/guards/public-surface.test.ts`. `createSmelter()` itself lives in `src/smelter.ts`, so nothing under `src/` imports the barrel to build a smelter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### Stubs that throw (by design — read `CONTRIBUTING.md` § "A stub throws")
 
-| File                          | Why it throws                                                                                                                         |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core/src/stages.ts` | `unconfiguredRerankStage` and `unconfiguredDistillStage`. Both name the interface you were meant to implement. Out of v1 — see below. |
+| File                          | Why it throws                                                                                         |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `packages/core/src/stages.ts` | `unconfiguredRerankStage`. It names the interface you were meant to implement. Out of v1 — see below. |
 
 ### The honesty machinery
 
@@ -2177,6 +2187,7 @@ digit for the tally appears anywhere in this document.
 | `packages/core/test/guards/palette.test.ts`             | The Palette, held to three properties, because a CLI that paints can lie in a new way. Off is the identity — every role, every primitive and the whole help page are the plain bytes, and `--json` is off whatever the terminal says, on every verb with an envelope. The switches are obeyed: `NO_COLOR` beats a terminal, `FORCE_COLOR` beats a pipe and names the depth, `--no-color` beats both, a non-TTY is plain, and the depth a terminal reports decides whether a ramp is truecolor, 256 or the sixteen. And a rendering may not round a non-zero to zero: `percent` prints `<0.1%` and the bar keeps one filled cell. The fourth, quieter one — padding is computed on unpainted text.                 |
 | `packages/core/test/guards/persistent-store.test.ts`    | Law 3 across a process boundary. A damaged blob is refused as `StoreCorruptionError`, never returned; the retrieval counters survive a restart; "we hold damaged bytes" stays distinct from "never existed".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `packages/core/test/guards/planner-registry.test.ts`    | The strategy seam. The `PLANNERS` registry carries exactly the shipped strategies, and the factory, `--strategy`/config validation and the help text all serve its keys — a dropped entry goes red on every face at once.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `packages/core/test/guards/public-surface.test.ts`      | The barrel, held to ADR-0005 in both directions. Every export of `src/index.ts` is documented (a backticked name in the README, ARCHITECTURE, SETUP or a package README), consumed (imported from `@smeltjs/core` by a workspace package, or read off the barrel by a repository generator), reachable (a type in the signature of something public, walked over the emitted `.d.ts` files, since TypeScript 7 ships no programmatic checker), or listed under a one-line reason — and every name a consumer imports is still exported. A stray internal on the barrel is red; so is un-exporting what `@smeltjs/mcp` builds against.                                                                             |
 | `packages/core/test/guards/readme-numbers.test.ts`      | Law 4's first surface, cross-checked mechanically. Every Tier 1–4 figure the README quotes is looked up in `bench/RESULTS.md` by the corpus commit the README itself cites — never one hardcoded here — and the top-of-file summary must restate the same three numbers as the sections below it. The two "Sixty seconds" captures are not pinned prose either: the smelt transcript and the `smelt stats` block are both regenerated from the real binary, in a scratch project whose store is thrown away.                                                                                                                                                                                                      |
 | `packages/core/test/guards/repo-map.test.ts`            | The repo map's claims: the byte budget respected by construction, deterministic ranked output, content-hash cache invalidation, corrupt cache entries discarded loudly rather than trusted, and the walk counted call by call at the `RepoReader` seam — a symlink statted once and never read, an ignored path never statted.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `packages/core/test/guards/reversibility.test.ts`       | Law 3. `reconstruct(smelt(x)) === x` over multi-byte, CRLF, no-trailing-newline and one-20 kB-line inputs, plus every refusal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -3315,8 +3326,10 @@ smelt's graph.
 summary cannot satisfy Law 2. "The model condensed this" is not a statement of what was
 removed, and a rewritten paragraph leaves nothing to store under a hash, so Law 3 goes
 too. If this ever ships, it stores the original, explains itself in the same rule-named
-terms every other elision uses, and is reversible — or it does not ship.
-`DistillStage` exists so that shape is written down, not so it can be filled in quietly.
+terms every other elision uses, and is reversible — or it does not ship. That shape is
+written down here, as prose, and nowhere as an interface: an exported `DistillStage`
+used to exist for the purpose, and an interface whose only adapter throws is an
+invitation to fill it in quietly, so ADR-0005 deleted it.
 
 **Learned localization** (SweRank, LocAgent, Agentless). Genuinely better at finding the
 right code than lexical scoring, and genuinely a v2 conversation: it means a model in the
@@ -3615,6 +3628,76 @@ to anyone?" stays answerable from pure shell.
 - **A config key plus a separately-installed adapter package** (chosen): the opt-in is a
   line in the consumer's own repository, the network client is a package they chose to
   install, and the guards can still prove the default graph is clean.
+
+---
+
+# docs/adr/0005-public-surface-rule.md
+
+# The barrel exports what is documented, consumed, reachable or reasoned — and nothing else
+
+`packages/core/src/index.ts` is the whole of `@smeltjs/core`'s public surface: the one
+entry the package's `exports` map points a consumer at. Before this decision it
+re-exported about 280 names, of which the documented consumer contract used about a
+dozen and the two workspace consumers named nine plus the operations seam. Seventy-odd
+names had no consumer anywhere — the receipt shapes of `smelt doctor`, the PageRank
+constants, the store's on-disk format tag — and four were dead: a type nothing
+referenced, an interface whose only adapter threw, a cache reset only tests called.
+Every one of them was a promise the `0.x` API had made by accident and would one day
+have to break on purpose.
+
+The rule, from here on: **a name is exported from the barrel when, and only when, it
+is one of these four things.**
+
+1. **Documented.** Named in the README, `docs/ARCHITECTURE.md`, `docs/SETUP.md` or a
+   package README. Writing a name into the docs is what makes it a promise, so the docs
+   are the first authority.
+2. **Consumed.** Imported from `@smeltjs/core` by a workspace package (`@smeltjs/mcp`,
+   `@smeltjs/rerank-voyage`) or read off the barrel by a generator the repository runs
+   (`scripts/*.mjs`, `site/scripts/*.mjs`). A consumer that builds is a fact, not an
+   opinion.
+3. **Reachable.** A type that appears in the signature of anything public under 1, 2
+   or 4 — the options a public function takes, the receipt it returns, the fields of
+   that receipt. A consumer who can call `buildRepoMap` can name `RepoMapOptions`, or
+   the export is a promise with a hole in it.
+4. **Reasoned.** Listed by name in `test/guards/public-surface.test.ts` under a
+   one-line reason a reader can check: the built-in planners a consumer composes with
+   `createSmelter({ planner })`, the `--json` envelopes the README says to parse, the
+   rule ids a consumer switches on, the zero-network policy as data.
+
+Everything else is un-exported, and the guard holds the line in both directions: a
+barrel export that fits none of the four is red, and a consumed name the barrel no
+longer carries is red. Reachability is computed over the emitted declaration files
+(`dist/**/*.d.ts`), which is why the guard runs after the build like the README's
+transcript guard does — TypeScript 7 ships no programmatic checker to ask instead.
+
+## Considered Options
+
+- **Export everything, as before** (rejected): every internal that leaks becomes a
+  compatibility promise, and `0.x` is the only time removing one costs a minor rather
+  than a major. Waiting makes the same cut more expensive on every release.
+- **Export only the documented contract** (rejected): the operations seam and the
+  setup recipe are consumed by the MCP server and the site without a sentence of
+  consumer-facing prose each, and a rule that forces prose for every consumed name
+  produces prose written to satisfy a guard.
+- **A hand-written allowlist alone** (rejected): the list would restate what the docs
+  and the consumers already say, and a restated fact drifts. The list is kept for the
+  one clause — a reasoned keep — that no other artefact can witness.
+- **The four clauses, guard-enforced** (chosen): three of them are read from artefacts
+  that exist for other reasons, the fourth is short and carries its reasons, and the
+  guard makes the next accidental export a red test rather than a future breaking
+  release.
+
+## Consequences
+
+- `0.10.0` removes the names listed under Changed in the CHANGELOG. None was documented,
+  none was consumed in this workspace, and each is still importable from its module
+  path by anyone vendoring the source — the barrel is the API, the modules are not.
+- `Reconstructor`, `DistillStage`, `unconfiguredDistillStage` and `clearGrammarCache`
+  are deleted, not un-exported. The distillation stage's shape is now written down in
+  `docs/ARCHITECTURE.md` § "Explicitly out of scope" as prose, which is where a shape
+  nobody may fill in quietly belongs; an exported interface was an invitation.
+- Adding an export now means one of: documenting it, consuming it, making it reachable,
+  or writing its reason next to its name. The guard's failure message says which.
 
 ---
 
@@ -3985,41 +4068,69 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 # CHANGELOG.md (newest release section)
 
-## 0.9.1 — 2026-09-15
+## 0.10.0 — 2026-09-15
 
-`@smeltjs/core@0.9.1` · `@smeltjs/mcp` stays at `0.8.0` and `@smeltjs/rerank-voyage` at
-`0.1.1` (neither names anything this release adds).
+`@smeltjs/core@0.10.0` · `@smeltjs/mcp@0.9.0` (its own source is unchanged; it moves
+because its dependency range on the core does) · `@smeltjs/rerank-voyage` stays at
+`0.1.1` (its peer range, `>=0.7.0 <1`, still names nothing this release removes, and
+the three types it imports are all still exported).
 
-The additive half of review IV's last card (REP-58, "shrink the barrel"): the barrel's
-own comment promised that every name is re-exported so consumers see no difference, and
-it was false for the two content-kind planners. This release makes the comment true;
-the breaking half — un-exporting what nothing consumes — follows in 0.10.0 with its
-removed names listed.
+**Breaking, on purpose, and the last card of architecture review IV (REP-58).** The wire
+surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve` contract —
+is unchanged. The TypeScript API loses forty-eight exports and four declarations, every
+one listed below by name. None was documented, none was imported by a workspace package
+or generator, none appeared in a public signature, and the rule that says so is now
+written down ([ADR-0005](docs/adr/0005-public-surface-rule.md)) and held by a guard.
+If you imported one of these from `@smeltjs/core`, the CHANGELOG entry names what it
+was; the module that declares it is unchanged, and the door back is a documented
+consumer or a one-line reason in `test/guards/public-surface.test.ts`.
 
-### Added
+### Changed
 
-- **The json and diff planners are on the barrel, whole.** `JSON_PLANNER_ID`,
-  `JsonPlanner`, `planJson`, `JsonPlannerOptions`, `DIFF_PLANNER_ID`, `DiffPlanner`,
-  `planDiff` and `DiffPlannerOptions` are exported from `@smeltjs/core`, beside the
-  lexical, structural and auto planners that already were. A consumer could select
-  `strategy: 'json'` before this and could not name what it had selected.
-  `test/guards/planner-registry.test.ts` now reads the barrel against the registry —
-  id, class, plan function and options type for every shipped strategy — and a mutation
-  that drops one of them proves it goes red.
+- **The barrel exports what is documented, consumed, reachable or reasoned, and nothing
+  else.** `packages/core/src/index.ts` re-exported about 280 names; the documented
+  consumer contract used about a dozen and the two workspace consumers named nine plus
+  the operations seam. Every export is now accounted for under one of four clauses —
+  named in the docs, imported by a workspace package or read off the barrel by a
+  repository generator, a type reachable from one of those signatures, or listed with
+  a one-line reason — and `test/guards/public-surface.test.ts` reads the barrel, the
+  docs, the consumers and the emitted declaration files to prove it, in both
+  directions: a stray export is red, and so is un-exporting a name `@smeltjs/mcp`
+  still imports. Two mutations watch each half go red.
+- **Un-exported** (still declared in their modules; no longer on `@smeltjs/core`):
+  - the `smelt setup` and `smelt doctor` verbs as functions, and their receipt shapes —
+    `runSetup`, `SetupIo`, `SetupOptions`, `SetupReceipt`, `SetupCheck`,
+    `SetupFileAction`, `runDoctor`, `DoctorIo`, `DoctorOptions`, `DoctorReceipt`,
+    `DoctorBlock`, `DoctorConfig`, `DoctorHookEntry`, `DoctorHookFile`, `DoctorMcp`,
+    `DoctorRerank`. `runCli` is the documented way to drive a verb, and it drives both.
+  - `smelt init`'s stub plumbing — `MEASURE_STUB_FILE`, `measureStubSource`,
+    `RERANK_STUB_FILE`, `rerankStubSource`. `runInit` stays.
+  - the CLI's rendering helpers — `cliUsage`, `formatMapReport`, `MapReportInput`.
+  - repo-map internals — `PAGERANK_DAMPING`, `PAGERANK_ITERATIONS`, `rankDefinitions`,
+    `FileTagsEntry`, `RankedDefinition`, `TAGS_CACHE_FORMAT`, `TAGS_CACHE_VERSION`,
+    `tagsCacheKey`. `buildRepoMap`, `extractTags`, the reader seam and every reason rule
+    id stay.
+  - store and config internals — `DIRECTORY_STORE_FORMAT`, `DIRECTORY_STORE_VERSION`,
+    `CUTOFF_HELP`, `readCutoff`, `CutoffReading`, `findConfigFile`, `resolveStorePath`,
+    `VOYAGE_DEFAULT_KEY_ENV`, `VOYAGE_DEFAULT_MODEL`, `ROUND_TRIP_PROBE_BUDGET_BYTES`.
+    `loadNearestConfig`, `configuredStore`, `openStore` and `readStoreSize` stay.
+  - grammar loading — `grammarPath`, `loadGrammar`. `WASM_BY_LANGUAGE`, which the
+    bundler reads, stays.
+  - registry views nothing rendered — `harnessNames`, `HARNESS_TIERS`, `TIER_HONESTY`,
+    `profileForPath`, `ANTHROPIC_PROMPT_CACHE_FACTS`. The barrel's comment said the first two existed for
+    the site's fact generator; the generator reads `harnessesByTier`, `harnessLabel` and
+    `HARNESSES`, and those stay.
+- **The barrel comment is true.** It no longer claims exports for a generator that does
+  not read them; it points at ADR-0005 for what earns a place.
 
-### Docs
+### Removed
 
-- **The README is a front door again.** It was 1,018 lines and 60 KB; it is now under half
-  of each, and every line it lost moved rather than vanished. The new
-  [`docs/SETUP.md`](docs/SETUP.md) is the operator guide — `smelt setup` and what it writes,
-  project or machine scope, the upgrade loop, the hooks preset harness by harness, the MCP
-  server, `smelt agents lint`, the reranker opt-in, and the three-step wiring for a harness
-  of your own — and the index `pnpm generate:llms-txt` renders lists it beside the README.
-  What the README keeps is what a guard pins: the three-number summary, both "Sixty
-  seconds" captures regenerated from the binary, the four measured tiers with their corpus
-  commits, the hand-written harness tier table and the structural-language list. One new
-  picture, `assets/how-it-works.svg`, draws the round trip on the palette; it carries no
-  number. The section order follows the cited survey in
-  [`docs/research/2026-09-15-readme-design.md`](docs/research/2026-09-15-readme-design.md):
-  what it is, what it looks like, sixty seconds, install, setup, agents, library, then the
-  measured tables and the fine print.
+- **`Reconstructor`** — a type nothing referenced, including the doc comment that
+  pointed at it. `reconstruct()` is the function; it never had this signature.
+- **`DistillStage` and `unconfiguredDistillStage`** — an interface whose only adapter
+  threw. The stage's shape stays written down where it always was argued,
+  `docs/ARCHITECTURE.md` § "Explicitly out of scope", as prose: a shape nobody may fill
+  in quietly is a paragraph, not an exported interface inviting an implementation.
+  `test/stubs.test.ts` loses the one row that exercised it.
+- **`clearGrammarCache`** — a cache reset only tests had a reason to call, and no test
+  called it.

@@ -137,6 +137,15 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
 
 ## Deepened modules
 
+- **Public surface** (the barrel, `packages/core/src/index.ts`): the whole of
+  `@smeltjs/core`'s API — the one entry the package's `exports` map names. A name is on
+  it under exactly one of four clauses (ADR-0005): **documented** (backticked in the
+  README, ARCHITECTURE, SETUP or a package README), **consumed** (imported from
+  `@smeltjs/core` by a workspace package, or read off the barrel by a repository
+  generator), **reachable** (a type in the signature of something public), or
+  **reasoned** (listed with a one-line reason in `test/guards/public-surface.test.ts`).
+  Everything else stays declared in its module and off the barrel. _Avoid_: "exported"
+  as a synonym for public — a module can export what the barrel does not.
 - **LanguageProfile**: the single adapter carrying every per-language fact — extensions,
   grammar wasm, marker leader, pinned comments, structural node kinds, repo-map tag
   kinds, licence provenance. One file per language in `src/lang/`; the registry
