@@ -11,7 +11,21 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
-## Unreleased
+## 0.9.0 — 2026-09-15
+
+`@smeltjs/core@0.9.0` · `@smeltjs/mcp@0.8.0` · `@smeltjs/rerank-voyage` stays at `0.1.1`
+(its source is unchanged and its peer range, `>=0.7.0 <1`, still names nothing this
+release adds).
+
+Architecture review IV, in one release: smelt turned its own instruction surface into the
+byte budget it asks everyone else to keep, and closed six seams the review found shallow.
+The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
+contract — is unchanged. The TypeScript API moved in five places, each listed under
+Changed with its reason: `ApplyOptions.marker` is `ApplyOptions.scheme` and
+`RerankRequest.pricing` is `RerankRequest.scheme` (both a `MarkerScheme`); `runDoctor` is
+async; `ElisionStore` gains an optional `survey()`; and `createSmelter` refuses a budget
+of `0` or `1.5` with the same sentence the CLI and the MCP server use, where it used to
+plan. `@smeltjs/mcp` exports `toolSurface` and its two ceilings beside the tool names.
 
 ### Added
 

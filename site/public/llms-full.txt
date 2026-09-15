@@ -98,7 +98,7 @@ the **marker block** `smelt setup` writes beside the enforcement hooks, and the
 **[SkillPack](skills/smelt/SKILL.md)**, which an agent's owner installs with
 `npx skills add smeltjs/smelt`. Neither is written uninvited.
 
-What an agent on 0.8.0 should actually do:
+What an agent on 0.9.0 should actually do:
 
 - **On Homebrew and upgrading from 0.6.0 or earlier, re-run `smelt setup`** — hooks written
   by those releases point at a Cellar path `brew upgrade` deletes.
@@ -107,8 +107,13 @@ What an agent on 0.8.0 should actually do:
 - **`smelt hooks install --yes`** is the non-interactive wiring, for CI and for any run
   with no terminal to answer a prompt.
 - **`smelt doctor`** reports each wired artifact as `wired (verified)`, `wired but inert`
-  or `wired but missing`, and exits 3 when something is behind — with the repair command
-  named. Re-run `smelt setup`; never hand-edit what doctor names.
+  or `wired but missing`, proves the smelt → retrieve round trip in a throwaway store,
+  and exits 3 when something is behind — with the repair command named. Re-run
+  `smelt setup`; never hand-edit what doctor names.
+- **The SkillPack is a router.** Its root is what an agent mid-task needs — read,
+  retrieve, map, obey a guard denial, the MCP names — and one link line per operator
+  workflow; setup, the store and the reranker live in `skills/smelt/references/`, read
+  only by the agent doing that job.
 - **`smelt store prune --older-than 30d --dry-run`**, then the same line without
   `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own. The
   age can be written down — `"store": { ..., "retention": { "olderThan": "30d" } }` —
@@ -548,7 +553,10 @@ that teaches `smelt retrieve` after a deny.
 tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
 `smelt_stats`) over the same
 `smelt.config.json`-discovered store the CLI uses, so `smelt retrieve <hash>` from a
-shell and the model's `smelt_retrieve` hit one store and move one set of counters:
+shell and the model's `smelt_retrieve` hit one store and move one set of counters. What
+the server says before a model has asked it anything — five descriptions and its
+`instructions` — is measured and held under a stated ceiling by a guard, because it is
+the one context budget smelt spends on its own account in every session:
 
 ```sh
 claude mcp add smelt -- npx @smeltjs/mcp
@@ -577,9 +585,11 @@ across it, so two numbers come back and each says which question it answers: **p
 request (worst case)**, the heaviest level plus its ancestors, which is what one agent
 actually loads; and **whole tree**, every level summed, which is the repository's
 instruction surface and a cost nobody pays in one request. Plus bytes per level and an
-imperative count labelled a heuristic. Then eight advisory rules, each with a stable id
-and an explanation citing the guide it applies
-([aihero.dev/a-complete-guide-to-agents-md](https://www.aihero.dev/a-complete-guide-to-agents-md)):
+imperative count labelled a heuristic. Then nine advisory rules, each with a stable id
+and an explanation citing its source — the guide it applies
+([aihero.dev/a-complete-guide-to-agents-md](https://www.aihero.dev/a-complete-guide-to-agents-md)),
+or for `blanket-read` OpenAI's note on rewriting instruction files for a more capable
+model ([developers.openai.com](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)):
 
 | Rule                    | What it notices                                                           |
 | ----------------------- | ------------------------------------------------------------------------- |
@@ -591,6 +601,7 @@ and an explanation citing the guide it applies
 | `language-rule`         | a const/let, interface-vs-type or quote-style rule loaded every request   |
 | `mirror-drift`          | a `CLAUDE.md`/`GEMINI.md` that has diverged from its `AGENTS.md`          |
 | `restated-at-level`     | the same line written at a level and at one of its ancestors              |
+| `blanket-read`          | "read A, B and C" with no occasion for any of them — every request pays   |
 
 `dead-path` and `dead-link` are the point. Everyone else is linting Markdown; the
 thing that has rotted is the repository the Markdown describes, and a renamed
@@ -4065,185 +4076,183 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 # CHANGELOG.md (newest release section)
 
-## 0.8.0 — 2026-09-10
+## 0.9.0 — 2026-09-15
 
-`@smeltjs/core@0.8.0` · `@smeltjs/mcp@0.7.0` (its own source is unchanged; the rerank
-attribution `smelt_file`'s report block renders comes from the core, so the three new
-fields reach the tool through the dependency) · `@smeltjs/rerank-voyage@0.1.1` (README
-only — the adapter contract is written down there now. Its peer range stays
-`>=0.7.0 <1`: the adapter names nothing this release adds)
+`@smeltjs/core@0.9.0` · `@smeltjs/mcp@0.8.0` · `@smeltjs/rerank-voyage` stays at `0.1.1`
+(its source is unchanged and its peer range, `>=0.7.0 <1`, still names nothing this
+release adds).
 
+Architecture review IV, in one release: smelt turned its own instruction surface into the
+byte budget it asks everyone else to keep, and closed six seams the review found shallow.
 The wire surface a model sees — the `<<smelt/v1: …>>` marker and the `smelt_retrieve`
-contract — is unchanged. The TypeScript API is not, in one place: `applyRerank`'s
-`RerankRequest` gains two required fields, `budgetBytes` and `pricing`, so a caller
-driving the rerank slot directly has a compile error to fix and a budget to hand it.
-
-**If you run a reranker, its output changes.** The slot now spares only as far as the
-run's byte budget reaches, so a `topK` that used to decide how large the output got is a
-cap and no longer a quantity — and a plan already over budget before the stage is asked
-skips the stage entirely rather than sending your source out for an answer that would be
-refused on arrival. Both are deliberate, both are reported (`stopped`, `skipped`), and
-the reasoning is under Changed below.
+contract — is unchanged. The TypeScript API moved in five places, each listed under
+Changed with its reason: `ApplyOptions.marker` is `ApplyOptions.scheme` and
+`RerankRequest.pricing` is `RerankRequest.scheme` (both a `MarkerScheme`); `runDoctor` is
+async; `ElisionStore` gains an optional `survey()`; and `createSmelter` refuses a budget
+of `0` or `1.5` with the same sentence the CLI and the MCP server use, where it used to
+plan. `@smeltjs/mcp` exports `toolSurface` and its two ceilings beside the tool names.
 
 ### Added
 
-- **An opt-in rerank adapter is looked for beside the config that asks for it.**
-  `rerank.kind: "voyage"` resolved `@smeltjs/rerank-voyage` from `@smeltjs/core`'s own
-  location and, when it was not there, said `npm install @smeltjs/rerank-voyage`. With a
-  `~/smelt.config.json` (`--scope user`) and a `smelt` from Homebrew or `npm -g`, that
-  searched a keg nobody installs into and then named a command that installs into the
-  shell's cwd — a third directory, which smelt never looks in. `src/rerank/resolve.ts` is
-  the new **AdapterResolver**: the directory holding `smelt.config.json` first (so
-  `~/node_modules` beside a user-scope config and a project's own `node_modules` are one
-  rule), smelt's own install second, and otherwise **one** refusal naming both places and
-  `npm install --prefix <configDir> <name>` — the command that puts the package in the
-  directory searched first. Both kinds go through it: `voyage`, and `module` for a bare
-  specifier that names no file beside the config (a relative or absolute path keeps the
-  path rule the schema promises). It resolves and never imports — what comes back is a
-  `file:` URL, so the specifier at every `import()` is still a value and Law 1's walk still
-  finds no edge to an adapter; the zero-network guard's literal-specifier mutation is
-  re-anchored to the new call shape and still goes red, and `rerank/resolve.ts` joined that
-  guard's `mustVisit`. The question is asked under Node's `require` conditions, so the
-  adapter contract is now written down: an adapter's `exports` map must answer under
-  `default` or `require`, and one that answers only `import` is refused as **installed and
-  unreachable** — a distinct refusal with no install command, because installing it again
-  would change nothing. An unreachable copy beside the config **stops the search**, since a
-  copy there is the answer about the adapter the config points at; that precedence rule is
-  invisible on a machine that also holds a good copy in smelt's own install, so the refusal
-  says smelt's own install was not tried, why, and that removing the broken copy lets the
-  search go on. `test/guards/adapter-resolver.test.ts` holds the order, the
-  fallback, the one-message refusal, the `file:` URL, that distinction and the stated
-  precedence rule, with seven mutations. The install command quotes its directory, so it survives a path with a space
-  in it.
-- **`smelt doctor` says where the adapter is, and reads the `module` kind by the loader's
-  rule.** The rerank line now carries `adapter from config dir`,
-  `adapter from smelt's own install`, `adapter not installed:` with the install command for
-  your config's directory, or `adapter installed beside smelt.config.json but not loadable`
-  (which names the precedence rule that stopped the search) — asked through the same
-  resolver a run uses, and resolving only: nothing is imported to answer it.
-  `{"kind":"module","path":"my-reranker"}` is a config every run loads and doctor reported
-  as a missing file, orphan and exit 3, because it asked `existsSync` where the loader asks
-  for a file **or** a package; it now asks the loader's question, absolute paths included.
-  `smelt.doctor.v1` gains `rerank.adapterFrom`, `rerank.adapterProblem`,
-  `rerank.adapterAt` and `rerank.install`, all optional; no existing field changed spelling or meaning, and the
-  key's _value_ still never appears. A configured opt-in whose adapter is in neither place
-  is an orphan with that command as its repair — the same treatment an unset key already
-  had, for the same reason: every run that would rerank refuses instead. An installed but
-  unreachable one is an orphan with no repair command, because there is no command that
-  would repair it.
-- **`smelt init`'s voyage answer prints a command that can work**:
-  `npm install --prefix "<dir>" @smeltjs/rerank-voyage` for the directory it is writing the
-  config into, rather than a bare `npm install` that lands wherever the reader's shell
-  happens to be.
-- **`store.retention` — the prune cut-off, written down.** `smelt store prune` refused
-  without `--older-than` by doctrine: a cut-off smelt invented would decide which of
-  somebody's elisions stop being reversible, at an age nobody chose. That ruling is
-  about the deletion, not about the number, and it made a user retype the same age at
-  every prune. A `retention` block inside a directory store —
-  `{ "olderThan": "30d", "keepRetrieved": true }`, the same `<n>d|<n>h|<n>w` grammar the
-  flag takes, refused as strictly as every other key — supplies the age when no flag
-  did. Nothing else moves: the key schedules nothing, is read by one verb at the moment
-  a user types it, `--older-than` still wins, and with neither spelling present the verb
-  still refuses — now naming both places an age can be written. The receipt says which
-  won (`olderThanSource` on the report line and on the `smelt-store-prune-cli/v1`
-  envelope, which gains fields rather than changing one) — and `keepRetrievedSource`
-  beside it, because sparing is a union and "the config kept blobs the flag never
-  mentioned" is the surprising case. `smelt doctor` prints
-  the configured cut-off as the age a prune _would_ use. `--keep-retrieved` is OR-ed
-  with the configured one rather than overriding it: the flag has no negative spelling,
-  so letting an absent boolean overrule a written-down `true` would make typing an age
-  silently delete more than the file asked for. `smelt init` does not ask about it. The
-  grammar itself now has one reader (`src/store-cutoff.ts`), so the flag and the key
-  cannot disagree about what `30d` is worth.
+- **`smelt agents lint` gains `blanket-read`.** A prose line that tells the agent to read
+  two or more documents and gives no occasion for it — "read architecture.md,
+  database.md and deployment.md before making changes" — is the shape OpenAI's note on
+  rewriting instruction files for GPT-6 Astra retires, in favour of a trigger per document
+  ("use architecture.md for service boundaries, database.md for schema changes"). Every
+  request pays for every document named, which is the AGENTS.md guide's thesis from the
+  other side. Advisory like the other eight; the explanation names the documents and
+  cites the article, the second source `guide.ts` quotes (once, attributed, beside the
+  guide). A line naming one document, or saying when — smelt's own "Read this before
+  renaming anything" — passes; a fixture pins each shape, and a mutation that fires the
+  rule on a single pointer goes red. A guard also pins that the marker block `smelt setup`
+  writes mints no finding when the linter reads it, at either scope. (Architecture
+  review IV, REP-59.)
 
 ### Changed
 
-- **The rerank slot now spares only as far as the budget reaches, and `topK` is a cap
-  rather than a quantity.** The slot spared every region a stage returned and never saw
-  `budgetBytes`, so a `topK` written in a config file decided how large the output got —
-  a run that fitted before the reranker could stop fitting after it. `applyRerank` now
-  takes the run's budget and its `MarkerPricing` across the seam, walks the stage's
-  selection best score first, and stops at the first region that would push the predicted
-  output past the ceiling. The prediction is `plan/budget.ts`'s, the same arithmetic the
-  lexical planner picks a ladder rung with and the structural planner runs its own budget
-  rung on, so the slot and the planners cannot disagree about what a marker costs. If the
-  best-ranked region alone breaks the budget, nothing is spared at all: a plan that fits
-  beats a plan that does not, and a stage cannot cut, so the only lever left is not
-  sparing. The doctrine in one line, and it is written at the seam: a K smelt invents is
-  refused; a budget the user typed is honoured. `test/guards/rerank-budget.test.ts` holds
-  both halves, with mutations that remove the budget check and that fabricate the stop
-  reason. A run whose plan is over budget before the stage is asked does not reach the
-  stage at all — it could spare nothing whatever came back, and asking would send the
-  caller's source to a third party for an answer refused before it arrived. That is a
-  skip, not a stop: `skipped: 'plan-over-budget'` beside the existing two reasons, with
-  the counts only a real run can take left absent.
-- **`RerankedCandidate.score` is load-bearing as an order.** The slot sorts a stage's
-  selection score-descending, breaking ties by the order the candidates were sent, so
-  which regions survive a tight budget no longer depends on how an adapter happened to
-  serialise its response. The interface documents it; a stage that returns its selection
-  unsorted now has a defined outcome rather than an incidental one. A score that is not a
-  finite number is refused with a `RerankStageError`: `NaN` compares false against
-  everything, so it would not disorder the ranking loudly but silently, and differently
-  per engine.
-- **The rerank attribution says what was asked for and where the sparing stopped.**
-  `RerankAttribution` gains three optional fields, present exactly when the stage ran:
-  `returned` (how many regions it asked to spare), `sparedBytes` (what those put back —
-  the regions restored, less the markers that no longer land, priced through the same
-  seam the plan was made with) and `stopped` — `budget`, `cap` or `exhausted`. A `topK`
-  of 8 that reports 3 kept now carries the reason beside it instead of leaving the reader
-  to guess whether their ranker or their budget made the decision. The stderr report line
-  gains a `B back` clause and, on a budget stop, a clause naming the budget as the reason
-  and how many regions the stage had offered. The `--json` envelope carries `result`
-  verbatim, so `result.rerank` gains the three fields additively — nothing renamed,
-  nothing dropped.
-- **`smelt stats` reads the store once instead of three times.** The counters, the
-  per-rule ledger and the store's own size on disk were three separate walks of the same
-  two files — a `readdir` plus a `stat` per blob and a whole-journal parse, twice over —
-  paid at the end of every session, because the Stop hook runs `smelt stats`.
-  `DirectoryElisionStore.survey()` answers all three from one blob scan plus one journal
-  fold, and `stats()` and `rawCounters()` are views over it; the interfaces, the numbers
-  and the arithmetic are unchanged, with the pre-fold implementation kept as the test's
-  oracle
-  and compared field for field over a fixture carrying every shape the journal holds.
-  Measured on a scratch store of 5,500 puts and 500 retrievals (a 226,500-byte journal
-  over 21 MB of blobs; Node 26, macOS 15, APFS SSD, 2026-09-09): the traversal work
-  falls from 46–55 ms to 23–27 ms, inside a `smelt stats` that runs end to end in
-  0.12–0.13 s against 0.16–0.17 s before. `ledger()` alone — the one of the three on
-  `smelt`'s own per-run path, since `smelter.ts` hands planners `ruleHistory` every run —
-  stays on the journal half and costs 2.6–2.9 ms, exactly what it cost before. **No cache** — at that size nothing is paying
-  a cost worth a stale-detection scheme, and a cached tail is a second copy of numbers
-  whose whole value is being read off the disk every time. One deliberate behaviour
-  change comes with it: a blob that vanishes between the listing and the `stat` is now
-  skipped rather than thrown on, which is `readStoreSize`'s existing rule and the right
-  one for a directory a concurrent prune may be emptying.
+- **The MCP tool surface is measured, and under a stated ceiling.** The five tool
+  descriptions and the server `instructions` are what every session pays on
+  `initialize` and `tools/list`; the server's comment said they sat "well under 2 KB",
+  and nothing measured it. Measured, they were 3,718 bytes. `packages/mcp/src/surface.ts`
+  now renders the whole surface once as one value beside two measured sizes — the prose
+  (descriptions plus instructions: 2,028 bytes after this change) and the whole
+  serialized `tools/list` payload plus instructions, schemas included (4,588 bytes) — the
+  server registers what it is handed, and a new guard (`test/guards/tool-surface.test.ts`,
+  five mutations) holds the prose under `TOOL_SURFACE_BUDGET_BYTES` (2,048) and the payload
+  under `TOOL_LIST_BUDGET_BYTES` (5,120), each with a recount the module cannot flatter,
+  and pins the module to type-only imports so the mutation runner can execute it. To fit: `smelt_retrieve_batch` is described by the core alone —
+  the server-side tail restating its block format is gone — and the core's own batch
+  description no longer repeats the example marker the `smelt_retrieve` description
+  already carries; `smelt_file`, `repo_map`, `smelt_stats` and the instructions each say
+  the trigger and the mechanism and stop. `smelt_retrieve`'s description is unchanged.
+  `@smeltjs/mcp` now exports `toolSurface`, `TOOL_SURFACE_BUDGET_BYTES`,
+  `TOOL_LIST_BUDGET_BYTES` and the `ToolSurface` types beside the tool names. (Architecture review IV, REP-50.)
+- **The SkillPack is a router and its references.** `skills/smelt/SKILL.md` was one flat
+  7,662-byte document, and six of its twelve sections — setup, the step-by-step fallback,
+  doctor, prune and retention, the reranker, notes — were operator workflows an agent
+  reading one big file never needs, yet paid for on every invocation. The root now
+  carries what a task needs (read, retrieve, map, obey a guard denial, the MCP names) and
+  one link line per operator workflow; `references/setup.md`, `references/store.md` and
+  `references/rerank.md` carry the rest, read only by the agent doing that job. The root
+  is held under `ROOT_BUDGET_BYTES` (2,048) by the generator, which refuses a larger one,
+  and by `test/guards/skill-pack.test.ts`, which recounts it (2,039 bytes after this
+  change) and now compares the whole directory byte for byte — a hand edit to a
+  reference or a stray file is a red verify. The root's `description` says the trigger in
+  one sentence ("Use when a file, log, diff or grep result is too big to read raw, or
+  when a marker's `retrieve("hash")` needs expanding …") instead of opening with the
+  domain, because a long description is what gets truncated where many skills are
+  installed. Same commands, same recipe facts, same generator; `llms.txt` lists the three
+  references beside the root and `llms-full.txt` inlines them. (Architecture review IV,
+  REP-49.)
+- **The wizard kit is finished: one consent discipline, four verbs.** `cli/wizard.ts`
+  was extracted because the third copy of the stream machinery raced — and two copies
+  were still outside it. `smelt init` re-implemented the step walker, the confirm loop,
+  the file listing and the write loop (the last without `mkdirSync`, a latent gap: the
+  wizard only ever wrote into a directory that existed); `smelt agents split` imported
+  nothing from the kit and carried its own ask, confirm, listing and write. The per-file
+  question `<name> exists — overwrite it? (yes/no)>` was spelled three times — init,
+  agents split, merge-policy — each copy with a comment saying it had one home. The kit now owns `askOverwrite` (a literal `yes`
+  and nothing else), `fileFate(file, 'ask' | 'skip')` (the one word that differed between
+  the interactive verbs and `setup --yes` is a parameter, not a fourth copy), a listing
+  padded to its own longest name instead of 20, 32 or 40, and a step machine whose
+  first-step `back` can exit to a question before the steps (init's directory question).
+  `init` and `agents split` route through it; the `module-seams` guard pins the four
+  consent symbols to the kit; the init-wizard guard gains a mutation that loosens the
+  literal-yes rule in the kit itself. One behaviour change, and it is a fix: the kit's
+  confirm printed its retry copy through `ask`, which reads a line — so a mistyped
+  confirm (`y`) swallowed the `yes` typed next, and `hooks` and `setup` needed it twice.
+  The retry copy is now said, never asked, for all four verbs; `test/wizard.test.ts` pins
+  it. (Architecture review IV, REP-55.)
+- **The hook prober is its own module.** `harness/hook-command.ts` was two things in one
+  file: a pure round trip (a hook command as a value, rendered and parsed, string in and
+  string out) and the prober `smelt doctor` runs — a real `spawnSync` of this node
+  against a synthetic payload in a scratch directory under a five-second timeout. The
+  parser has three callers (the installed-state reader, the install planner, doctor);
+  the prober has one — yet anyone who parsed a hook command transitively imported
+  `node:child_process`. The prober now lives in `harness/hook-probe.ts`, imported only by
+  doctor; the parser imports no process, filesystem or clock, and the module-seams guard
+  pins both facts with a mutation that grows the spawn back into the parser. Nothing
+  about what either half does has changed; the spawn guard still proves the one spawn
+  Law 1 permits runs this very node. (Architecture review IV, REP-57.)
+- **`smelt agents lint`'s rules are a registry.** The eight advisory rules were declared
+  twice — an array of ids that fixed the report order, and a hand-written sequence of
+  eight finder calls inside `lintAgents` across three different signatures — with
+  nothing tying the two together; adding a rule was three uncoupled edits in the one
+  registry of this repository that was not a keyed `Record`. `AGENTS_RULES` now is: one
+  entry per rule with its id, its one-sentence meaning, its scope (`file`, `level`,
+  `set`) and its finder, keyed by id, in report order. `lintAgents` folds over it, the
+  id list `AGENTS_LINT_RULES` is derived from its keys, and the report's no-findings
+  line counts the registry instead of spelling "Eight". The agents-lint guard checks
+  the registry is keyed by its own ids (the same `assertKeyedById` the other registries
+  use) and gains two mutations: a key flipped to another rule's id, and a rule left in
+  the registry at a scope the fold never runs. Same ids, same findings, same order.
+  (Architecture review IV, REP-51.)
+
+- **Two verbs on the operations seam: `surveyStore` and `proveRoundTrip`.** `surveyStore`
+  — the one-pass reading `smelt stats` uses — was written but exported from neither
+  barrel, so the CLI deep-imported it and the MCP server, which could not reach it,
+  walked the store twice for `smelt_stats` (counters, then ledger): the barrel defect the
+  seam was created to end, recurring. It is on both barrels now and reads any
+  `ElisionStore`: a store that can answer in one walk (`survey()`, newly optional on the
+  seam; the directory store implements it) is asked once, any other is asked the two
+  narrower questions. `smelt_stats` makes one traversal. `proveRoundTrip` is the proof
+  `smelt setup` ends on — smelt a known blob into a throwaway store, retrieve the first
+  cut, compare bytes — lifted out of setup into ops so `smelt doctor` runs it too:
+  doctor now prints a `round trip` verdict, its `--json` receipt carries `roundTrip`
+  (additive), a failed proof makes the install not current and names the reinstall as
+  its repair, and `runDoctor` is async (its proof is an injectable `DoctorIo.prove`, so
+  the failing verdict is tested, not trusted). Setup's output is unchanged, except that
+  the no-elisions refusal now names the budget the probe actually ran at. (Architecture
+  review IV, REP-56.)
+
+- **One focus matcher.** "Does this text match the Focus?" was answered in five places
+  — the lexical, json, diff and structural planners each carried a copy, and the repo
+  map a fifth that had drifted: it ignored case sensitivity and always lowercased.
+  `plan/focus.ts` now holds the one implementation (`focusMatcher`: substring,
+  case-insensitive unless `caseSensitive`, empty terms dropped, the first matching term
+  in caller order named for receipts), the four planner option bags extend one
+  `FocusOptions` instead of declaring `caseSensitive` four times, and `buildRepoMap`
+  gains `caseSensitive` and honours it. Planner output is unchanged; the repo-map guard
+  gains a case-sensitivity case and a mutation that folds case regardless.
+  (Architecture review IV, REP-52.)
+- **The budget law is stated once, inside the library too.** `ops/inputs.ts` owned "a
+  budget is required, a whole number, greater than zero, with no default" for the two
+  front doors — and `createSmelter` and `buildRepoMap`, the two entry points a library
+  consumer actually calls, each restated it in their own prose, unwatched by the guard
+  that scans for exactly that. The law now lives beside the budget arithmetic in
+  `plan/budget.ts` (`budgetRequired`, `budgetFault`, `budgetMalformed`, plus
+  `lawfulBudget` applying them as a value-or-refusal), is re-exported through the ops seam unchanged, and the
+  two entry points refuse in its sentence: a smelter with no budget now says
+  "`budgetBytes` is required, in UTF-8 bytes …" instead of "no budget", and a smelter
+  given `0` or `1.5` now refuses where it used to plan. The ladder's selection rule —
+  the first attempt whose predicted output fits, else the tightest — was two copies and
+  is `chooseUnderBudget`; the structural planner's budget rung is a different shape and
+  keeps its own. The ops-seam guard names each law's one home and gains a mutation that
+  makes the ladder always take the tightest rung. (Architecture review IV, REP-54.)
+
+- **The marker builder and its pricing are one value.** `apply.ts` documented that
+  pricing a plan with one marker builder and applying it with another produces "cuts
+  that grow the output, silently" — and then resolved the two apart in three places,
+  while `createSmelter` priced against the detected language and built the marker from
+  the plan's; they agreed because every planner echoes its input language, an accident
+  no type recorded. `markerScheme(language, override?)` now mints both together, the
+  smelter threads the one scheme to the planner, the rerank slot and `applyPlan`, and the
+  four copies of the `requirePricing` backstop are one function in `plan/budget.ts`. The
+  marker-format guard breaks the pairing and watches the output grow. **TypeScript API:**
+  `ApplyOptions.marker` is replaced by `ApplyOptions.scheme`, and `RerankRequest.pricing`
+  by `RerankRequest.scheme` (both `MarkerScheme`); `markerPricing()` remains as the
+  pricing half for a caller that only plans. Output is byte-identical. (Architecture
+  review IV, REP-53.)
 
 ### Docs
 
-- **`llms.txt` and `llms-full.txt`, for the agent that arrives before the install.** The
-  llmstxt.org index now sits at the repository root and is served by the site: the summary,
-  the four laws as its notes, the three commands a newcomer needs, the five MCP tool names,
-  and link lists of every document — with `llms-full.txt` beside it inlining each of those
-  documents for a reader that would rather spend the tokens than the round trips. Neither
-  is hand-written. `scripts/generate-llms-txt.mjs` renders both from one document list and
-  the built packages' own facts (the ADRs discovered rather than listed). The index is
-  committed twice — the repository root and `site/public/`, byte-identically — so an agent
-  reading the repo needs no fetch; the companion is committed once, under `site/public/`,
-  because a second copy of the whole documentation set would be a large regenerated blob in
-  the diff of every docs change, and the index already links its served URL.
-  `test/guards/llms-txt.test.ts` regenerates every committed copy, compares the index's two
-  directly, refuses a companion at the repository root, and resolves every link in the index
-  back to a file that exists — because regenerating an index reproduces a dead link exactly.
-  `pnpm generate:llms-txt` writes them; a hand edit is a red `pnpm verify`. Law 4 holds in
-  the index as it does everywhere else: it states no measured figure and links
-  `packages/core/bench/RESULTS.md` instead.
-- **The SkillPack now teaches the surface 0.7.0 introduced.** Four sections joined it, still rendered
-  from the package rather than retyped: setting up (`smelt setup --yes` with
-  `--scope user`, the repeatable `--harness` over the ids the registry carries, and the four
-  toggles), checking the install (doctor's `wired (verified)` / `wired but inert` /
-  `wired but missing`, and the refused exit meaning "re-run setup"), keeping the store
-  small (`smelt store prune --older-than 30d --dry-run`, then the same line without it),
-  and reranking (the config block, `module` or `voyage`, the environment variable your
-  config names, and never a default).
-- **A "For agents" section near the top of the README**, naming the two instruction
-  channels and the one-line version of each 0.7.0 action; `AGENTS.md` points at `llms.txt`;
-  the site footer links it.
+- **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**
+  "Keeping the store small" no longer reads as an unconditional refusal: `smelt store
+prune` refuses only when no age was named on the flag or in `store.retention` — the
+  config supplies the default, `--older-than` overrides it, and a configured
+  `keepRetrieved: true` is added to `--keep-retrieved` rather than overridden by its
+  absence. "Reranking" now names the one fact a machine-scope (`~/smelt.config.json`)
+  user needs: the adapter is looked for beside the config first, so
+  `npm install --prefix "$HOME" @smeltjs/rerank-voyage` is the install command that
+  reaches it, not a plain `npm install`. `scripts/generate-skill.mjs` renders both facts
+  from the built package, as it does everywhere else in the skill.

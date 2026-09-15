@@ -88,7 +88,7 @@ the **marker block** `smelt setup` writes beside the enforcement hooks, and the
 **[SkillPack](skills/smelt/SKILL.md)**, which an agent's owner installs with
 `npx skills add smeltjs/smelt`. Neither is written uninvited.
 
-What an agent on 0.8.0 should actually do:
+What an agent on 0.9.0 should actually do:
 
 - **On Homebrew and upgrading from 0.6.0 or earlier, re-run `smelt setup`** — hooks written
   by those releases point at a Cellar path `brew upgrade` deletes.
@@ -97,8 +97,13 @@ What an agent on 0.8.0 should actually do:
 - **`smelt hooks install --yes`** is the non-interactive wiring, for CI and for any run
   with no terminal to answer a prompt.
 - **`smelt doctor`** reports each wired artifact as `wired (verified)`, `wired but inert`
-  or `wired but missing`, and exits 3 when something is behind — with the repair command
-  named. Re-run `smelt setup`; never hand-edit what doctor names.
+  or `wired but missing`, proves the smelt → retrieve round trip in a throwaway store,
+  and exits 3 when something is behind — with the repair command named. Re-run
+  `smelt setup`; never hand-edit what doctor names.
+- **The SkillPack is a router.** Its root is what an agent mid-task needs — read,
+  retrieve, map, obey a guard denial, the MCP names — and one link line per operator
+  workflow; setup, the store and the reranker live in `skills/smelt/references/`, read
+  only by the agent doing that job.
 - **`smelt store prune --older-than 30d --dry-run`**, then the same line without
   `--dry-run`, is the only thing that deletes an elision. Nothing evicts on its own. The
   age can be written down — `"store": { ..., "retention": { "olderThan": "30d" } }` —
@@ -538,7 +543,10 @@ that teaches `smelt retrieve` after a deny.
 tools (`smelt_file`, `smelt_retrieve`, `smelt_retrieve_batch`, `repo_map`,
 `smelt_stats`) over the same
 `smelt.config.json`-discovered store the CLI uses, so `smelt retrieve <hash>` from a
-shell and the model's `smelt_retrieve` hit one store and move one set of counters:
+shell and the model's `smelt_retrieve` hit one store and move one set of counters. What
+the server says before a model has asked it anything — five descriptions and its
+`instructions` — is measured and held under a stated ceiling by a guard, because it is
+the one context budget smelt spends on its own account in every session:
 
 ```sh
 claude mcp add smelt -- npx @smeltjs/mcp
@@ -567,9 +575,11 @@ across it, so two numbers come back and each says which question it answers: **p
 request (worst case)**, the heaviest level plus its ancestors, which is what one agent
 actually loads; and **whole tree**, every level summed, which is the repository's
 instruction surface and a cost nobody pays in one request. Plus bytes per level and an
-imperative count labelled a heuristic. Then eight advisory rules, each with a stable id
-and an explanation citing the guide it applies
-([aihero.dev/a-complete-guide-to-agents-md](https://www.aihero.dev/a-complete-guide-to-agents-md)):
+imperative count labelled a heuristic. Then nine advisory rules, each with a stable id
+and an explanation citing its source — the guide it applies
+([aihero.dev/a-complete-guide-to-agents-md](https://www.aihero.dev/a-complete-guide-to-agents-md)),
+or for `blanket-read` OpenAI's note on rewriting instruction files for a more capable
+model ([developers.openai.com](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)):
 
 | Rule                    | What it notices                                                           |
 | ----------------------- | ------------------------------------------------------------------------- |
@@ -581,6 +591,7 @@ and an explanation citing the guide it applies
 | `language-rule`         | a const/let, interface-vs-type or quote-style rule loaded every request   |
 | `mirror-drift`          | a `CLAUDE.md`/`GEMINI.md` that has diverged from its `AGENTS.md`          |
 | `restated-at-level`     | the same line written at a level and at one of its ancestors              |
+| `blanket-read`          | "read A, B and C" with no occasion for any of them — every request pays   |
 
 `dead-path` and `dead-link` are the point. Everyone else is linting Markdown; the
 thing that has rotted is the repository the Markdown describes, and a renamed
