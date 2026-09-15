@@ -68,7 +68,10 @@ a marker gave you retrieves the same bytes from either surface.
 ## Docs
 
 - [README](https://raw.githubusercontent.com/smeltjs/smelt/main/README.md): What smelt is, how to install it, the sixty-second round trip, how it wires into each harness, and the measured tables with their dates and corpus commits.
-- [SkillPack (skills/smelt/SKILL.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/SKILL.md): The instructions an agent runs on, installed by its owner. Generated from the SetupRecipe, never hand-written.
+- [SkillPack (skills/smelt/SKILL.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/SKILL.md): The instructions an agent runs on, installed by its owner: the root router — read, retrieve, map, obey a guard denial, the MCP names. Generated from the SetupRecipe, never hand-written.
+- [SkillPack — setup and doctor (skills/smelt/references/setup.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/references/setup.md): The operator half the root routes to: install, `smelt setup`, `smelt doctor`, the upgrade loop, and the step-by-step fallback for older installs.
+- [SkillPack — the store (skills/smelt/references/store.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/references/store.md): `smelt store prune`, the cut-off, and the `store.retention` block. Read only when keeping a store small is the job.
+- [SkillPack — the reranker (skills/smelt/references/rerank.md)](https://raw.githubusercontent.com/smeltjs/smelt/main/skills/smelt/references/rerank.md): The opt-in rerank stage, where its adapter is looked for, and what `topK` means. Read only when configuring one.
 - [llms-full.txt](https://smeltjs.github.io/smelt/llms-full.txt): Every document listed below, concatenated, for one-shot context. Fetch this one when you can spend the tokens.
 
 ## Reference

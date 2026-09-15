@@ -714,10 +714,20 @@ Decided in the Sep 2026 architecture review; ADRs 0001–0004 carry the reasonin
   facts, never silently cleaned. `presetToggles` lives with it (`cli/installed.ts`), for
   the same reason: what a re-run's four toggles start from is a reading of what is
   installed, not a wizard's memory.
-- **SkillPack**: the opt-in, published teaching artifact an agent's owner installs by
-  consent (`npx skills add smeltjs/smelt`) — the second adapter over the instruction
-  content, beside the marker block. Distinct from R1's refused act (ADR-0002): smelt
-  still never writes an agent's files uninvited.
+- **SkillPack** (`skills/smelt/`): the opt-in, published teaching artifact an agent's
+  owner installs by consent (`npx skills add smeltjs/smelt`) — the second adapter over
+  the instruction content, beside the marker block. Distinct from R1's refused act
+  (ADR-0002): smelt still never writes an agent's files uninvited. It is a **router and
+  its references**: the root `SKILL.md` is loaded on every invocation of the skill, so it
+  carries only what an agent mid-task needs — read, retrieve, map, obey a guard denial,
+  the MCP names — plus one link line per operator workflow, and is held under a byte
+  budget the generator states (`ROOT_BUDGET_BYTES` in `scripts/generate-skill.mjs`) and
+  refuses to exceed; `references/setup.md`, `references/store.md` and
+  `references/rerank.md` carry setup and doctor, prune and retention, and the reranker
+  opt-in, read only by the agent doing that job. The root's `description` names the
+  trigger ("Use when …"), not the domain, because a long description is what gets
+  truncated where many skills are installed. Every file is the generator's output byte
+  for byte, and a stray file is a red guard. _Avoid_: prompt pack, plugin.
 - **AgentIndex** (`llms.txt`, with `llms-full.txt` beside it): the llmstxt.org index an
   agent fetches _before_ it has installed anything — an H1, a blockquote summary, the four
   laws as the notes, the three commands, the MCP tool names, and H2 link lists of every
