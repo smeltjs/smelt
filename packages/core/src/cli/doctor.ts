@@ -5,6 +5,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { HookCommand } from '../harness/hook-command.ts';
 import { probeHookCommand, probeOwnFile } from '../harness/hook-probe.ts';
 import type { HookProbe } from '../harness/hook-probe.ts';
+import { proveRoundTrip, ROUND_TRIP_PROBE_BUDGET_BYTES } from '../ops/index.ts';
+import type { ProveRoundTripOp, RoundTripProof } from '../ops/index.ts';
+import { SETUP_RECIPE } from '../setup/recipe.ts';
 import { hasShim } from '../harness/profile.ts';
 import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessById } from '../harness/registry.ts';
@@ -84,6 +87,12 @@ export interface DoctorIo {
    * empty environment; doctor never falls back to `process.env` on its own.
    */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * The round-trip proof. Defaults to the ops seam's `proveRoundTrip`; a test hands in
+   * one that fails so the verdict it drives — not current, with the reinstall named —
+   * can be watched rather than trusted.
+   */
+  readonly prove?: (op: ProveRoundTripOp) => Promise<RoundTripProof>;
 }
 
 export interface DoctorOptions {
@@ -238,11 +247,18 @@ export interface DoctorReceipt {
    * did, and no field of this receipt has changed spelling or meaning.
    */
   readonly hooks?: readonly DoctorHookFile[];
+  /**
+   * The round trip, proven: the binary smelted a known blob into a throwaway store and
+   * retrieved the first cut byte-identical. Present only when something is installed —
+   * it is the same proof `smelt setup` ends on, run again by the verb that reads
+   * (review IV, REP-56). Additive.
+   */
+  readonly roundTrip?: { readonly ok: boolean; readonly detail: string };
   readonly orphans: readonly string[];
   readonly repair: readonly string[];
 }
 
-export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
+export async function runDoctor(options: DoctorOptions, io: DoctorIo): Promise<number> {
   const lava = io.lava ?? PLAIN;
   const say = (text: string): void => {
     if (!options.json) io.output(text);
@@ -418,8 +434,22 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
 
   // ── verdict ──
   const installed = wired || state.config.present || state.mcp.some((one) => one.registered);
+  // The loop, proven — doctor reads what is installed and, once something is, runs the
+  // one proof setup ended on: a binary that cannot close its own round trip is not a
+  // current install, whatever the files say. In a throwaway store; nothing of the
+  // user's is touched.
+  const roundTrip = installed
+    ? await (io.prove ?? proveRoundTrip)({ budgetBytes: ROUND_TRIP_PROBE_BUDGET_BYTES })
+    : undefined;
+  // A binary that cannot close its own loop is not something `smelt setup` repairs —
+  // the files are fine; the program is not. The repair is the install itself.
+  if (roundTrip !== undefined && !roundTrip.ok) repair.push(SETUP_RECIPE.install.globalInstall);
   const current =
-    installed && behindBlocks.length === 0 && orphans.length === 0 && brokenHooks.length === 0;
+    installed &&
+    behindBlocks.length === 0 &&
+    orphans.length === 0 &&
+    brokenHooks.length === 0 &&
+    roundTrip?.ok === true;
 
   // The suffix only where it says something: a project reading from a project
   // directory is what this line has always meant, and every byte of that prose stays
@@ -470,6 +500,11 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       else if (one.manual !== undefined) {
         line('warn', `${one.file}: ${one.server} not registered — run: ${one.manual}`);
       }
+    }
+    if (roundTrip !== undefined) {
+      // The same proof setup ends on, run by the verb that reads: a binary that cannot
+      // close its own loop is reported as such, whatever the files say.
+      line(roundTrip.ok ? 'ok' : 'bad', `round trip: ${roundTrip.detail}`);
     }
     if (rerank !== undefined) {
       line(
@@ -523,6 +558,9 @@ export function runDoctor(options: DoctorOptions, io: DoctorIo): number {
       hookFiles: [...state.hookFiles],
       mcp: [...state.mcp],
       ...(hooks.length === 0 ? {} : { hooks }),
+      ...(roundTrip === undefined
+        ? {}
+        : { roundTrip: { ok: roundTrip.ok, detail: roundTrip.detail } }),
       orphans,
       repair: [...new Set(repair)],
     };

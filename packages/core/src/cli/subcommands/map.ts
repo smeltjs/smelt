@@ -1,6 +1,6 @@
 import { CliUsageError } from '../../errors.ts';
 import { budgetRequired, readTree } from '../../ops/inputs.ts';
-import { mapTree } from '../../ops/verbs.ts';
+import { mapTree } from '../../ops/index.ts';
 import type { RepoMap } from '../../repomap/map.ts';
 import { CONFIG_FILE_NAME } from '../../config.ts';
 import type { LoadedConfig } from '../../config.ts';

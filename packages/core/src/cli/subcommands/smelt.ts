@@ -4,7 +4,7 @@ import { reconstruct } from '../../apply.ts';
 import { SUPPORTED_LANGUAGES } from '../../detect.ts';
 import { CliUsageError, SmeltError } from '../../errors.ts';
 import { budgetRequired, openStore, readBlob, resolveStrategy } from '../../ops/inputs.ts';
-import { smeltBlob } from '../../ops/verbs.ts';
+import { smeltBlob } from '../../ops/index.ts';
 import { isStrategy, STRATEGIES } from '../../plan/planners.ts';
 import type { Strategy } from '../../plan/planners.ts';
 import { loadRerankStage } from '../../rerank/load.ts';

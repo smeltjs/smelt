@@ -15,7 +15,17 @@ import {
   readTree,
   resolveStrategy,
 } from '../src/ops/inputs.ts';
-import { mapTree, readCounters, retrieveBytes, retrieveMany, smeltBlob } from '../src/ops/verbs.ts';
+import {
+  mapTree,
+  readCounters,
+  retrieveBytes,
+  retrieveMany,
+  proveRoundTrip,
+  ROUND_TRIP_PROBE_BUDGET_BYTES,
+  smeltBlob,
+  surveyStore,
+} from '../src/ops/verbs.ts';
+import type { ElisionStore, StoreSurvey } from '../src/types.ts';
 
 /**
  * The operations seam, tested where it lives.
@@ -465,5 +475,85 @@ describe('retrieveMany — N hashes, one call, every hit counted on its own', ()
     const store = openStore({ kind: 'memory' });
     expect(retrieveMany({ store, hashes: [] })).toEqual([]);
     expect(readCounters({ store }).retrieveCalls).toBe(0);
+  });
+});
+
+describe('surveyStore — one reading, however the store can answer', () => {
+  const counters = {
+    elisionsStored: 3,
+    bytesStored: 300,
+    retrieveCalls: 2,
+    uniqueRetrieved: 1,
+    misses: 1,
+  };
+  const ledger = [{ rule: 'focus-window', stored: 3, retrieved: 1 }];
+
+  function counting(withSurvey: boolean): {
+    readonly store: ElisionStore;
+    readonly calls: { survey: number; stats: number; ledger: number };
+  } {
+    const calls = { survey: 0, stats: 0, ledger: 0 };
+    const store: ElisionStore = {
+      put: () => {
+        throw new Error('not under test');
+      },
+      retrieve: () => {
+        throw new Error('not under test');
+      },
+      has: () => false,
+      peek: () => undefined,
+      stats: () => {
+        calls.stats += 1;
+        return { ...counters, expansionRate: 1 / 3, allElisionsRetrieved: false };
+      },
+      ledger: () => {
+        calls.ledger += 1;
+        return ledger;
+      },
+      ...(withSurvey
+        ? {
+            survey: (): StoreSurvey => {
+              calls.survey += 1;
+              return { counters, ledger, size: { blobs: 3, bytes: 300 } };
+            },
+          }
+        : {}),
+    };
+    return { store, calls };
+  }
+
+  it('asks a surveying store exactly once, and derives the same counters stats() would', () => {
+    const { store, calls } = counting(true);
+    const reading = surveyStore({ store });
+    expect(calls).toEqual({ survey: 1, stats: 0, ledger: 0 });
+    expect(reading.counters).toEqual(store.stats());
+    expect(reading.ledger).toEqual(ledger);
+    expect(reading.size).toEqual({ blobs: 3, bytes: 300 });
+  });
+
+  it('asks a store that cannot survey the two narrower questions, and reports no size', () => {
+    const { store, calls } = counting(false);
+    const reading = surveyStore({ store });
+    expect(calls.survey).toBe(0);
+    expect(calls.stats).toBe(1);
+    expect(calls.ledger).toBe(1);
+    expect(reading.ledger).toEqual(ledger);
+    expect(reading.size, 'a store with no disk has no size to report').toBeUndefined();
+  });
+});
+
+describe('proveRoundTrip — the loop, closed in a throwaway store', () => {
+  it('cuts under the probe budget and retrieves the first cut byte-identical', async () => {
+    const proof = await proveRoundTrip({ budgetBytes: ROUND_TRIP_PROBE_BUDGET_BYTES });
+    expect(proof.ok).toBe(true);
+    expect(proof.elisions).toBeGreaterThan(0);
+    expect(proof.bytes).toBeGreaterThan(0);
+    expect(proof.detail).toContain('retrieved byte-identical, in a throwaway store');
+  });
+
+  it('states its counts in the sentence a report prints', async () => {
+    const proof = await proveRoundTrip({ budgetBytes: ROUND_TRIP_PROBE_BUDGET_BYTES });
+    expect(proof.detail).toContain(`${String(proof.elisions)} elisions under the budget`);
+    expect(proof.detail).toContain(`${String(proof.bytes)} bytes retrieved`);
   });
 });

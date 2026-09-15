@@ -458,6 +458,20 @@ once_ over `src` and crosses it with the CLI's rendered refusals;
 `ops/` and the first goes red through the CLI; re-fork it in the server and the second
 goes red through the tools. One law, two front doors, a guard watching from each.
 
+Two verbs joined the seam in review IV (REP-56). **`surveyStore`** is the uncounted read
+in one pass — counters, ledger and, for a store on disk, its size — over any
+`ElisionStore`: a store that can answer in one walk (`survey()`, optional on the seam,
+which the directory store implements) is asked once, any other is asked the two narrower
+questions. It was written for `smelt stats` and then exported from neither barrel, so the
+CLI deep-imported it and the MCP server could not reach it at all — the exact defect this
+section opens with, recurring. **`proveRoundTrip`** is the proof `smelt setup` ends on —
+smelt a known blob into a throwaway store, retrieve the first cut, compare bytes — lifted
+out of setup so `smelt doctor` can run it too and report `round trip` as a verdict rather
+than only reading text. One asymmetry is left standing on purpose: `smelt store prune`
+constructs a `DirectoryElisionStore` and calls `prune` with no op behind it. It has one
+caller, and one adapter is a hypothetical seam; it is noted here so the next reader knows
+it was seen, not missed.
+
 ### The structural planner
 
 The reason smelt exists. `src/plan/structural.ts` parses with the language's grammar,
@@ -1143,6 +1157,9 @@ cashed in anywhere and one set of counters moves. Its stdio-local guarantee — 
 HTTP transports never enter the import graph — is guard-enforced in its own package.
 `smelt_file` honours the same `rerank` opt-in the CLI does, by handing the config block
 to the core's loader; the server imports no adapter of its own, and its guard says so.
+`smelt_stats` reads the store through `surveyStore` — one traversal for counters and
+ledger together — since review IV (REP-56); before that the verb existed, was exported
+from neither barrel, and the server walked the store twice for want of it.
 
 **The tool surface is measured.** The five descriptions and the `instructions` string
 travel to the model on every `initialize` and `tools/list`, relevant or not — the one

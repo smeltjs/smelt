@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import { CliUsageError } from '../errors.ts';
@@ -36,8 +36,7 @@ import { locateStep, resolveScope, scopeRoot } from '../harness/scope.ts';
 import type { InstallScope } from '../harness/scope.ts';
 import type { HarnessProfile } from '../harness/profile.ts';
 import { harnessLabel, TIER_HONESTY } from '../harness/profile.ts';
-import { DirectoryElisionStore } from '../store-dir.ts';
-import { createSmelter } from '../smelter.ts';
+import { proveRoundTrip, ROUND_TRIP_PROBE_BUDGET_BYTES } from '../ops/index.ts';
 import { DEFAULT_STRATEGY } from '../plan/planners.ts';
 import { SETUP_RECIPE } from '../setup/recipe.ts';
 import { CLI_NAME, EXIT } from './shell.ts';
@@ -178,22 +177,6 @@ interface SetupChoices {
   /** What `--guard`/`--stats`/`--map`/`--lint` said, if anything. */
   toggles: ToggleFlags;
 }
-
-/**
- * The probe the round-trip check smelts: big enough that the probe budget forces
- * cuts, with one focus term that must survive. The lexical planner is deterministic,
- * so every machine that runs setup proves the same round trip.
- */
-const PROBE_SOURCE: string = `${Array.from(
-  { length: 40 },
-  (_, i): string =>
-    `export function helper${String(i)}(input: string): string {\n` +
-    `  const trimmed = input.trim();\n` +
-    `  return trimmed + " (${String(i)})";\n` +
-    `}\n`,
-).join('')}\nexport function renderTicket(id: string): string {\n  return 'ticket-' + id;\n}\n`;
-
-const PROBE_BUDGET_BYTES = 600;
 
 type Say = (text: string) => void;
 
@@ -821,39 +804,13 @@ async function probeStore(storeDir: string, budget: number): Promise<SetupCheck[
     return checks; // the round trip cannot prove more than this
   }
 
-  const disposable = mkdtempSync(join(tmpdir(), 'smelt-setup-probe-'));
-  try {
-    const store = new DirectoryElisionStore(disposable);
-    const smelter = createSmelter({ store });
-    const result = await smelter.smelt(PROBE_SOURCE, {
-      path: 'setup-probe.ts',
-      focus: ['renderTicket'],
-      budgetBytes: Math.min(budget, PROBE_BUDGET_BYTES),
-    });
-    if (result.elisions.length === 0) {
-      checks.push({
-        name: 'round trip',
-        ok: false,
-        detail: `the probe produced no elisions at a ${String(PROBE_BUDGET_BYTES)}-byte budget`,
-      });
-      return checks;
-    }
-    const first = result.elisions[0]!;
-    const original = PROBE_SOURCE.slice(first.range.start, first.range.end);
-    const back = store.retrieve(first.hash);
-    checks.push({
-      name: 'round trip',
-      ok: back === original,
-      detail:
-        back === original
-          ? `${String(result.elisions.length)} elisions under the budget; the first cut's ` +
-            `${String(first.range.end - first.range.start)} bytes retrieved byte-identical, in a throwaway store`
-          : 'the store returned different bytes than were elided',
-    });
-    return checks;
-  } finally {
-    rmSync(disposable, { recursive: true, force: true });
-  }
+  // The proof itself is the ops seam's — doctor runs the same one — in a throwaway
+  // store, at the smaller of the user's budget and the probe's own.
+  const proof = await proveRoundTrip({
+    budgetBytes: Math.min(budget, ROUND_TRIP_PROBE_BUDGET_BYTES),
+  });
+  checks.push({ name: 'round trip', ok: proof.ok, detail: proof.detail });
+  return checks;
 }
 
 // ── small shared pieces ─────────────────────────────────────────────────────────────

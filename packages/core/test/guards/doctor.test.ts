@@ -18,7 +18,7 @@ import process from 'node:process';
 // of src. See scripts/mutate.mjs.
 import { EXIT, runCli } from '@guard/cli/run';
 import { runDoctor } from '@guard/cli/doctor';
-import type { DoctorReceipt } from '@guard/cli/doctor';
+import type { DoctorIo, DoctorReceipt } from '@guard/cli/doctor';
 import { SNIPPET_END_MD, SNIPPET_START_MD } from '@guard/harness/snippet';
 import { SETUP_RECIPE } from '@guard/setup/recipe';
 import { DirectoryElisionStore } from '@guard/store-dir';
@@ -61,14 +61,33 @@ function scratch(label: string): string {
   return mkdtempSync(join(tmpdir(), `smelt-doctor-${label}-`));
 }
 
-function doctor(
+/** A proof that fails the way a broken binary would — for driving doctor's verdict. */
+const FAILING_PROOF: DoctorIo['prove'] = () =>
+  Promise.resolve({
+    ok: false,
+    elisions: 3,
+    bytes: 0,
+    detail: 'the store returned different bytes than were elided',
+  });
+
+async function doctor(
   cwd: string,
   version: string,
   json = true,
   env: Readonly<Record<string, string | undefined>> = {},
-): { code: number; stdout: string } {
+  prove?: DoctorIo['prove'],
+): Promise<{ code: number; stdout: string }> {
   let stdout = '';
-  const code = runDoctor({ json }, { output: (text) => void (stdout += text), cwd, version, env });
+  const code = await runDoctor(
+    { json },
+    {
+      output: (text) => void (stdout += text),
+      cwd,
+      version,
+      env,
+      ...(prove === undefined ? {} : { prove }),
+    },
+  );
   return { code, stdout };
 }
 
@@ -134,7 +153,7 @@ describe('smelt doctor reads installed state back', () => {
     try {
       await setupWith(cwd, '0.5.0');
       const before = readFileSync(join(cwd, 'CLAUDE.md'), 'utf8');
-      const { code, stdout } = doctor(cwd, '0.5.0');
+      const { code, stdout } = await doctor(cwd, '0.5.0');
       expect(code).toBe(EXIT.ok);
       const receipt = receiptOf(stdout);
       expect(receipt.current).toBe(true);
@@ -152,7 +171,7 @@ describe('smelt doctor reads installed state back', () => {
     const cwd = scratch('behind');
     try {
       await setupWith(cwd, '0.5.0');
-      const { code, stdout } = doctor(cwd, '0.4.0');
+      const { code, stdout } = await doctor(cwd, '0.4.0');
       expect(code).toBe(EXIT.refused);
       const receipt = receiptOf(stdout);
       expect(receipt.current).toBe(false);
@@ -166,7 +185,7 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
-  it('a pre-stamping block is recognized as ours and reported behind, not missing', () => {
+  it('a pre-stamping block is recognized as ours and reported behind, not missing', async () => {
     const cwd = scratch('legacy');
     try {
       writeFileSync(
@@ -174,7 +193,7 @@ describe('smelt doctor reads installed state back', () => {
         `${SNIPPET_START_MD}\n\n## smelt — context discipline\n\nold bytes\n\n${SNIPPET_END_MD}\n`,
       );
       const before = readFileSync(join(cwd, 'CLAUDE.md'), 'utf8');
-      const { code, stdout } = doctor(cwd, '9.9.9');
+      const { code, stdout } = await doctor(cwd, '9.9.9');
       expect(code).toBe(EXIT.refused);
       const receipt = receiptOf(stdout);
       const block = receipt.blocks.find((one) => one.file === 'CLAUDE.md');
@@ -186,7 +205,7 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
-  it('orphans are named: a registration without wiring, a missing store directory', () => {
+  it('orphans are named: a registration without wiring, a missing store directory', async () => {
     const cwd = scratch('orphans');
     try {
       writeFileSync(
@@ -200,7 +219,7 @@ describe('smelt doctor reads installed state back', () => {
           },
         })}\n`,
       );
-      const { code, stdout } = doctor(cwd, '9.9.9');
+      const { code, stdout } = await doctor(cwd, '9.9.9');
       expect(code).toBe(EXIT.refused);
       const receipt = receiptOf(stdout);
       expect(receipt.orphans.join('\n')).toContain('MCP registration');
@@ -219,7 +238,7 @@ describe('smelt doctor reads installed state back', () => {
           store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
         })}\n`,
       );
-      const second = doctor(cwd, '9.9.9');
+      const second = await doctor(cwd, '9.9.9');
       const parsed = receiptOf(second.stdout);
       expect(parsed.orphans.join('\n')).toContain('store directory');
     } finally {
@@ -227,7 +246,7 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
-  it('reports the rerank opt-in, and whether its key variable is set — presence only', () => {
+  it('reports the rerank opt-in, and whether its key variable is set — presence only', async () => {
     // The one config key that can make a smelt run talk to another machine, so
     // "is that on here, and does it have what it needs?" must be answerable without
     // running anything. And a doctor report is a thing people paste into issues: the
@@ -243,9 +262,9 @@ describe('smelt doctor reads installed state back', () => {
         })}\n`,
       );
 
-      const missing = doctor(cwd, '9.9.9', false, {});
+      const missing = await doctor(cwd, '9.9.9', false, {});
       expect(missing.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY missing');
-      const receiptMissing = receiptOf(doctor(cwd, '9.9.9', true, {}).stdout);
+      const receiptMissing = receiptOf((await doctor(cwd, '9.9.9', true, {})).stdout);
       expect(receiptMissing.rerank).toMatchObject({
         kind: 'voyage',
         adapter: 'voyage/rerank-2.5',
@@ -269,11 +288,11 @@ describe('smelt doctor reads installed state back', () => {
       ]);
       expect(fields.some((key) => resolutionFields.has(key))).toBe(true);
 
-      const present = doctor(cwd, '9.9.9', false, { VOYAGE_API_KEY: 'sk-super-secret' });
+      const present = await doctor(cwd, '9.9.9', false, { VOYAGE_API_KEY: 'sk-super-secret' });
       expect(present.stdout).toContain('rerank: voyage/rerank-2.5 — VOYAGE_API_KEY set');
       expect(present.stdout).not.toContain('sk-super-secret');
       const receipt = receiptOf(
-        doctor(cwd, '9.9.9', true, { VOYAGE_API_KEY: 'sk-super-secret' }).stdout,
+        (await doctor(cwd, '9.9.9', true, { VOYAGE_API_KEY: 'sk-super-secret' })).stdout,
       );
       expect(receipt.rerank?.keySet).toBe(true);
       expect(JSON.stringify(receipt)).not.toContain('sk-super-secret');
@@ -283,19 +302,19 @@ describe('smelt doctor reads installed state back', () => {
         join(cwd, 'smelt.config.json'),
         `${JSON.stringify({ smeltConfig: 1, defaultBudgetBytes: 4000 })}\n`,
       );
-      expect(doctor(cwd, '9.9.9', false).stdout).not.toContain('rerank');
-      expect(receiptOf(doctor(cwd, '9.9.9').stdout).rerank).toBeUndefined();
+      expect((await doctor(cwd, '9.9.9', false)).stdout).not.toContain('rerank');
+      expect(receiptOf((await doctor(cwd, '9.9.9')).stdout).rerank).toBeUndefined();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  it('a clean tree is nothing-installed, exit 0 — nothing to be behind', () => {
+  it('a clean tree is nothing-installed, exit 0 — nothing to be behind', async () => {
     const cwd = scratch('clean');
     try {
-      const { code, stdout } = doctor(cwd, '9.9.9', false);
+      const { code, stdout } = await doctor(cwd, '9.9.9', false);
       expect(code).toBe(EXIT.ok);
-      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      const receipt = receiptOf((await doctor(cwd, '9.9.9')).stdout);
       expect(receipt.installed).toBe(false);
       expect(receipt.current).toBe(false);
       expect(receipt.repair).toEqual([]);
@@ -305,7 +324,37 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
-  it('reports the store it found: blob count and bytes, as receipt fields', () => {
+  it('proves the round trip on an installed machine, and carries it in the receipt', async () => {
+    const cwd = scratch('roundtrip-ok');
+    await setupWith(cwd, '1.0.0');
+    const { code, stdout } = await doctor(cwd, '1.0.0');
+    const receipt = receiptOf(stdout);
+    expect(receipt.roundTrip?.ok).toBe(true);
+    expect(receipt.roundTrip?.detail).toContain('retrieved byte-identical');
+    expect(receipt.current).toBe(true);
+    expect(code).toBe(EXIT.ok);
+    const prose = (await doctor(cwd, '1.0.0', false)).stdout;
+    expect(prose).toContain('round trip: ');
+  });
+
+  it('a failed round trip makes the install not current, and names the reinstall', async () => {
+    // The proof is a seam on DoctorIo so this verdict can be driven, not trusted: a
+    // binary that cannot close its own loop is not repaired by `smelt setup` — the
+    // files are fine, the program is not — so the repair doctor names is the install.
+    const cwd = scratch('roundtrip-bad');
+    await setupWith(cwd, '1.0.0');
+    const { code, stdout } = await doctor(cwd, '1.0.0', true, {}, FAILING_PROOF);
+    const receipt = receiptOf(stdout);
+    expect(receipt.roundTrip).toEqual({
+      ok: false,
+      detail: 'the store returned different bytes than were elided',
+    });
+    expect(receipt.current, 'a failed proof left the install "current"').toBe(false);
+    expect(receipt.repair).toContain(SETUP_RECIPE.install.globalInstall);
+    expect(code).toBe(EXIT.refused);
+  });
+
+  it('reports the store it found: blob count and bytes, as receipt fields', async () => {
     const cwd = scratch('store-size');
     try {
       const storeDir = join(cwd, SETUP_RECIPE.store.defaultDir);
@@ -320,7 +369,7 @@ describe('smelt doctor reads installed state back', () => {
       store.put('one elided blob');
       store.put('another elided blob');
 
-      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      const receipt = receiptOf((await doctor(cwd, '9.9.9')).stdout);
       expect(receipt.config.store.dirExists).toBe(true);
       // Structured, and exact: the prose line is a rendering of these two integers,
       // so an agent reading the receipt never has to parse a rounded "1.2 KB".
@@ -329,13 +378,13 @@ describe('smelt doctor reads installed state back', () => {
         Buffer.byteLength('one elided blob', 'utf8') +
           Buffer.byteLength('another elided blob', 'utf8'),
       );
-      expect(doctor(cwd, '9.9.9', false).stdout).toContain('2 blobs');
+      expect((await doctor(cwd, '9.9.9', false)).stdout).toContain('2 blobs');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  it('states a configured retention as the cut-off a prune would use, never as a plan', () => {
+  it('states a configured retention as the cut-off a prune would use, never as a plan', async () => {
     const cwd = scratch('store-retention');
     try {
       const storeDir = join(cwd, SETUP_RECIPE.store.defaultDir);
@@ -353,12 +402,12 @@ describe('smelt doctor reads installed state back', () => {
       const store = new DirectoryElisionStore(storeDir);
       const hash = store.put('a blob no reading may touch');
 
-      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      const receipt = receiptOf((await doctor(cwd, '9.9.9')).stdout);
       expect(receipt.config.store.retention).toStrictEqual({
         olderThan: '30d',
         keepRetrieved: true,
       });
-      const prose = doctor(cwd, '9.9.9', false).stdout;
+      const prose = (await doctor(cwd, '9.9.9', false)).stdout;
       expect(prose).toContain('prune cut-off 30d');
       expect(prose).toContain('when --older-than is omitted');
       // Reporting a retention is not applying one. Doctor read the key and the store
@@ -370,7 +419,7 @@ describe('smelt doctor reads installed state back', () => {
     }
   });
 
-  it('reads a missing store directory without creating it — doctor never writes', () => {
+  it('reads a missing store directory without creating it — doctor never writes', async () => {
     const cwd = scratch('store-absent');
     try {
       writeFileSync(
@@ -380,7 +429,7 @@ describe('smelt doctor reads installed state back', () => {
           store: { kind: 'directory', path: SETUP_RECIPE.store.defaultDir },
         })}\n`,
       );
-      const receipt = receiptOf(doctor(cwd, '9.9.9').stdout);
+      const receipt = receiptOf((await doctor(cwd, '9.9.9')).stdout);
       // The size is absent rather than zero: "there is no store here" and "the store
       // here is empty" are different facts, and doctor states only the one it read.
       expect(receipt.config.store.dirExists).toBe(false);
@@ -405,8 +454,8 @@ describe('smelt doctor reads installed state back', () => {
           .filter((name) => existsSync(join(cwd, name)))
           .map((name) => [name, readFileSync(join(cwd, name), 'utf8')]),
       );
-      doctor(cwd, '0.5.0');
-      doctor(cwd, '0.4.0');
+      await doctor(cwd, '0.5.0');
+      await doctor(cwd, '0.4.0');
       for (const [name, bytes] of before) {
         expect(readFileSync(join(cwd, name), 'utf8'), name).toBe(bytes);
       }
@@ -437,11 +486,11 @@ describe('a wired hook is one that runs', () => {
     const cwd = scratch('verified');
     try {
       await setupWith(cwd, '0.5.0');
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.ok);
       expect(stdout).toContain('.claude/settings.json: wired (verified)');
 
-      const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+      const receipt = receiptOf((await doctor(cwd, '0.5.0')).stdout);
       const file = receipt.hooks?.find((one) => one.file === '.claude/settings.json');
       expect(file?.harness).toBe('claude-code');
       const guard = file?.entries.find((entry) => entry.kind === 'guard');
@@ -472,13 +521,13 @@ describe('a wired hook is one that runs', () => {
       );
       pointGuardAt(cwd, gone);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.claude/settings.json: wired but missing');
       expect(stdout).toContain(gone);
       expect(stdout).toContain('smelt setup --harness claude-code');
 
-      const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+      const receipt = receiptOf((await doctor(cwd, '0.5.0')).stdout);
       expect(receipt.current).toBe(false);
       expect(receipt.repair).toContain('smelt setup --harness claude-code');
       const guard = receipt.hooks?.[0]?.entries.find((entry) => entry.kind === 'guard');
@@ -499,7 +548,7 @@ describe('a wired hook is one that runs', () => {
       writeFileSync(stub, 'process.exit(0);\n');
       pointGuardAt(cwd, stub);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.claude/settings.json: wired but inert');
       expect(stdout).toContain('empty stdout is an allow');
@@ -571,10 +620,10 @@ describe('a hook file smelt owns whole is run too', () => {
       const cwd = scratch(`whole-${harness.id}`);
       try {
         await setupHarness(cwd, harness.id, harness.file);
-        const { stdout } = doctor(cwd, '0.5.0', false);
+        const { stdout } = await doctor(cwd, '0.5.0', false);
         expect(stdout).toContain(`${harness.file}: wired (verified)`);
 
-        const receipt = receiptOf(doctor(cwd, '0.5.0').stdout);
+        const receipt = receiptOf((await doctor(cwd, '0.5.0')).stdout);
         const file = receipt.hooks?.find((one) => one.file === harness.file);
         expect(file?.harness).toBe(harness.id);
         const entry = file?.entries[0];
@@ -595,7 +644,7 @@ describe('a hook file smelt owns whole is run too', () => {
       const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'shims', 'cline.js');
       pointFileAt(path, gone);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.clinerules/hooks/PreToolUse: wired but missing');
       expect(stdout).toContain(gone);
@@ -616,7 +665,7 @@ describe('a hook file smelt owns whole is run too', () => {
       writeFileSync(stub, 'process.exit(0);\n');
       pointFileAt(path, stub);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.hermes/hooks.yaml: wired but inert');
       expect(stdout).toContain('empty stdout is an allow');
@@ -634,7 +683,7 @@ describe('a hook file smelt owns whole is run too', () => {
       writeFileSync(stub, 'process.exit(0);\n');
       pointFileAt(path, stub);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.clinerules/hooks/PreToolUse: wired but inert');
       expect(stdout).toContain('empty stdout is an allow');
@@ -650,7 +699,7 @@ describe('a hook file smelt owns whole is run too', () => {
       const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'shims', 'hermes.js');
       pointFileAt(path, gone);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.hermes/hooks.yaml: wired but missing');
       expect(stdout).toContain(gone);
@@ -667,7 +716,7 @@ describe('a hook file smelt owns whole is run too', () => {
       const gone = join(cwd, 'Cellar', 'smelt', '0.5.0', 'dist', 'hooks', 'guard-core.js');
       pointFileAt(path, gone);
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.opencode/plugins/smelt-guard.js: wired but missing');
       expect(stdout).toContain(gone);
@@ -691,7 +740,7 @@ describe('a hook file smelt owns whole is run too', () => {
           `export const SmeltGuard = async () => ({});\n`,
       );
 
-      const { code, stdout } = doctor(cwd, '0.5.0', false);
+      const { code, stdout } = await doctor(cwd, '0.5.0', false);
       expect(code).toBe(EXIT.refused);
       expect(stdout).toContain('.opencode/plugins/smelt-guard.js: wired but inert');
       expect(stdout).toContain('tool.execute.before');
@@ -702,7 +751,7 @@ describe('a hook file smelt owns whole is run too', () => {
 });
 
 describe('the installed binary answers doctor', () => {
-  it('reads the module kind by the loader’s rule: a file, or an installed package', () => {
+  it('reads the module kind by the loader’s rule: a file, or an installed package', async () => {
     // The reader and the loader must ask the same question. `rerank/resolve.ts` made
     // `{"kind":"module","path":"my-reranker"}` loadable — a bare specifier is looked up
     // as a package — while doctor still asked `existsSync` about a file of that name,
@@ -798,7 +847,7 @@ describe('the installed binary answers doctor', () => {
     }
   }, 20_000);
 
-  it('says WHERE the rerank adapter is, and names an install command that could work', () => {
+  it('says WHERE the rerank adapter is, and names an install command that could work', async () => {
     // The one fact about the opt-in that could not be read without running a smelt:
     // an adapter can be installed beside the config, beside smelt, or in neither, and
     // only the last is a problem. `NODE_PATH` is cleared because pnpm points this
@@ -835,7 +884,7 @@ describe('the installed binary answers doctor', () => {
     }
   }, 15_000);
 
-  it('`smelt doctor --json` over piped stdin parses as a receipt', () => {
+  it('`smelt doctor --json` over piped stdin parses as a receipt', async () => {
     // Only a real process proves the read-only verb needs no wizard stream — piped
     // stdin that would starve a wizard is exactly what doctor must not care about.
     const bin = join(import.meta.dirname, '../../dist/cli/bin.js');
@@ -864,6 +913,14 @@ describe('the installed binary answers doctor', () => {
  * file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    kind: 'src',
+    id: 'doctor-ignores-a-failed-round-trip',
+    file: 'cli/doctor.ts',
+    find: '    roundTrip?.ok === true;',
+    replace: '    (roundTrip === undefined || true);',
+    why: 'the round-trip verdict dropped from "current" — doctor would print `round trip` as failed on one line and `Current: everything on disk agrees` two lines later, and exit 0, for a binary that cannot retrieve what it elided',
+  },
   {
     kind: 'src',
     id: 'doctor-probe-result-ignored',

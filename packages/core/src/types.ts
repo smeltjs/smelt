@@ -361,6 +361,32 @@ export interface ElisionStore {
    * `stats()`: reading the ledger never moves it.
    */
   ledger?(): readonly RuleLedgerEntry[];
+  /**
+   * The whole reading in one pass — the raw counters, the ledger and the size on disk
+   * — for a store that lives somewhere a traversal costs something. Optional: a memory
+   * store's counters are a `Map`'s size and there is nothing to walk, so it answers
+   * `stats()` and `ledger()` separately and nothing is lost. The `surveyStore` op reads
+   * this when it exists and falls back to the two narrower calls when it does not, so
+   * a front door that wants the whole reading asks once either way (review IV, REP-56).
+   */
+  survey?(): StoreSurvey;
+}
+
+/**
+ * The directly-observed half of {@link RetrieveStats}: the five counts a store reads
+ * off its own records — a map size, a directory scan, a journal fold. Nothing in here
+ * is derived; every field is a fact the store witnessed. The derived half —
+ * `expansionRate` and `allElisionsRetrieved`, the honesty arithmetic of Law 3 — is
+ * computed from these by `retrieveStats` (`stats.ts`), in exactly one place.
+ */
+export type RawRetrieveCounters = Omit<RetrieveStats, 'expansionRate' | 'allElisionsRetrieved'>;
+
+/** One reading of a store on disk: counters, ledger and size, from one traversal. */
+export interface StoreSurvey {
+  readonly counters: RawRetrieveCounters;
+  readonly ledger: readonly RuleLedgerEntry[];
+  /** Blobs on disk and their bytes, from the same scan as the counters. */
+  readonly size: { readonly blobs: number; readonly bytes: number };
 }
 
 /**

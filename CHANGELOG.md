@@ -109,6 +109,23 @@ the runner rather than by hand.
   the registry at a scope the fold never runs. Same ids, same findings, same order.
   (Architecture review IV, REP-51.)
 
+- **Two verbs on the operations seam: `surveyStore` and `proveRoundTrip`.** `surveyStore`
+  — the one-pass reading `smelt stats` uses — was written but exported from neither
+  barrel, so the CLI deep-imported it and the MCP server, which could not reach it,
+  walked the store twice for `smelt_stats` (counters, then ledger): the barrel defect the
+  seam was created to end, recurring. It is on both barrels now and reads any
+  `ElisionStore`: a store that can answer in one walk (`survey()`, newly optional on the
+  seam; the directory store implements it) is asked once, any other is asked the two
+  narrower questions. `smelt_stats` makes one traversal. `proveRoundTrip` is the proof
+  `smelt setup` ends on — smelt a known blob into a throwaway store, retrieve the first
+  cut, compare bytes — lifted out of setup into ops so `smelt doctor` runs it too:
+  doctor now prints a `round trip` verdict, its `--json` receipt carries `roundTrip`
+  (additive), a failed proof makes the install not current and names the reinstall as
+  its repair, and `runDoctor` is async (its proof is an injectable `DoctorIo.prove`, so
+  the failing verdict is tested, not trusted). Setup's output is unchanged, except that
+  the no-elisions refusal now names the budget the probe actually ran at. (Architecture
+  review IV, REP-56.)
+
 ### Docs
 
 - **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**

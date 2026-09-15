@@ -1,13 +1,8 @@
 import type { RetrieveStats, RuleLedgerEntry } from './types.ts';
 
-/**
- * The directly-observed half of {@link RetrieveStats}: the five counts a store reads
- * off its own records — a map size, a directory scan, a journal fold. Nothing in here
- * is derived; every field is a fact the store witnessed. The derived half —
- * `expansionRate` and `allElisionsRetrieved`, the honesty arithmetic of Law 3 — is
- * computed from these by {@link retrieveStats}, in exactly one place.
- */
-export type RawRetrieveCounters = Omit<RetrieveStats, 'expansionRate' | 'allElisionsRetrieved'>;
+import type { RawRetrieveCounters } from './types.ts';
+
+export type { RawRetrieveCounters } from './types.ts';
 
 /**
  * The one derivation of the honesty arithmetic, shared by every store.
