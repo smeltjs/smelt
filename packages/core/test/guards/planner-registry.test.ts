@@ -12,6 +12,7 @@ import { isStrategy, PLANNERS, STRATEGIES } from '@guard/plan/planners';
 import { STRUCTURAL_PLANNER_ID } from '@guard/plan/structural';
 
 import type { GuardMutation } from './_mutations.ts';
+import { readSource } from './_source.ts';
 
 /**
  * The PLANNERS registry is the single source of the strategy names: `createSmelter`
@@ -107,6 +108,41 @@ describe('the help text names every shipped strategy on its --strategy line', ()
 });
 
 /**
+ * `Lexical` for `lexical`, `Json` for `json`: the spelling each planner module gives
+ * its class, plan function and options type, restated here so the barrel can be read
+ * against the registry rather than against itself.
+ */
+function pascal(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+describe('the barrel exports every shipped planner, whole', () => {
+  // The barrel's own comment promises that "every name is re-exported here, so
+  // consumers see no difference". Review IV (REP-58) found it false for the two
+  // content-kind planners: a consumer could pick `strategy: 'json'` and could not name
+  // `JsonPlannerOptions`. Read as source, so the type exports count too.
+  const barrel = readSource('index.ts');
+
+  for (const name of SHIPPED_NAMES) {
+    it(`\`${name}\` — its id, class, plan function and options type are all on the barrel`, () => {
+      const upper = name.toUpperCase();
+      for (const symbol of [
+        `${upper}_PLANNER_ID`,
+        `${pascal(name)}Planner`,
+        `plan${pascal(name)}`,
+        `${pascal(name)}PlannerOptions`,
+      ]) {
+        expect(
+          new RegExp(`\\b${symbol}\\b`).test(barrel),
+          `src/index.ts does not export \`${symbol}\` — a consumer can select ` +
+            `\`strategy: '${name}'\` but cannot name what it selected`,
+        ).toBe(true);
+      }
+    });
+  }
+});
+
+/**
  * The breaks this guard must catch. `pnpm mutate` applies each one to a scratch copy
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
@@ -117,5 +153,12 @@ export const MUTATIONS: GuardMutation[] = [
     find: '  structural: (options: PlannerFactoryOptions): Planner =>\n    new StructuralPlanner(options.structural ?? {}),\n',
     replace: '',
     why: 'a shipped strategy dropped from the one PLANNERS registry — the factory, --strategy and config validation, and the help text all lose it in the same edit, and the guard must watch every face go red together',
+  },
+  {
+    id: 'barrel-forgets-a-planner-function',
+    file: 'index.ts',
+    find: "export { DIFF_PLANNER_ID, DiffPlanner, planDiff } from './plan/diff.ts';",
+    replace: "export { DIFF_PLANNER_ID, DiffPlanner } from './plan/diff.ts';",
+    why: "a shipped planner exported from the barrel in part — the exact drift REP-58 found, where `strategy: 'json'` was selectable but `JsonPlannerOptions` and `planJson` were not nameable, and the barrel comment went on promising otherwise",
   },
 ];

@@ -11,7 +11,27 @@ tier-1 rows in `packages/core/bench/RESULTS.md`, each carrying its date and corp
 commit; the mutation tally is whatever `guards.json` says, and that file is written by
 the runner rather than by hand.
 
-## Unreleased
+## 0.9.1 — 2026-09-15
+
+`@smeltjs/core@0.9.1` · `@smeltjs/mcp` stays at `0.8.0` and `@smeltjs/rerank-voyage` at
+`0.1.1` (neither names anything this release adds).
+
+The additive half of review IV's last card (REP-58, "shrink the barrel"): the barrel's
+own comment promised that every name is re-exported so consumers see no difference, and
+it was false for the two content-kind planners. This release makes the comment true;
+the breaking half — un-exporting what nothing consumes — follows in 0.10.0 with its
+removed names listed.
+
+### Added
+
+- **The json and diff planners are on the barrel, whole.** `JSON_PLANNER_ID`,
+  `JsonPlanner`, `planJson`, `JsonPlannerOptions`, `DIFF_PLANNER_ID`, `DiffPlanner`,
+  `planDiff` and `DiffPlannerOptions` are exported from `@smeltjs/core`, beside the
+  lexical, structural and auto planners that already were. A consumer could select
+  `strategy: 'json'` before this and could not name what it had selected.
+  `test/guards/planner-registry.test.ts` now reads the barrel against the registry —
+  id, class, plan function and options type for every shipped strategy — and a mutation
+  that drops one of them proves it goes red.
 
 ### Docs
 
