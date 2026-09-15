@@ -14,7 +14,14 @@ import type { HooksChoices, ManualStep } from '../harness/plan.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import { presetToggles, withToggleFlags } from './installed.ts';
 import type { ToggleFlags } from './installed.ts';
-import { confirmLoop, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
+import {
+  confirmLoop,
+  fileFate,
+  listPlannedFiles,
+  plannedNameWidth,
+  walkSteps,
+  wizardAsk,
+} from './wizard.ts';
 import type { Ask, Step } from './wizard.ts';
 import {
   CONFIG_FILE_NAME,
@@ -335,7 +342,7 @@ async function wizardPath(
       return undefined;
     }
     // A confirm's back lands on the last step — and from there, real back.
-    await walkSteps(steps, ask, say, steps.length - 1);
+    await walkSteps(steps, ask, say, { startAt: steps.length - 1 });
   }
 }
 
@@ -485,20 +492,25 @@ async function confirm(
       ? undefined
       : planInstall(io.cwd, hooksChoices(choices, io.cwd, io.version, io));
   say(`\nAbout to apply, into ${setupRoot(io, choices.scope)}:\n`);
+  // The config row is printed by hand, above the plan listing; both pad to one width,
+  // computed over every name either will print, so the block lines up.
+  const configless = (plan?.files ?? []).filter((file) => basename(file.path) !== CONFIG_FILE_NAME);
+  const width = plannedNameWidth([
+    CONFIG_FILE_NAME,
+    ...configless.map((file) => file.name),
+    ...(plan?.skipped ?? []).map((skip) => skip.name),
+  ]);
   say(
-    `  ${CONFIG_FILE_NAME.padEnd(32)} (budget ` +
+    `  ${CONFIG_FILE_NAME.padEnd(width)} (budget ` +
       `${String(choices.budgetBytes ?? SETUP_RECIPE.recommendedBudgetBytes)}, strategy ` +
       `default, store ${describeStore(choices.store)})\n`,
   );
   if (plan === undefined) {
     say(`  no harness selected — the guard preset is skipped\n`);
   } else {
-    listPlannedFiles(
-      say,
-      plan.files.filter((file) => basename(file.path) !== CONFIG_FILE_NAME),
-      plan.skipped,
-      fileFate,
-    );
+    listPlannedFiles(say, configless, plan.skipped, (file) => fileFate(file, 'skip'), [
+      CONFIG_FILE_NAME,
+    ]);
   }
   const { mcp } = mcpVerdict(choices, plan?.manual ?? [], io);
   // Every registration, not the first of them: a run wiring two registering harnesses
@@ -515,6 +527,7 @@ async function confirm(
   );
   const confirmed = await confirmLoop(
     ask,
+    say,
     'yes to apply, no to leave everything untouched, back to change a step.',
   );
   if (confirmed === 'back') return 'back';
@@ -1004,14 +1017,4 @@ function tierLine(profile: HarnessProfile): string {
 function describeStore(store: SmeltConfigStore | undefined): string {
   if (store === undefined) return 'none (the config keeps whatever it has)';
   return store.kind === 'memory' ? 'memory' : `directory at ${store.path}`;
-}
-
-function fileFate(file: {
-  readonly name: string;
-  readonly exists: boolean;
-  readonly unchanged: boolean;
-}): string {
-  if (file.unchanged) return 'unchanged — nothing to write';
-  if (file.exists) return 'exists — will be skipped, not overwritten';
-  return 'new';
 }

@@ -49,6 +49,25 @@ the runner rather than by hand.
   installed. Same commands, same recipe facts, same generator; `llms.txt` lists the three
   references beside the root and `llms-full.txt` inlines them. (Architecture review IV,
   REP-49.)
+- **The wizard kit is finished: one consent discipline, four verbs.** `cli/wizard.ts`
+  was extracted because the third copy of the stream machinery raced — and two copies
+  were still outside it. `smelt init` re-implemented the step walker, the confirm loop,
+  the file listing and the write loop (the last without `mkdirSync`, a latent gap: the
+  wizard only ever wrote into a directory that existed); `smelt agents split` imported
+  nothing from the kit and carried its own ask, confirm, listing and write. The per-file
+  question `<name> exists — overwrite it? (yes/no)>` was spelled three times — init,
+  agents split, merge-policy — each copy with a comment saying it had one home. The kit now owns `askOverwrite` (a literal `yes`
+  and nothing else), `fileFate(file, 'ask' | 'skip')` (the one word that differed between
+  the interactive verbs and `setup --yes` is a parameter, not a fourth copy), a listing
+  padded to its own longest name instead of 20, 32 or 40, and a step machine whose
+  first-step `back` can exit to a question before the steps (init's directory question).
+  `init` and `agents split` route through it; the `module-seams` guard pins the four
+  consent symbols to the kit; the init-wizard guard gains a mutation that loosens the
+  literal-yes rule in the kit itself. One behaviour change, and it is a fix: the kit's
+  confirm printed its retry copy through `ask`, which reads a line — so a mistyped
+  confirm (`y`) swallowed the `yes` typed next, and `hooks` and `setup` needed it twice.
+  The retry copy is now said, never asked, for all four verbs; `test/wizard.test.ts` pins
+  it. (Architecture review IV, REP-55.)
 
 ### Docs
 

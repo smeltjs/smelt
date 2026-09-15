@@ -591,8 +591,8 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'wizard-back-advances-instead',
     file: 'cli/wizard.ts',
-    find: 'else index -= 1;',
-    replace: 'else index += 1;',
+    find: 'if (index > 0) index -= 1;',
+    replace: 'if (index > 0) index += 1;',
     why: 'the step machine’s back moving forward — a wizard that eats the answer instead of returning for it is the defect the kit itself was extracted to end',
   },
   {

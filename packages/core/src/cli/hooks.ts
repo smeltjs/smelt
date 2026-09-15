@@ -17,7 +17,14 @@ import { countedFiles, doneBlock, palette } from './lava.ts';
 import type { Palette } from './lava.ts';
 import { applyPlanFiles } from './merge-policy.ts';
 import type { AppliedFile } from './merge-policy.ts';
-import { confirmLoop, confirmYesNo, listPlannedFiles, walkSteps, wizardAsk } from './wizard.ts';
+import {
+  confirmLoop,
+  confirmYesNo,
+  fileFate,
+  listPlannedFiles,
+  walkSteps,
+  wizardAsk,
+} from './wizard.ts';
 import type { Ask } from './wizard.ts';
 import { CLI_NAME } from './shell.ts';
 import type { AnswerStream } from './shell.ts';
@@ -323,7 +330,7 @@ async function installFlow(
     }
     const verdict = await confirmAndInstall(io, ask, choices);
     if (verdict !== 'back') return 0;
-    await walkSteps(machine, ask, io.output, machine.length - 1);
+    await walkSteps(machine, ask, io.output, { startAt: machine.length - 1 });
   }
 }
 
@@ -579,11 +586,6 @@ function sayApplied(applied: AppliedFile): string {
   return `  wrote ${applied.name}\n`;
 }
 
-const fileLabel = (file: { readonly exists: boolean; readonly unchanged: boolean }): string => {
-  if (file.unchanged) return 'unchanged — nothing to write';
-  return file.exists ? 'exists — will ask before overwriting' : 'new';
-};
-
 async function confirmAndInstall(
   io: HooksIo,
   ask: Asker,
@@ -596,7 +598,7 @@ async function confirmAndInstall(
   });
 
   io.output(`\nAbout to write, into ${root}:\n`);
-  listPlannedFiles(io.output, plan.files, plan.skipped, fileLabel);
+  listPlannedFiles(io.output, plan.files, plan.skipped, (file) => fileFate(file, 'ask'));
   for (const step of plan.manual) {
     io.output(
       `  ${step.name} is ${step.harness}'s own file — run this yourself:\n    ${step.command}\n`,
@@ -606,6 +608,7 @@ async function confirmAndInstall(
 
   const confirmed = await confirmLoop(
     ask,
+    io.output,
     'yes to write, no to leave everything untouched, back to change a setting.',
   );
   if (confirmed === 'back') return 'back';
@@ -674,7 +677,8 @@ async function removeFlow(
   // entries or a file that is entirely ours.
   if (
     io.yes !== true &&
-    (await confirmYesNo(ask, 'yes to proceed, no to leave everything untouched.')) === 'no'
+    (await confirmYesNo(ask, io.output, 'yes to proceed, no to leave everything untouched.')) ===
+      'no'
   ) {
     io.output(`Nothing was changed.\n`);
     return 0;

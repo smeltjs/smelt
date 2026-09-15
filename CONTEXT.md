@@ -114,6 +114,15 @@ keepRetrieved? }` inside a directory store — which is a number in a file, not 
   `smelt_retrieve` and `smelt_retrieve_batch` are the core's, verbatim — the surface adds
   no tail to either — and the module imports only types, so the guard can execute a
   mutant copy of it. _Avoid_: prompt, system prompt, tool metadata.
+- **Wizard kit** (`src/cli/wizard.ts`): the stream machinery and the **consent
+  discipline** every interactive verb shares — `init`, `hooks`, `setup`, `agents split`.
+  The discipline is one question (`askOverwrite`: an existing file is never touched
+  without a literal per-file `yes` — not `y`, not Enter), one label (`fileFate`, under
+  the verb's policy: `ask` for the interactive verbs, `skip` for `setup --yes`, which
+  consents by policy and never overwrites), one listing (`listPlannedFiles`, aligned on
+  its own longest name) and one write mechanic (`writePlannedFile`: mkdir, write, chmod).
+  A verb that re-types any of them is a red `module-seams` guard. _Avoid_: prompt
+  helper, IO utils.
 
 ## Deepened modules
 

@@ -690,8 +690,8 @@ export const MUTATIONS: GuardMutation[] = [
   {
     id: 'agents-split-overwrite-without-consent',
     file: 'cli/agents.ts',
-    find: "      if (answer !== 'yes') {",
-    replace: '      if (false) {',
+    find: '    if (file.exists && !(await askOverwrite(file.name, ask))) {',
+    replace: '    if (false) {',
     why: 'the per-file overwrite consent wired shut — `smelt agents split` would rewrite a hand-written AGENTS.md after any answer, the same helpful-looking break `smelt init` and `smelt hooks` are guarded against, on the one file this verb exists to touch',
   },
   {

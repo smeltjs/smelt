@@ -724,8 +724,8 @@ export const MUTATIONS: GuardMutation[] = [
     kind: 'src',
     id: 'done-block-counts-the-plan-not-the-run',
     file: 'cli/init.ts',
-    find: "        applied.push('skipped');",
-    replace: "        applied.push('written');",
+    find: "      applied.push('skipped');",
+    replace: "      applied.push('written');",
     why: 'the closing block counting a file the person declined as a file it wrote — the most quietly wrong line a wizard can print, because it is the last one they read and the one they believe',
   },
   {

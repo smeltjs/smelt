@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import { RERANK_VOYAGE_PACKAGE } from '../net/policy.ts';
@@ -11,7 +11,16 @@ import { SETUP_RECIPE } from '../setup/recipe.ts';
 import { countedFiles, doneBlock, palette } from './lava.ts';
 import type { FileAction } from './lava.ts';
 import { CLI_NAME } from './shell.ts';
-import { wizardAsk } from './wizard.ts';
+import {
+  askOverwrite,
+  confirmLoop,
+  fileFate,
+  listPlannedFiles,
+  walkSteps,
+  wizardAsk,
+  writePlannedFile,
+} from './wizard.ts';
+import type { Ask, PlannedFileLike, Step as KitStep } from './wizard.ts';
 import type { AnswerStream } from './shell.ts';
 import {
   CONFIG_FILE_NAME,
@@ -136,14 +145,8 @@ const WIZARD_VOYAGE_TOP_K = 8;
 
 type StepOutcome = 'ok' | 'back';
 
-interface PlannedWrite {
-  readonly name: string;
-  readonly path: string;
-  readonly content: string;
-  readonly exists: boolean;
-  /** The file already holds exactly these bytes — nothing to write. */
-  readonly unchanged: boolean;
-}
+/** One file the wizard would write — the kit's planned-file shape, nothing more. */
+type PlannedWrite = PlannedFileLike;
 
 /**
  * The wizard, start to finish. Returns an exit code (0 in every completed flow,
@@ -186,11 +189,9 @@ function loadExisting(cwd: string): { path: string; config: SmeltConfig } | unde
 // The two flows
 // ---------------------------------------------------------------------------
 
-type Asker = (prompt: string) => Promise<string>;
-
 interface Step {
   readonly id: 'budget' | 'store' | 'strategy' | 'measure' | 'rerank';
-  run(io: InitIo, ask: Asker, choices: WizardChoices, dir: string): Promise<StepOutcome>;
+  run(io: InitIo, ask: Ask, choices: WizardChoices, dir: string): Promise<StepOutcome>;
 }
 
 const STEPS: readonly Step[] = [
@@ -201,7 +202,7 @@ const STEPS: readonly Step[] = [
   { id: 'rerank', run: stepRerank },
 ];
 
-async function freshRun(io: InitIo, ask: Asker): Promise<number> {
+async function freshRun(io: InitIo, ask: Ask): Promise<number> {
   const choices: WizardChoices = {
     budgetBytes: undefined,
     store: { kind: 'memory' },
@@ -236,28 +237,26 @@ async function freshRun(io: InitIo, ask: Asker): Promise<number> {
  */
 async function runSteps(
   io: InitIo,
-  ask: Asker,
+  ask: Ask,
   choices: WizardChoices,
   dir: string,
   canReopenDirectory: boolean,
 ): Promise<'done' | 'directory'> {
-  let index = 0;
+  // The kit's step machine over this verb's steps, each closed over the verb's own
+  // state. `back` at the first step reopens the directory question when there is one
+  // to reopen, else is answered where the user can read it — the kit's rule.
+  const machine: readonly KitStep[] = STEPS.map(
+    (step) => async (question: Ask) =>
+      (await step.run(io, question, choices, dir)) === 'back' ? 'back' : 'ok',
+  );
+  const firstBack = canReopenDirectory ? 'exit' : 'say';
+  let startAt = 0;
   for (;;) {
-    while (index < STEPS.length) {
-      const outcome = await STEPS[index]!.run(io, ask, choices, dir);
-      if (outcome !== 'back') {
-        index += 1;
-      } else if (index > 0) {
-        index -= 1;
-      } else if (canReopenDirectory) {
-        return 'directory';
-      } else {
-        io.output(`This is the first step — there is nothing before it.\n`);
-      }
-    }
+    const walked = await walkSteps(machine, ask, io.output, { startAt, firstBack });
+    if (walked === 'exited') return 'directory';
     const verdict = await confirmAndWrite(io, ask, choices, dir);
     if (verdict !== 'back') return 'done';
-    index = STEPS.length - 1;
+    startAt = STEPS.length - 1;
   }
 }
 
@@ -284,7 +283,7 @@ async function runSteps(
  * carrying the answers already given. The most consequential question in the wizard is
  * not the one you cannot reverse into.
  */
-async function chooseDirectory(io: InitIo, ask: Asker, root: string): Promise<string> {
+async function chooseDirectory(io: InitIo, ask: Ask, root: string): Promise<string> {
   io.output(
     `${CLI_NAME} init — ${io.cwd} is inside a workspace rooted at ${root}.\n` +
       `A run reads the nearest ${CONFIG_FILE_NAME}, walking UP from the directory it is ` +
@@ -340,7 +339,7 @@ function declaresWorkspace(dir: string): boolean {
 
 async function editRun(
   io: InitIo,
-  ask: Asker,
+  ask: Ask,
   configPath: string,
   config: SmeltConfig,
 ): Promise<number> {
@@ -425,7 +424,7 @@ function rerankLine(choices: WizardChoices, dir: string): string {
 // The steps. Each one accepts `back`.
 // ---------------------------------------------------------------------------
 
-async function stepBudget(io: InitIo, ask: Asker, choices: WizardChoices): Promise<StepOutcome> {
+async function stepBudget(io: InitIo, ask: Ask, choices: WizardChoices): Promise<StepOutcome> {
   io.output(
     `\nDefault byte budget — used when a \`${CLI_NAME}\` run omits --budget.\n` +
       `Budgets are UTF-8 bytes, permanently; an explicit --budget always wins.\n` +
@@ -445,7 +444,7 @@ async function stepBudget(io: InitIo, ask: Asker, choices: WizardChoices): Promi
   }
 }
 
-async function stepStore(io: InitIo, ask: Asker, choices: WizardChoices): Promise<StepOutcome> {
+async function stepStore(io: InitIo, ask: Ask, choices: WizardChoices): Promise<StepOutcome> {
   io.output(
     `\nWhere elided bytes live. Every elision is reversible only while a store holds ` +
       `its bytes (Law 3):\n` +
@@ -494,7 +493,7 @@ const STRATEGY_BLURB: Readonly<Record<Strategy, string>> = {
   diff: 'files and hunks as units, for unified diffs; refuses anything else',
 };
 
-async function stepStrategy(io: InitIo, ask: Asker, choices: WizardChoices): Promise<StepOutcome> {
+async function stepStrategy(io: InitIo, ask: Ask, choices: WizardChoices): Promise<StepOutcome> {
   const picks = STRATEGIES.map((_, index) => String(index + 1));
   io.output(
     `\nDefault planner strategy — used when a run omits --strategy:\n` +
@@ -518,7 +517,7 @@ async function stepStrategy(io: InitIo, ask: Asker, choices: WizardChoices): Pro
 
 async function stepMeasure(
   io: InitIo,
-  ask: Asker,
+  ask: Ask,
   choices: WizardChoices,
   dir: string,
 ): Promise<StepOutcome> {
@@ -557,7 +556,7 @@ async function stepMeasure(
  */
 async function stepRerank(
   io: InitIo,
-  ask: Asker,
+  ask: Ask,
   choices: WizardChoices,
   dir: string,
 ): Promise<StepOutcome> {
@@ -594,14 +593,9 @@ async function stepRerank(
 // The confirm step: the only place anything is written
 // ---------------------------------------------------------------------------
 
-const writeLabel = (write: PlannedWrite): string => {
-  if (write.unchanged) return 'unchanged — nothing to write';
-  return write.exists ? 'exists — will ask before overwriting' : 'new';
-};
-
 async function confirmAndWrite(
   io: InitIo,
-  ask: Asker,
+  ask: Ask,
   choices: WizardChoices,
   dir: string,
 ): Promise<'done' | 'back'> {
@@ -616,21 +610,19 @@ async function confirmAndWrite(
   }
 
   const writes = plannedWrites(choices, dir);
-  io.output(
-    `\nAbout to write, into ${dir}:\n` +
-      writes.map((write) => `  ${write.name.padEnd(20)} (${writeLabel(write)})\n`).join('') +
-      `Nothing has been written yet.\n`,
-  );
+  io.output(`\nAbout to write, into ${dir}:\n`);
+  listPlannedFiles(io.output, writes, [], (write) => fileFate(write, 'ask'));
+  io.output(`Nothing has been written yet.\n`);
 
-  for (;;) {
-    const answer = await ask(`confirm (yes / no / back)> `);
-    if (answer === 'back') return 'back';
-    if (answer === 'no') {
-      io.output(`Nothing was written.\n`);
-      return 'done';
-    }
-    if (answer === 'yes') break;
-    io.output(`yes to write, no to leave everything untouched, back to change a setting.\n`);
+  const verdict = await confirmLoop(
+    ask,
+    io.output,
+    'yes to write, no to leave everything untouched, back to change a setting.',
+  );
+  if (verdict === 'back') return 'back';
+  if (verdict === 'no') {
+    io.output(`Nothing was written.\n`);
+    return 'done';
   }
 
   // Counted as the loop goes, so the closing block states what was written rather
@@ -642,18 +634,15 @@ async function confirmAndWrite(
       applied.push('unchanged');
       continue;
     }
-    if (write.exists) {
-      // The per-file consent rule: one explicit question per existing file, and only
-      // a literal `yes` overwrites. This is the line the mutation
-      // `init-overwrite-without-consent` breaks to prove the guard can go red.
-      const answer = await ask(`  ${write.name} exists — overwrite it? (yes/no)> `);
-      if (answer !== 'yes') {
-        io.output(`  skipped ${write.name} — the existing file was not touched\n`);
-        applied.push('skipped');
-        continue;
-      }
+    // The per-file consent rule, shared through the kit: one explicit question per
+    // existing file, and only a literal `yes` overwrites. This is the line the mutation
+    // `init-overwrite-without-consent` breaks to prove the guard can go red.
+    if (write.exists && !(await askOverwrite(write.name, ask))) {
+      io.output(`  skipped ${write.name} — the existing file was not touched\n`);
+      applied.push('skipped');
+      continue;
     }
-    writeFileSync(write.path, write.content);
+    writePlannedFile(write);
     io.output(`  wrote ${write.name}\n`);
     applied.push('written');
   }
