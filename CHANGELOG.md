@@ -68,6 +68,17 @@ the runner rather than by hand.
   confirm (`y`) swallowed the `yes` typed next, and `hooks` and `setup` needed it twice.
   The retry copy is now said, never asked, for all four verbs; `test/wizard.test.ts` pins
   it. (Architecture review IV, REP-55.)
+- **The hook prober is its own module.** `harness/hook-command.ts` was two things in one
+  file: a pure round trip (a hook command as a value, rendered and parsed, string in and
+  string out) and the prober `smelt doctor` runs — a real `spawnSync` of this node
+  against a synthetic payload in a scratch directory under a five-second timeout. The
+  parser has three callers (the installed-state reader, the install planner, doctor);
+  the prober has one — yet anyone who parsed a hook command transitively imported
+  `node:child_process`. The prober now lives in `harness/hook-probe.ts`, imported only by
+  doctor; the parser imports no process, filesystem or clock, and the module-seams guard
+  pins both facts with a mutation that grows the spawn back into the parser. Nothing
+  about what either half does has changed; the spawn guard still proves the one spawn
+  Law 1 permits runs this very node. (Architecture review IV, REP-57.)
 
 ### Docs
 

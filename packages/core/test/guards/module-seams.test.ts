@@ -36,6 +36,11 @@ import type { GuardMutation } from './_mutations.ts';
  *      disagree about whose file `CLAUDE.md` is. So the declarations themselves are
  *      counted: exactly one `planInstall`, one `applyPlanFiles`, one `presetToggles`
  *      in the whole of `src`.
+ *   4. **The hook prober is not the hook parser** (review IV, REP-57).
+ *      `harness/hook-command.ts` imports no process, filesystem or clock, and
+ *      `harness/hook-probe.ts` — the one module in `harness/` that spawns — is imported
+ *      by `cli/doctor.ts` alone. The installed-state reader and the install planner
+ *      parse; only doctor runs.
  *
  * The third half is what makes the first two more than a lint: the seam is not that
  * setup avoids a module, it is that both verbs run the same code.
@@ -82,6 +87,39 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
         `leaf: its own verb reaches it and nothing else does, or the seam has been ` +
         `re-crossed from a direction the case above does not list.`,
     ).toEqual(['cli/subcommands/hooks.ts']);
+  });
+
+  it('only doctor imports the hook probe', () => {
+    const importers = SOURCE.filter((file) =>
+      importedModules(file).includes('harness/hook-probe.ts'),
+    );
+    expect(
+      importers.toSorted(),
+      `harness/hook-probe.ts is imported by ${importers.join(', ') || 'nothing'}. The probe ` +
+        `has one caller — doctor, the verb that runs what is installed; the reader and the ` +
+        `planner only parse, and a second importer is a subprocess surface reaching where ` +
+        `only a parser was wanted.`,
+    ).toEqual(['cli/doctor.ts']);
+  });
+
+  it('the hook-command round trip imports no process, filesystem or clock', () => {
+    // `harness/hook-command.ts` is a value and both directions over it — string in,
+    // HookCommand out, and back. The probe that *runs* a command lives beside it in
+    // `harness/hook-probe.ts` (review IV, REP-57), so that the installed-state reader
+    // and the install planner, which only parse, never transitively import a spawn.
+    const forbidden = ['node:child_process', 'node:fs', 'node:os', 'node:process'];
+    const imported = importSpecifiers(readSource('harness/hook-command.ts'));
+    for (const specifier of forbidden) {
+      expect(
+        imported,
+        `harness/hook-command.ts imports ${specifier} — the probe grew back into the parser, ` +
+          `and every caller that only parses a hook command now carries a subprocess surface`,
+      ).not.toContain(specifier);
+    }
+    expect(
+      importSpecifiers(readSource('harness/hook-probe.ts')),
+      'harness/hook-probe.ts no longer spawns — the probe stopped probing',
+    ).toContain('node:child_process');
   });
 
   it('harness/ imports nothing from cli/', () => {
@@ -134,6 +172,16 @@ describe('the install verbs share a plan and a policy, not a wizard', () => {
  * file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    kind: 'src',
+    id: 'seam-probe-grows-back-into-the-parser',
+    file: 'harness/hook-command.ts',
+    find: "import { SMELT_COMMAND_NAME } from '../hooks/invocation.ts';",
+    replace:
+      "import { spawnSync } from 'node:child_process';\n" +
+      "import { SMELT_COMMAND_NAME } from '../hooks/invocation.ts';",
+    why: 'a spawn imported back into the hook-command round trip — the installed-state reader and the install planner, which only ever parse, would carry node:child_process again, and the one seam that kept "read what is installed" free of "run what is installed" is gone',
+  },
   {
     kind: 'src',
     id: 'seam-setup-plans-through-the-wizard',

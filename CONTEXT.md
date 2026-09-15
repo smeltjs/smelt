@@ -207,7 +207,9 @@ why }`, where `path` is the spelling to write. It is asked **per script actually
   never that anything is replaced in place. `smelt hooks install` and `smelt setup`
   print the unstable ones (`smelt.setup.v1`'s optional `notes`).
 - **HookCommand**: what one entry in a harness's hook config _says_, as a value, and
-  both directions over it (`src/harness/hook-command.ts`). A guard command is
+  both directions over it (`src/harness/hook-command.ts` — a pure round trip; the probe
+  that _runs_ one for `smelt doctor` is the sibling `src/harness/hook-probe.ts`, the
+  only module in `harness/` that spawns, review IV REP-57). A guard command is
   `{ kind: 'guard', script }`; the three lifecycle commands are
   `{ kind: 'stats' | 'map' | 'lint', invocation: 'path' | 'node', script?, args }` —
   the Invocation's two spellings, carried rather than re-derived. `renderHookCommand`
