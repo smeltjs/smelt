@@ -517,6 +517,45 @@ describe('the repo map keeps its claims', () => {
     expect(JSON.stringify(again)).toBe(JSON.stringify(focused));
   });
 
+  it('folds case in one place: no planner and not the map carries a copy of the match', () => {
+    // The matcher is the one implementation of the Focus (review IV, REP-52). A
+    // `toLowerCase()` reappearing in a planner is the first line of the sixth copy —
+    // the repo map's own copy started exactly that way, then forgot caseSensitive.
+    for (const file of [
+      'plan/lexical.ts',
+      'plan/json.ts',
+      'plan/diff.ts',
+      'plan/structural.ts',
+      'repomap/map.ts',
+    ]) {
+      expect(
+        readSource(file),
+        `${file} folds case on its own — that is a private copy of the focus match; ask plan/focus.ts`,
+      ).not.toMatch(/\.to(?:Lower|Upper)Case\(/);
+    }
+  });
+
+  it('honours caseSensitive through the one focus matcher the planners use', async () => {
+    // Until review IV (REP-52) the map carried its own copy of the match and always
+    // lowercased — the one place "focus" quietly meant something different.
+    const loose = await buildRepoMap({
+      root: fixtureRoot,
+      budgetBytes: BUDGET,
+      focus: ['UNUSEDHELPER'],
+    });
+    expect(loose.entries[0]!.name).toBe('unusedHelper');
+    const strict = await buildRepoMap({
+      root: fixtureRoot,
+      budgetBytes: BUDGET,
+      focus: ['UNUSEDHELPER'],
+      caseSensitive: true,
+    });
+    expect(
+      strict.entries.some((entry) => entry.reason.rule === REPO_MAP_FOCUS_RULE),
+      'a case-sensitive focus promoted a name spelled differently',
+    ).toBe(false);
+  });
+
   it('reports bytes used truthfully through the CLI: the stderr figure IS the stdout byte count', async () => {
     // `smelt map`'s report law, same as the smelt report's: every number is read off
     // the RepoMap the library returned, never tallied separately. The mutation
@@ -1081,6 +1120,22 @@ describe('the repo map keeps its claims', () => {
  * of `src` and asserts this file goes red — see `test/guards/_mutations.ts`.
  */
 export const MUTATIONS: GuardMutation[] = [
+  {
+    id: 'json-planner-regrows-a-private-focus-match',
+    file: 'plan/json.ts',
+    find: '  const matches = (unit: Unit): boolean => focus.matches(input.text.slice(unit.start, unit.end));',
+    replace:
+      '  const matches = (unit: Unit): boolean =>\n' +
+      "    input.text.slice(unit.start, unit.end).toLowerCase().includes((input.focus ?? [''])[0]!.toLowerCase());",
+    why: 'a planner growing back its own copy of the focus match — the sixth copy, one helpful line, already ignoring caseSensitive and every term but the first; only a source scan can see a copy that happens to agree today',
+  },
+  {
+    id: 'focus-matcher-ignores-case-sensitivity',
+    file: 'plan/focus.ts',
+    find: '  const caseSensitive = options.caseSensitive ?? false;',
+    replace: '  const caseSensitive = false;',
+    why: 'the one focus matcher folding case whatever it was asked — the repo map\u2019s old private copy did exactly this, and with five callers behind one implementation the drift would now reach every planner at once',
+  },
   {
     id: 'repomap-budget-unenforced',
     file: 'repomap/map.ts',

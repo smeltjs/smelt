@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { detectLanguage } from '../detect.ts';
 import { SmeltError } from '../errors.ts';
 import type { LanguageId } from '../types.ts';
+import { focusMatcher } from '../plan/focus.ts';
+import type { FocusMatcher, FocusOptions } from '../plan/focus.ts';
 
 import { TagsCache, tagsCacheKey } from './cache.ts';
 import { fsCall } from './io.ts';
@@ -153,7 +155,7 @@ export interface RepoMapReason {
   readonly explanation: string;
 }
 
-export interface RepoMapOptions {
+export interface RepoMapOptions extends FocusOptions {
   /** The repository root to read. Local files only; symlinks are never followed. */
   readonly root: string;
   /** Ceiling for the rendered map, in UTF-8 bytes. Respected, not aimed at. */
@@ -322,8 +324,7 @@ export async function buildRepoMap(options: RepoMapOptions): Promise<RepoMap> {
   if (cache !== undefined) cacheCounts.pruned = cache.sweep(liveKeys);
 
   const ranked = rankDefinitions(parsed);
-  const focus = (options.focus ?? []).filter((term) => term.length > 0);
-  const ordered = orderWithFocus(ranked, focus);
+  const ordered = orderWithFocus(ranked, focusMatcher(options.focus, options));
 
   // Fit to the budget: ranked symbols first — focus matches promoted to the front,
   // each partition in rank order — then path-only files, in path order. Filling
@@ -505,23 +506,21 @@ interface OrderedDefinition {
  * The fill order: focus-matched definitions first, then the rest, each partition
  * keeping the ranker's total order. A stable partition of a deterministic order is
  * itself deterministic, so the map's byte-for-byte claim survives focus untouched.
- * The match is a case-insensitive substring over name and path — the lexical
- * planner's default, so "focus" means the same thing in both places — and the
- * *first* matching term in caller order is the one the receipt names.
+ * The match is the planners' own (`plan/focus.ts`: substring, case-insensitive unless
+ * asked otherwise) over name and path, so "focus" means the same thing in both places
+ * — and the *first* matching term in caller order is the one the receipt names.
  */
 function orderWithFocus(
   ranked: readonly RankedDefinition[],
-  focus: readonly string[],
+  focus: FocusMatcher,
 ): readonly OrderedDefinition[] {
-  if (focus.length === 0) return ranked.map((definition) => ({ definition }));
-  const needles = focus.map((term) => term.toLowerCase());
+  if (focus.empty) return ranked.map((definition) => ({ definition }));
   const matched: OrderedDefinition[] = [];
   const rest: OrderedDefinition[] = [];
   for (const definition of ranked) {
-    const haystack = `${definition.path}\0${definition.name}`.toLowerCase();
-    const index = needles.findIndex((needle) => haystack.includes(needle));
+    const index = focus.firstMatch(`${definition.path}\0${definition.name}`);
     if (index === -1) rest.push({ definition });
-    else matched.push({ definition, focusTerm: focus[index]! });
+    else matched.push({ definition, focusTerm: focus.terms[index]! });
   }
   return [...matched, ...rest];
 }

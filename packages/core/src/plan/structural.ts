@@ -14,6 +14,8 @@ import type {
 } from '../types.ts';
 
 import { predictOutputBytes, savingBytes } from './budget.ts';
+import { focusMatcher } from './focus.ts';
+import type { FocusOptions } from './focus.ts';
 import { loadGrammar } from './grammar.ts';
 import { utf8OffsetIndex } from './offsets.ts';
 
@@ -58,14 +60,12 @@ const SIBLING_COLLAPSE_RULE = 'sibling-collapse';
  */
 const SIBLING_COLLAPSE_PRESSURE_RULE = 'sibling-collapse-pressure';
 
-export interface StructuralPlannerOptions {
+export interface StructuralPlannerOptions extends FocusOptions {
   /**
    * Never collapse a sibling group smaller than this. Defaults to 1 — the byte
    * profitability check already refuses collapses that would not pay for their marker.
    */
   readonly minSiblings?: number;
-  /** Focus matching is substring, case-insensitive by default — same as lexical. */
-  readonly caseSensitive?: boolean;
 }
 
 /**
@@ -671,16 +671,8 @@ function matchUnits(
   input: PlanInput,
   options: StructuralPlannerOptions,
 ): readonly boolean[] {
-  const caseSensitive = options.caseSensitive ?? false;
-  const focus = (input.focus ?? []).filter((term) => term.length > 0);
-  const needles = caseSensitive ? focus : focus.map((term) => term.toLowerCase());
-
-  return units.map((unit) => {
-    if (needles.length === 0) return false;
-    const raw = input.text.slice(unit.start, unit.end);
-    const haystack = caseSensitive ? raw : raw.toLowerCase();
-    return needles.some((needle) => haystack.includes(needle));
-  });
+  const focus = focusMatcher(input.focus, options);
+  return units.map((unit) => focus.matches(input.text.slice(unit.start, unit.end)));
 }
 
 /**

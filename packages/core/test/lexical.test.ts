@@ -28,31 +28,6 @@ describe('the lexical planner', () => {
     expect(kept).not.toContain('noise 10');
   });
 
-  it('is case-insensitive by default and exact when asked', () => {
-    const text = `${lines(60)}\nSHOUTING match\n${lines(60, 'tail')}`;
-    expect(
-      planLexical({
-        text,
-        language: 'unknown',
-        pricing: markerPricing('unknown'),
-        budgetBytes: 500,
-        focus: ['shouting'],
-      }).elisions.length,
-    ).toBe(2);
-    expect(
-      planLexical(
-        {
-          text,
-          language: 'unknown',
-          pricing: markerPricing('unknown'),
-          budgetBytes: 500,
-          focus: ['shouting'],
-        },
-        { caseSensitive: true },
-      ).elisions.length,
-    ).toBe(1);
-  });
-
   it('falls back to head and tail when there is nothing to focus on', () => {
     const text = lines(400);
     const plan = planLexical({

@@ -126,6 +126,17 @@ the runner rather than by hand.
   the no-elisions refusal now names the budget the probe actually ran at. (Architecture
   review IV, REP-56.)
 
+- **One focus matcher.** "Does this text match the Focus?" was answered in five places
+  — the lexical, json, diff and structural planners each carried a copy, and the repo
+  map a fifth that had drifted: it ignored case sensitivity and always lowercased.
+  `plan/focus.ts` now holds the one implementation (`focusMatcher`: substring,
+  case-insensitive unless `caseSensitive`, empty terms dropped, the first matching term
+  in caller order named for receipts), the four planner option bags extend one
+  `FocusOptions` instead of declaring `caseSensitive` four times, and `buildRepoMap`
+  gains `caseSensitive` and honours it. Planner output is unchanged; the repo-map guard
+  gains a case-sensitivity case and a mutation that folds case regardless.
+  (Architecture review IV, REP-52.)
+
 ### Docs
 
 - **The SkillPack catches up to 0.8.0's store retention and adapter resolution.**

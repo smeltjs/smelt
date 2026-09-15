@@ -21,7 +21,12 @@ codebase-design glossary.
 - **Planner**: a module that turns a blob + budget + focus into an `ElisionPlan` without
   removing any bytes itself. `applyPlan` is the only byte-remover.
 - **Focus**: the caller's statement of what the task is actually about; focus-matched
-  regions survive planning.
+  regions survive planning. Matched in one place — `focusMatcher` in `src/plan/focus.ts`
+  (substring, case-insensitive unless `caseSensitive`, empty terms dropped, the first
+  matching term in caller order named) — for all four planners and the repo map, since
+  review IV (REP-52); before that the match was five copies, and the map's had drifted
+  to ignore case sensitivity. `hooks/focus-terms.ts` is where a term comes from; this is
+  what it matches.
 - **Store**: content-addressed home of elided bytes (`ElisionStore`). No _automatic_
   eviction: a store that can forget by itself turns "reversible" into "reversible,
   usually". The one deletion is **Prune**, below, and it is a verb the user types.

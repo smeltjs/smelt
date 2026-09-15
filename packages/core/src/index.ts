@@ -38,6 +38,8 @@ export { AUTO_PLANNER_ID, AutoPlanner, planAuto } from './plan/auto.ts';
 export type { AutoPlannerOptions } from './plan/auto.ts';
 export { LEXICAL_PLANNER_ID, LexicalPlanner, planLexical } from './plan/lexical.ts';
 export type { LexicalPlannerOptions } from './plan/lexical.ts';
+export { focusMatcher } from './plan/focus.ts';
+export type { FocusMatcher, FocusOptions } from './plan/focus.ts';
 export { DEFAULT_STRATEGY, isStrategy, PLANNERS, STRATEGIES } from './plan/planners.ts';
 export type { PlannerFactoryOptions } from './plan/planners.ts';
 export {

@@ -1,5 +1,7 @@
 import { ContentKindError, MissingMarkerPricingError } from '../errors.ts';
 import type { ElisionPlan, MarkerPricing, PlanInput, PlannedElision, Planner } from '../types.ts';
+import { focusMatcher } from './focus.ts';
+import type { FocusOptions } from './focus.ts';
 
 import { predictOutputBytes, savingBytes } from './budget.ts';
 import { probeKind } from './kind.ts';
@@ -20,10 +22,7 @@ const WINDOW_LADDER: readonly number[] = [4, 3, 2, 1, 0];
 /** Never collapse a run inside a hunk shorter than this. */
 const MIN_RUN_LINES = 3;
 
-export interface DiffPlannerOptions {
-  /** Focus matching is substring, case-insensitive by default. */
-  readonly caseSensitive?: boolean;
-}
+export interface DiffPlannerOptions extends FocusOptions {}
 
 /**
  * The diff planner: **files and hunks are the units, not lines.**
@@ -99,13 +98,8 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
     );
   }
   const files = parseFiles(splitLines(input.text));
-  const caseSensitive = options.caseSensitive ?? false;
-  const focus = (input.focus ?? []).filter((term) => term.length > 0);
-  const needles = caseSensitive ? focus : focus.map((term) => term.toLowerCase());
-  const matches = (text: string): boolean => {
-    const haystack = caseSensitive ? text : text.toLowerCase();
-    return needles.some((needle) => haystack.includes(needle));
-  };
+  const focus = focusMatcher(input.focus, options);
+  const matches = (text: string): boolean => focus.matches(text);
 
   /** The file and hunk collapses — the same at every rung of the window ladder. */
   const fixed: PlannedElision[] = [];
@@ -145,9 +139,7 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
   let fileRun: FileDiff[] = [];
   for (const file of files) {
     const fileKept =
-      needles.length === 0 ||
-      matches(file.headerText) ||
-      file.hunks.some((hunk) => matches(hunk.text));
+      focus.empty || matches(file.headerText) || file.hunks.some((hunk) => matches(hunk.text));
     if (!fileKept) {
       fileRun.push(file);
       continue;
@@ -156,7 +148,7 @@ export function planDiff(input: PlanInput, options: DiffPlannerOptions = {}): El
     fileRun = [];
     let hunkRun: Hunk[] = [];
     for (const hunk of file.hunks) {
-      if (needles.length > 0 && matches(hunk.text)) {
+      if (!focus.empty && matches(hunk.text)) {
         collapseHunks(file, hunkRun);
         hunkRun = [];
         matched.push({ file, hunk });
